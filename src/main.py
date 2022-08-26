@@ -24,7 +24,7 @@ file_path = root / 'src/main/java/com/yourorganization/maven_sample/MyAnalysis.j
 
 analyzer = PipeLspAnalyzer(java_server)
 analyzer.client.debug_call('initialize', {
-    "processId": 710,
+    "processId": analyzer.process.pid,
     "clientInfo": {
         "name": "Visual Studio Code",
         "version": "1.69.2"
@@ -713,4 +713,34 @@ print(completions)
 print([x['name'] for x in analyzer.client._doc_symbol(file_path)['result']])
 
 analyzer.client._did_save(file_path)
-# print(analyzer.client._diagnostic(file_path))
+while True:
+    diagnostics = analyzer.client.try_recv(0.5)
+    if 'publish' in json.dumps(diagnostics):
+        print([x for x in diagnostics['params']['diagnostics'] if x['severity'] == 1 and 'Syntax error' not in str(x)])
+        # print(diagnostics)
+        break
+
+print(analyzer.client._sem_token_full(file_path)['result'])
+
+from realm import syntax
+with open(file_path) as f:
+    content = f.read()
+
+a = syntax.Analyzer()
+a.feed(content, raise_normal_exc=False)
+print(a.content)
+# print(a.content)
+# a.feed(';;')
+
+# try:
+#     a.feed('test')
+# except syntax.TokenizeError:
+#     print(a.parser.tokens.look())
+#     pass
+# # try:
+# #     a.feed('')
+# # except syntax.AnalysisError:
+# #     pass
+# # a.feed('package com.yourorganization.maven_sample')
+# #     # print(a.parser.tokens.look())
+# #     # a.feed(content[:10])

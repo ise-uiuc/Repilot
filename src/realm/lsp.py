@@ -1,5 +1,6 @@
 from functools import wraps
 from os import PathLike
+from select import select
 import subprocess
 import json
 from typing import IO, Any, Concatenate, Dict, Callable, List, Tuple, TypeVar, Type
@@ -97,6 +98,12 @@ class LSPClient:
         # print(content)
         self.stdin.write(content.encode())
         self.stdin.flush()
+
+    def try_recv(self, timeout: float) -> Msg:
+        reader, _, _ = select([self.stdout], [], [], timeout)
+        if len(reader) == 0:
+            raise TimeoutError
+        return self.recv()
 
     def recv(self) -> Msg:
         # read header
@@ -538,7 +545,6 @@ class LSPClient:
             }
         }
 
-
     @d_notify
     def _did_save(file_path: PathLike) -> RPC:  # type: ignore[misc] # noqa
         return 'textDocument/didSave', {
@@ -576,7 +582,7 @@ class LSPClient:
                 'character': char,
             }
         }
-    
+
     @d_call
     def _diagnostic(path: PathLike) -> RPC:
         return 'workspace/diagnostic', {
