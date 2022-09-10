@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, TypeVar
 
-D4J_PATH = Path('/Users/nole/Developer/defects4j')
+D4J_PATH = Path('/home/yuxiang/Developer/defects4j')
 assert D4J_PATH.exists()
 
 Metadata = Dict[str, List[Dict[str, str]]]
@@ -44,11 +44,11 @@ def get_all_bugs() -> Metadata:
 
 # print(get_all_bugs()['Lang'][0])
 
-ROOT = Path('/Users/nole/Developer/d4j-checkout')
+ROOT = Path('/home/yuxiang/Developer/d4j-checkout')
 
 
-def get_checkout_meta(proj: str, bug: Dict[str, str], fixed: bool) -> Dict:
-    path = ROOT / f'{proj}-{bug["bug.id"]}-{"fixed" if fixed else "buggy"}'
+def get_checkout_meta(proj: str, bug: Dict[str, str]) -> Dict:
+    path = ROOT / f'{proj}-{bug["bug.id"]}'
     bug_id = bug['bug.id']
     return {
         'proj': proj,
@@ -56,36 +56,42 @@ def get_checkout_meta(proj: str, bug: Dict[str, str], fixed: bool) -> Dict:
         'buggy_commit': bug['revision.id.buggy'],
         'url': bug['report.url'],
         'fixed_commit': bug['revision.id.fixed'],
-        'fixed': fixed,
         'path': str(path.absolute()),
-        'cmd': ['defects4j', 'checkout', '-p', proj, '-v', f'{bug_id}{"f" if fixed else "b"}', '-w', str(path.absolute())]
+        'cmd': ['defects4j', 'checkout', '-p', proj, '-v', f'{bug_id}f', '-w', str(path.absolute())]
     }
 
 
 def get_all_checkout_meta(bugs: Metadata) -> List[Dict[str, str]]:
-    return [y for x in ((get_checkout_meta(proj, bug, False),
-                         get_checkout_meta(proj, bug, True))
-                        for proj, proj_bugs in bugs.items()
-                        for bug in proj_bugs) for y in x]
+    return [get_checkout_meta(proj, bug)
+            for proj, proj_bugs in bugs.items()
+            for bug in proj_bugs]
+
+all_bugs = get_all_bugs()
+data = get_all_checkout_meta(all_bugs)
 
 
-data = get_all_checkout_meta(get_all_bugs())
-
-
-def checkout(*cmd: str):
+def run_process(*cmd: str):
     subprocess.run(cmd)
 
 
-BATCH_SIZE = 10
+BATCH_SIZE = 64
 if __name__ == '__main__':
     for d_sub in chunked(BATCH_SIZE, data):
         processes: List[mp.Process] = []
         for d in d_sub:
-            p = mp.Process(target=checkout, args=d['cmd'])
+            p = mp.Process(target=run_process, args=d['cmd'])
             p.start()
             processes.append(p)
         for p in processes:
             p.join()
-
+    for bugs in chunked(1, data):
+        processes: List[mp.Process] = []
+        for bug in bugs:
+            args = ['bash', 'src/get_buggy_lines.sh', bug['proj'], bug['bug_id'],'buggy_locations']
+            p = mp.Process(target=run_process, args=args)
+            p.start()
+            processes.append(p)
+        for p in processes:
+            p.join()
 
 # f'defects4j checkout -p {proj} -v {bug_id}f -w {root / f"{proj}-{bug_id}-{}"}'

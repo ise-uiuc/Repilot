@@ -4,7 +4,7 @@ import javalang
 import glob
 import json
 
-from check_duplicate import _get_hash
+from datasets.check_duplicate import _get_hash
 
 d4j_bug_lists = '''
 | Chart           | jfreechart                 |       26       | 1-26                | None                    |
@@ -349,7 +349,7 @@ def clean_parse_d4j_single_hunk(folder):
 
 
 def clean_parse_d4j(folder):
-    with open(folder + "Defects4j/single_function_repair.json", "r") as f:
+    with open("Defects4j/single_function_repair.json", "r") as f:
         result = json.load(f)
     cleaned_result = {}
     for k, v in result.items():

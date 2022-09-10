@@ -23,18 +23,18 @@ def _run_validation(bug, patch_file, folder, patch, skip_val=True):
         return False
 
     if skip_val:
-        print("Skipping validation ... ")
+        # print("Skipping validation ... ")
         return False
 
-    print("Validating patch ... ")
+    # print("Validating patch ... ")
     exit_code = subprocess.run("cd QuixBugs; python python_tester.py --bug {} --file ../{}/{} --add_pf"
                                .format(bug, folder, patch_file), shell=True,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if exit_code.returncode == 0:
-        print("Patch is valid")
+        # print("Patch is valid")
         return True
     else:
-        print("Patch is invalid")
+        # print("Patch is invalid")
         return False
 
 
