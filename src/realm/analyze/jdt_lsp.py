@@ -21,13 +21,13 @@ from realm.lsp import TextFile
 class JdtLspAnalyzer:
     def sync(self, text: TextFile):
         self.active_text = text
-        self.client.textDocument_didOpen({
+        self.client.textDocument_didOpen(cast(spec.DidOpenTextDocumentParams, {
             'textDocument': {
                 'uri': text.path.as_uri(),
                 'languageId': 'java',
                 'version': 0,
                 'text': text.content,
-            }})
+            }}))
 
     def save(self):
         self.client.textDocument_didSave({
@@ -63,7 +63,7 @@ class JdtLspAnalyzer:
 
         # Initialize the server
         path = Path(proj_path)
-        self.client.initialize({
+        self.client.initialize(cast(spec.InitializeParams, {
             "processId": self.process.pid,
             "clientInfo": {
                 "name": path.name,
@@ -736,5 +736,5 @@ class JdtLspAnalyzer:
                     "name": path.name,
                 }
             ]
-        })
-        self.client.initialized({})
+        }))
+        self.client.initialized(cast(spec.InitializedParams, {}))

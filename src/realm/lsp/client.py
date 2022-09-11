@@ -121,7 +121,7 @@ class LSPClient:
         assert line_breaks == '\r\n', line_breaks
         response = self.stdout.read(content_len).decode()
         # if 'textDocument/publishDiagnostics' in response:
-        #     print(response)
+        print(response)
         return json.loads(response)
 
     initialize = d_call('initialize', spec.InitializeParams)
