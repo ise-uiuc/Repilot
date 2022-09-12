@@ -84,14 +84,3 @@ if __name__ == '__main__':
             processes.append(p)
         for p in processes:
             p.join()
-    for bugs in chunked(1, data):
-        processes: List[mp.Process] = []
-        for bug in bugs:
-            args = ['bash', 'src/get_buggy_lines.sh', bug['proj'], bug['bug_id'],'buggy_locations']
-            p = mp.Process(target=run_process, args=args)
-            p.start()
-            processes.append(p)
-        for p in processes:
-            p.join()
-
-# f'defects4j checkout -p {proj} -v {bug_id}f -w {root / f"{proj}-{bug_id}-{}"}'
