@@ -34,8 +34,6 @@ class BuggyFile(NamedTuple):
                 changes.append(
                     Change(start_line.source_line_no, [], added_lines))
             elif start_line.is_removed:
-                x, y = utils.take_while(lambda x: x < 10, range(20))
-                # print(x, list(y))
                 removed_lines, iter_remaining = utils.take_while(
                     lambda line: line.is_removed, lines_iter)
                 added_lines, iter_remaining = utils.take_while(

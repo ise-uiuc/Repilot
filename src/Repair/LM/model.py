@@ -232,7 +232,7 @@ class SpanLM(object):
                     output = output[:output.index(self.EOM)]
                     if self.META_FILE in output:  # removes META file token that is sometimes generated
                         output = output[:output.index(self.META_FILE)]
-                    print(output)
+                    # print(output)
                     # exit()
                     min_index = (gen_sequences[index] == self.EOM_ID).nonzero(as_tuple=True)[0][0].cpu().item()
                     entropies.append(

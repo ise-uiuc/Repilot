@@ -1,7 +1,7 @@
 import json
 from os import PathLike
 from pathlib import Path
-from typing import List, cast
+from typing import Dict, List, cast
 from realm.lsp import LSPClient, spec
 import subprocess
 from realm.lsp import TextFile
@@ -19,39 +19,8 @@ from realm.lsp import TextFile
 
 
 class JdtLspAnalyzer:
-    def sync(self, text: TextFile):
-        self.active_text = text
-        self.client.textDocument_didOpen(cast(spec.DidOpenTextDocumentParams, {
-            'textDocument': {
-                'uri': text.path.as_uri(),
-                'languageId': 'java',
-                'version': 0,
-                'text': text.content,
-            }}))
-
-    def save(self):
-        self.client.textDocument_didSave({
-            'textDocument': {
-                'uri': self.active_text.path.as_uri()
-            },
-            'text': self.active_text.content
-        })
-
-    # TODO: opt return type
-    def diagnose(self, timeout: float = 0.5) -> List[dict]:
-        self.save()
-        while True:
-            try:
-                diagnostics = self.client.try_recv(timeout)
-                if 'method' in diagnostics and (diagnostics := cast(
-                    spec.RequestMessage,
-                    diagnostics
-                ))['method'] == 'textDocument/publishDiagnostics':
-                    # TODO: diagnostics LSP spec type
-                    return diagnostics['params']['diagnostics']  # type: ignore # noqa
-                # print(diagnostics)
-            except TimeoutError:
-                return []
+    """Jdt LSP based Java program analyzer leveraging whole-project information.
+    Now assume only one active file for diagnosis"""
 
     def __init__(self, server_cmd: List[str], proj_path: PathLike, java_home: str) -> None:
         self.process = subprocess.Popen(
@@ -63,13 +32,14 @@ class JdtLspAnalyzer:
 
         # Initialize the server
         path = Path(proj_path)
-        self.client.initialize(cast(spec.InitializeParams, {
+        # with open('log1.json', 'w') as f:
+        self.client.initialize({
             "processId": self.process.pid,
             "clientInfo": {
                 "name": path.name,
                 "version": "0.0.0"
             },
-            "locale": "en-us",
+            "locale": "en",
             "rootPath": str(path.absolute()),
             "rootUri": path.as_uri(),
             "capabilities": spec.ClientCapabilities({
@@ -472,13 +442,13 @@ class JdtLspAnalyzer:
                 ],
                 "settings": {
                     "java": {
-                        "home": java_home,
+                        # "home": java_home,
                         "jdt": {
                             "ls": {
                                 "java": {
                                     "home": None,
                                 },
-                                "vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=True -Xmx1G -Xms100m",
+                                "vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx1G -Xms100m",
                                 "lombokSupport": {
                                     "enabled": True
                                 }
@@ -498,7 +468,13 @@ class JdtLspAnalyzer:
                                 "notCoveredPluginExecutionSeverity": "warning"
                             },
                             "workspaceCacheLimit": 90,
-                            "runtimes": []
+                            "runtimes": [
+                                {
+                                    "name": "JavaSE-1.8",
+                                    "path": java_home,
+                                    "default": True,
+                                },
+                            ]
                         },
                         "trace": {
                             "server": "verbose"
@@ -643,7 +619,7 @@ class JdtLspAnalyzer:
                             "toString": {
                                 "template": "${object.className} [${member.name()}=${member.value}, ${otherMembers}]",
                                 "codeStyle": "STRING_CONCATENATION",
-                                "SkipNone,Values": False,
+                                "SkipNullValues": False,
                                 "listArrayContents": True,
                                 "limitElements": 0
                             },
@@ -729,12 +705,53 @@ class JdtLspAnalyzer:
                     # "file:///Users/nole/Developer/javasymbolsolver-maven-sample/src/main/java/com/yourorganization/maven_sample/MyAnalysis.java"
                 ]
             },
-            "trace": "verbose",
+            # "trace": "verbose",
             "workspaceFolders": [
                 {
                     "uri": path.as_uri(),
                     "name": path.name,
                 }
             ]
-        }))
+        })
+        # with open('log') as f, open('config.json') as f1:
+        #     d = json.load(f)
+        #     d1 = json.load(f1)
+        #     d['processId'] = self.process.pid
+        #     self.client.initialize(d)
         self.client.initialized(cast(spec.InitializedParams, {}))
+        # self.client.workspace_didChangeConfiguration(d1)
+
+    def sync(self, text: TextFile):
+        self.active_text = text
+        self.client.textDocument_didOpen(cast(spec.DidOpenTextDocumentParams, {
+            'textDocument': {
+                'uri': text.path.as_uri(),
+                'languageId': 'java',
+                'version': 1,
+                'text': text.content,
+            }}))
+
+    def save(self):
+        self.client.textDocument_didSave({
+            'textDocument': {
+                'uri': self.active_text.path.as_uri()
+            },
+            'text': self.active_text.content
+        })
+
+    # TODO: opt return type
+    def diagnose(self, timeout: float = 0.5) -> List[dict]:
+        self.save()
+        while True:
+            try:
+                diagnostics = self.client.try_recv(timeout)
+                if 'method' in diagnostics and (diagnostics := cast(
+                    spec.RequestMessage,
+                    diagnostics
+                ))['method'] == 'textDocument/publishDiagnostics' and \
+                        cast(Dict[str, str], diagnostics['params'])['uri'] == self.active_text.path.as_uri():
+                    # TODO: diagnostics LSP spec type
+                    return diagnostics['params']['diagnostics']  # type: ignore # noqa
+                # print(diagnostics)
+            except TimeoutError:
+                return None # type: ignore

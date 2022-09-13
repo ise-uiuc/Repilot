@@ -66,9 +66,10 @@ def d_notify(method: str, _: Type[T]) -> Callable[['LSPClient', T], None]:
 
 
 class LSPClient:
-    def __init__(self, stdin: IO[bytes], stdout: IO[bytes]):
+    def __init__(self, stdin: IO[bytes], stdout: IO[bytes], verbose: bool = False):
         self.stdin = stdin
         self.stdout = stdout
+        self.verbose = verbose
         # self.responses: Dict[str, Msg] = {}
 
     def call(self, method: str, params: spec.array | spec.object) -> spec.ResponseMessage:
@@ -121,11 +122,13 @@ class LSPClient:
         assert line_breaks == '\r\n', line_breaks
         response = self.stdout.read(content_len).decode()
         # if 'textDocument/publishDiagnostics' in response:
-        print(response)
+        if self.verbose:
+            print(response)
         return json.loads(response)
 
     initialize = d_call('initialize', spec.InitializeParams)
     initialized = d_notify('initialized', spec.InitializedParams)
+    workspace_didChangeConfiguration = d_notify('textDocument/didChangeConfiguration', dict)
     textDocument_didOpen = d_notify(
         'textDocument/didOpen', spec.DidOpenTextDocumentParams)
     textDocument_didSave = d_notify(

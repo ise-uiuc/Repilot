@@ -14,8 +14,8 @@ object: TypeAlias = Any
 
 # NOTE: used an experimenting feature of mypy: --enable-recursive-aliases
 LSPObject: TypeAlias = Dict[str, Any]
-LSPAny: TypeAlias = LSPObject | List['LSPAny'] | string | integer | uinteger | decimal | boolean | null  # type: ignore # noqa
-LSPArray: TypeAlias = List[LSPAny]  # type: ignore # noqa
+LSPAny: TypeAlias = LSPObject | List['LSPAny'] | string | integer | uinteger | decimal | boolean | null
+LSPArray: TypeAlias = List[LSPAny]
 
 
 class Message(TypedDict):
