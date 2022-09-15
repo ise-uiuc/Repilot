@@ -20,47 +20,55 @@ class BuggyFile(NamedTuple):
     changes: List[Change]
 
     @staticmethod
-    def from_patch_file(patch_file: PatchedFile) -> 'BuggyFile':
-        def consecutive(lhs: Line, rhs: Line) -> bool:
-            if lhs.is_added and rhs.is_added:
-                return lhs.target_line_no + 1 == rhs.target_line_no
-            if lhs.is_removed and rhs.is_removed:
-                return lhs.source_line_no + 1 == rhs.source_line_no
-            return False
-
+    def from_patch_file(reversed: bool, patch_file: PatchedFile) -> 'BuggyFile':
         changes: List[Change] = []
         lines_iter: Iterator[Line] = (
             line for hunk in patch_file for line in hunk)
-        while True:
-            try:
+        
+        def get_source_line(line: Line):
+            return line.target_line_no if reversed else line.source_line_no
+        try:
+            last_context = next(lines_iter)
+            while True:
                 start_line = next(lines_iter)
                 if start_line.is_context:
+                    last_context = start_line
                     continue
                 if start_line.is_added:
+                    assert last_context.is_context
                     added_lines, iter_remaining = utils.take_while_two(
-                        lambda lhs, rhs: consecutive(lhs, rhs), itertools.chain([start_line], lines_iter))
+                        lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
+                       itertools.chain([start_line], lines_iter))
                     removed_lines: List[Line] = []
                 elif start_line.is_removed:
+                    assert last_context.is_context
                     removed_lines, iter_remaining = utils.take_while_two(
-                        lambda lhs, rhs: consecutive(lhs, rhs), itertools.chain([start_line], lines_iter))
+                        lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
+                       itertools.chain([start_line], lines_iter))
                     added_lines, iter_remaining = utils.take_while_two(
-                        lambda lhs, rhs: consecutive(lhs, rhs), iter_remaining)
+                        lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
+                       iter_remaining)
                     # print(added_lines)
+                if reversed:
+                    removed_lines, added_lines = added_lines, removed_lines
+                if len(removed_lines) == 0 and len(added_lines) > 0:
+                    start = get_source_line(last_context) + 1
+                else:
+                    start = get_source_line(removed_lines[0])
                 changes.append(Change(
-                    start_line.source_line_no,
-                    removed_lines,
-                    added_lines
+                    start,
+                    # Eliminate the '-'/'+'
+                    [str(line)[1:] for line in removed_lines],
+                    [str(line)[1:] for line in added_lines],
                 ))
                 lines_iter = iter_remaining
-            except StopIteration:
-                break
+        except StopIteration:
+            def remove_prefix(diff_fname: str) -> str:
+                prefixes = ['a/', 'b/']
+                prefix = next(filter(diff_fname.startswith, prefixes), '')
+                return diff_fname[len(prefix):]
 
-        def remove_prefix(diff_fname: str) -> str:
-            prefixes = ['a/', 'b/']
-            prefix = next(filter(diff_fname.startswith, prefixes), '')
-            return diff_fname[len(prefix):]
-
-        return BuggyFile(remove_prefix(patch_file.source_file), changes)
+            return BuggyFile(remove_prefix(patch_file.source_file), changes)
 
 
 class Bug(NamedTuple):
@@ -83,7 +91,7 @@ class Defects4J:
         patch_set = PatchSet.from_filename(patch_file, errors='ignore')
         patch_files: Iterator[PatchedFile] = filter(
             lambda f: f.is_modified_file, patch_set)
-        return list(map(BuggyFile.from_patch_file, patch_files))
+        return list(map(partial(BuggyFile.from_patch_file, True), patch_files))
 
     @staticmethod
     def bug_id(bug: dict) -> str:

@@ -21,7 +21,8 @@ from datasets import d4j
 assert shutil.which('defects4j')
 assert os.getenv('JAVA8_HOME')
 
-x, y = utils.take_while_two(lambda x, y: x == y - 1, [1,2,3,4,6,7,8])
+x, y = utils.take_while_two(lambda x, y: x == y - 1,
+                            [1, 2, 3, 4, 6, 7, 8])
 print(x)
 print(list(y))
 
@@ -30,15 +31,18 @@ model = SpanLM('facebook/incoder-1B')
 
 CONTEXT_SIZE = 1000
 
+
 def server_cmd(bug_id: str) -> List[str]:
     return shlex.split(f"/home/yuxiang/Developer/jdt-lsp/bin/jdtls \
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{bug_id}")
 
+
 def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
     proj, id_str = bug_id.split('-')
     repo = git.Repo(bug.proj_path)
-    repo.git.execute(['defects4j', 'checkout', '-p', proj, f'-v{id_str}b', '-w', bug.proj_path])
+    repo.git.execute(['defects4j', 'checkout', '-p', proj,
+                     f'-v{id_str}b', '-w', bug.proj_path])
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     repo.git.execute(['git', 'clean', '-xfd'])
 
@@ -47,10 +51,8 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
         text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
         print(len(buggy_file.changes))
         print(buggy_file.path)
-        print([c.start for c in reversed(buggy_file.changes)])
+        print([(c.start, len(c.removed_lines)) for c in reversed(buggy_file.changes)])
         for change in reversed(buggy_file.changes):
-            print("CHANGE")
-            print(change.removed_lines[0].source_line_no)
             start = change.start - 1
             end = start + len(change.removed_lines)
             start_pos = text_file.refine_index(start, 0)
@@ -58,9 +60,11 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
 
             start_index = text_file.form_index(start, 0)
             end_index = text_file.form_index(end, 0)
-            prefix = text_file.content[max(0, start_index - CONTEXT_SIZE):start_index]
+            prefix = text_file.content[max(
+                0, start_index - CONTEXT_SIZE):start_index]
             suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
-            well, _, [output], _ = model.model_predict(prefix, suffix, do_sample=True, strict=False)
+            well, _, [output], _ = model.model_predict(
+                prefix, suffix, do_sample=True, strict=False)
             assert well
 
             text_file.change([{
@@ -76,8 +80,8 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
 
 
 for bug_id, bug in dataset.all_bugs().items():
-    if bug_id == 'Mockito-2':
-        continue
+    # if bug_id != 'Mockito-1':
+    #     continue
     repair_proj(model, bug_id, bug)
 
 

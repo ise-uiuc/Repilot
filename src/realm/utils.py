@@ -1,5 +1,6 @@
 import itertools
 from typing import Callable, Iterable, Iterator, List, Tuple, TypeVar
+from unidiff.patch import Line
 
 T = TypeVar('T')
 
@@ -34,3 +35,11 @@ def take_while_two(pred: Callable[[T, T], bool], iterable: Iterable[T]) -> Tuple
             return_iter = itertools.chain([elem], iterator)
             break
     return (elements, return_iter)
+
+
+def line_consecutive(lhs: Line, rhs: Line) -> bool:
+    if lhs.is_added and rhs.is_added:
+        return lhs.target_line_no + 1 == rhs.target_line_no
+    if lhs.is_removed and rhs.is_removed:
+        return lhs.source_line_no + 1 == rhs.source_line_no
+    return False
