@@ -2,6 +2,7 @@ import os
 import shlex
 from pathlib import Path
 import shutil
+import subprocess
 from time import sleep
 from Repair.LM.model import SpanLM
 from realm import utils
@@ -46,12 +47,14 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
     repo.git.execute(['defects4j', 'checkout', '-p', proj,
                      f'-v{id_str}b', '-w', bug.proj_path])
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
-    repo.git.execute(['git', 'clean', '-xfd'])
+    # repo.git.execute(['git', 'clean', '-xfd'])
 
     analyzer = JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
         str, os.getenv('JAVA8_HOME')), verbose=False)
+    text_files: List[TextFile] = []
     for buggy_file in bug.buggy_files:
         text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
+        text_files.append(text_file)
         print(len(buggy_file.changes))
         print(buggy_file.path)
         print([(c.start, len(c.removed_lines))
@@ -78,11 +81,23 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
                     'end': end_pos
                 }
             })])
-        text_file.write()
+        # text_file.write()
         analyzer.sync(text_file)
         result = analyzer.diagnose(5)
         print('None' if result is None else [r for r in result if r['severity'] == 1])
+    repo.git.execute(['defects4j', 'checkout', '-p', proj,
+                     f'-v{id_str}f', '-w', bug.proj_path]) 
+    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.']) 
+    repo.close()
+    for text_file in text_files:
+        text_file.write()
 
+def validate_proj(bug_id: str, bug: d4j.Bug):
+    proj, id_str = bug_id.split('-')
+    java8_home = cast(str, os.getenv('JAVA8_HOME'))
+    env = dict(os.environ, JAVA_HOME=java8_home)
+    subprocess.run(['defects4j', 'compile'], env=env, cwd=bug.proj_path)
+    subprocess.run(['defects4j', 'test'], env=env, cwd=bug.proj_path)
 
 proj_accessed: Set[str] = set()
 for bug_id, bug in dataset.all_bugs().items():
@@ -94,6 +109,7 @@ for bug_id, bug in dataset.all_bugs().items():
     #     continue
     print(bug_id)
     repair_proj(model, bug_id, bug)
+    validate_proj(bug_id, bug)
 
 
 # file_path = Path(
