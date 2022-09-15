@@ -1,88 +1,76 @@
 import os
 import shlex
 from pathlib import Path
+import shutil
 from time import sleep
+from Repair.LM.model import SpanLM
 from realm.analyze import java_syntax
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp import TextDocument
 import json
-from typing import cast
+from typing import List, cast
 from init import data
 from unidiff import PatchSet
+import git
 
 from realm.lsp.spec import TextChange
 from realm.lsp.text import TextFile
 from datasets import d4j
 
+assert shutil.which('defects4j')
+assert os.getenv('JAVA8_HOME')
 
-dataset = d4j.Defects4J(data, '/home/yuxiang/Developer/realm/buggy_locations')
-print([(p, b) for p, b in dataset.all_bugs() if 'Jsoup' in str(p)])
-exit()
+dataset = d4j.Defects4J('/home/yuxiang/Developer/defects4j', data)
+model = SpanLM('facebook/incoder-1B')
 
-text = TextDocument("""def f(x: int, y: int) -> float:
-    x = partial(operator.add, 1)
-    y = x(10)
-    return y
-""")
-text.change([cast(TextChange, {
-    'range': {
-        'start': {
-            'line': 4,
-            'character': 0,
-        },
-        'end': {
-            'line': 4,
-            'character': 0,
-        }
-    },
-    'text': 'test '
-})])
-# print(text)
-# exit()
-java_server = shlex.split("/home/yuxiang/Developer/jdt-lsp/bin/jdtls \
+CONTEXT_SIZE = 1000
+
+def server_cmd(bug_id: str) -> List[str]:
+    return shlex.split(f"/home/yuxiang/Developer/jdt-lsp/bin/jdtls \
         -configuration /home/yuxiang/.cache/jdtls \
-        -data .path_to_dataa")
+        -data .lsp_data/{bug_id}")
 
-root = Path('/home/yuxiang/Developer/javasymbolsolver-maven-sample')
-# root = Path('/tmp/lang_1_fixed')
+def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
+    proj, id_str = bug_id.split('-')
+    repo = git.Repo(bug.proj_path)
+    repo.git.execute(['defects4j', 'checkout', '-p', proj, f'-v{id_str}b', '-w', bug.proj_path])
+    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+    repo.git.execute(['git', 'clean', '-xfd'])
 
-file_path = root / 'src/main/java/com/yourorganization/maven_sample/MyAnalysis.java'
-# file_path = root / 'src/main/java/org/apache/commons/lang3/math/NumberUtils.java'
+    # analyzer = JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, os.getenv('JAVA8_HOME'))
+    for buggy_file in bug.buggy_files:
+        text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
+        print(len(buggy_file.changes))
+        print(buggy_file.path)
+        for change in reversed(buggy_file.changes):
+            start = change.start - 1
+            end = start + len(change.removed_lines)
+            start_pos = text_file.refine_index(start, 0)
+            end_pos = text_file.refine_index(end, 0)
 
-# analyzer = JdtLspAnalyzer(java_server, root, str(os.getenv('JAVA_HOME')))
-# analyzer.sync(TextFile(file_path))
-# print(data)
+            start_index = text_file.form_index(start, 0)
+            end_index = text_file.form_index(end, 0)
+            prefix = text_file.content[max(0, start_index - CONTEXT_SIZE):start_index]
+            suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
+            well, _, [output], _ = model.model_predict(prefix, suffix, do_sample=True, strict=False)
+            assert well
 
-from realm.repair import main
-import git
+            text_file.change([{
+                'text': output,
+                'range': {
+                    'start': start_pos,
+                    'end': end_pos
+                }
+            }])
+        text_file.write()
+        # analyzer.sync(text_file)
+        # analyzer.diagnose(5)
 
-def checkout(path: str, commit: str, buggy=True):
-    repo = git.Repo(path) 
-    repo.git.diff(buggy_commit, fixed_commit)
 
-def diff(path: str, buggy_commit: str, fixed_commit: str):
-    repo = git.Repo(path) 
-    return repo.git.diff(buggy_commit, fixed_commit)
-
-for d in filter(lambda d: d['fixed'], data):
-    # print(d.keys())
-    # print(d['path'])
-    try:
-        analyzer = JdtLspAnalyzer(java_server, d['path'], str(os.getenv('JAVA_HOME')))
-        # analyzer.sync(TextFile(file_path))
-        for patch in patches:
-            p = Path(d['path']) / patch.source_file[2:]
-            analyzer.sync(TextFile(p))
-            print([d for d in analyzer.diagnose() if d['severity'] == 1])
-        # exit()
-    except git.BadName:
-        print("?")
+for bug_id, bug in dataset.all_bugs().items():
+    if bug_id != 'Mockito-2':
         continue
-
-exit()
-
-print("\nSTART")
-print(analyzer.diagnose())
+    repair_proj(model, bug_id, bug)
 
 
 # file_path = Path(

@@ -29,15 +29,13 @@ class BuggyFile(NamedTuple):
                 continue
             if start_line.is_added:
                 added_lines, iter_remaining = utils.take_while(
-                    lambda line: line.is_added, lines_iter)
+                    lambda line: line.is_added, itertools.chain([start_line], lines_iter))
                 removed_lines: List[Line] = []
-                changes.append(
-                    Change(start_line.source_line_no, [], added_lines))
             elif start_line.is_removed:
                 removed_lines, iter_remaining = utils.take_while(
-                    lambda line: line.is_removed, lines_iter)
+                    lambda line: line.is_removed, itertools.chain([start_line], lines_iter))
                 added_lines, iter_remaining = utils.take_while(
-                    lambda line: line.is_added, iter_remaining)
+                    lambda line: line.removed, iter_remaining)
                 # print(added_lines)
             changes.append(Change(
                 start_line.source_line_no,
@@ -64,11 +62,9 @@ BenchmarkMetadata = Dict[BugId, Bug]
 
 
 class Defects4J:
-    def __init__(self, d4j_home: PathLike, metadata: List[dict], buggy_location_path: PathLike) -> None:
+    def __init__(self, d4j_home: PathLike, metadata: List[dict]) -> None:
         self.d4j_home = Path(d4j_home)
         self.metadata = metadata
-        self.buggy_location_path = Path(buggy_location_path)
-        assert self.buggy_location_path.exists()
 
     def buggy_files(self, bug: dict) -> List[BuggyFile]:
         patch_file = self.d4j_home / 'framework' / 'projects' / \
@@ -76,6 +72,8 @@ class Defects4J:
         patch_set = PatchSet.from_filename(patch_file, errors='ignore')
         patch_files: Iterator[PatchedFile] = filter(
             lambda f: f.is_modified_file, patch_set)
+        if bug['proj'] == 'Mockito' and bug['bug_id'] == '2':
+            BuggyFile.from_patch_file(next(patch_files))
         return list(map(BuggyFile.from_patch_file, patch_files))
 
     @staticmethod

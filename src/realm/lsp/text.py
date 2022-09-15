@@ -24,7 +24,19 @@ class MutableTextDocument(Protocol):
         n_newline_chars = self.n_lines - 1
         assert sum(self.n_chars) + n_newline_chars == len(self.content)
 
+    def refine_index(self, line: int, character: int) -> spec.Position:
+        if line == self.n_lines and character == 0:
+            line = self.n_lines - 1
+            character = self.n_chars[line]
+        return spec.Position({
+            'line': line,
+            'character': character,
+        })
+
     def form_index(self, line: int, character: int) -> int:
+        pos = self.refine_index(line, character)
+        line = pos['line']
+        character = pos['character']
         if line >= self.n_lines or character > self.n_chars[line]:
             raise IndexError(line, character)
         return sum(map(partial(add, 1), self.n_chars[:line])) + character
