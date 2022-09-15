@@ -24,44 +24,50 @@ class BuggyFile(NamedTuple):
         changes: List[Change] = []
         lines_iter: Iterator[Line] = (
             line for hunk in patch_file for line in hunk)
-        
-        def get_source_line(line: Line):
-            return line.target_line_no if reversed else line.source_line_no
+
+        def get_source_line(line: Line) -> int:
+            ret = line.target_line_no if reversed else line.source_line_no
+            assert ret
+            return ret
         try:
             last_context = next(lines_iter)
             while True:
                 start_line = next(lines_iter)
-                if start_line.is_context:
-                    last_context = start_line
-                    continue
                 if start_line.is_added:
                     assert last_context.is_context
-                    added_lines, iter_remaining = utils.take_while_two(
+                    added_lines, line_iter = utils.take_while_two(
+                        lambda _: True,
                         lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
-                       itertools.chain([start_line], lines_iter))
+                        itertools.chain([start_line], lines_iter))
                     removed_lines: List[Line] = []
                 elif start_line.is_removed:
                     assert last_context.is_context
-                    removed_lines, iter_remaining = utils.take_while_two(
+                    removed_lines, line_iter = utils.take_while_two(
+                        lambda _: True,
                         lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
-                       itertools.chain([start_line], lines_iter))
-                    added_lines, iter_remaining = utils.take_while_two(
+                        itertools.chain([start_line], lines_iter))
+                    added_lines, line_iter = utils.take_while_two(
+                        lambda elem: elem.is_added,
                         lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
-                       iter_remaining)
-                    # print(added_lines)
+                        line_iter)
+                else:
+                    if start_line.is_context:
+                        last_context = start_line
+                    continue
                 if reversed:
                     removed_lines, added_lines = added_lines, removed_lines
                 if len(removed_lines) == 0 and len(added_lines) > 0:
-                    start = get_source_line(last_context) + 1
+                    start = 1 + \
+                        (last_context.target_line_no if reversed else last_context.source_line_no)
                 else:
-                    start = get_source_line(removed_lines[0])
+                    start = removed_lines[0].target_line_no if reversed else removed_lines[0].source_line_no
+                assert start is not None
                 changes.append(Change(
                     start,
                     # Eliminate the '-'/'+'
                     [str(line)[1:] for line in removed_lines],
                     [str(line)[1:] for line in added_lines],
                 ))
-                lines_iter = iter_remaining
         except StopIteration:
             def remove_prefix(diff_fname: str) -> str:
                 prefixes = ['a/', 'b/']

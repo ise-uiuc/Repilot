@@ -21,7 +21,8 @@ from datasets import d4j
 assert shutil.which('defects4j')
 assert os.getenv('JAVA8_HOME')
 
-x, y = utils.take_while_two(lambda x, y: x == y - 1,
+x, y = utils.take_while_two(lambda _: True,
+                            lambda x, y: x == y - 1,
                             [1, 2, 3, 4, 6, 7, 8])
 print(x)
 print(list(y))
@@ -41,6 +42,7 @@ def server_cmd(bug_id: str) -> List[str]:
 def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
     proj, id_str = bug_id.split('-')
     repo = git.Repo(bug.proj_path)
+    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     repo.git.execute(['defects4j', 'checkout', '-p', proj,
                      f'-v{id_str}b', '-w', bug.proj_path])
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])

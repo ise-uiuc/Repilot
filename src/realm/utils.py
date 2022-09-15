@@ -18,11 +18,13 @@ def take_while(pred: Callable[[T], bool], iterable: Iterable[T]) -> Tuple[List[T
     return (elements, return_iter)
 
 
-def take_while_two(pred: Callable[[T, T], bool], iterable: Iterable[T]) -> Tuple[List[T], Iterator[T]]:
+def take_while_two(pred_first: Callable[[T], bool], pred: Callable[[T, T], bool], iterable: Iterable[T]) -> Tuple[List[T], Iterator[T]]:
     """take_while that looks at two elements at a time"""
     iterator = iter(iterable)
     try:
         first_elem = next(iterator)
+        if not pred_first(first_elem):
+            raise StopIteration
     except StopIteration:
         return [], iter([])
     elements: List[T] = [first_elem]
