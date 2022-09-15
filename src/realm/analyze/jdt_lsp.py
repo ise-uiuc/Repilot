@@ -22,11 +22,11 @@ class JdtLspAnalyzer:
     """Jdt LSP based Java program analyzer leveraging whole-project information.
     Now assume only one active file for diagnosis"""
 
-    def __init__(self, server_cmd: List[str], proj_path: PathLike, java_home: str) -> None:
+    def __init__(self, server_cmd: List[str], proj_path: PathLike, java_home: str, verbose: bool = False) -> None:
         self.process = subprocess.Popen(
             server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, shell=False)
         assert self.process.stdin is not None and self.process.stdout is not None
-        self.client = LSPClient(self.process.stdin, self.process.stdout)
+        self.client = LSPClient(self.process.stdin, self.process.stdout, verbose)
 
         # self.active_text: Optional[TextDocument] = None
 

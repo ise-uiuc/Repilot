@@ -7,9 +7,9 @@ from Repair.LM.model import SpanLM
 from realm import utils
 from realm.analyze import java_syntax
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
-from realm.lsp import TextDocument
+from realm.lsp import TextDocument, spec
 import json
-from typing import List, cast
+from typing import List, Set, cast
 from init import data
 from unidiff import PatchSet
 import git
@@ -48,12 +48,14 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     repo.git.execute(['git', 'clean', '-xfd'])
 
-    # analyzer = JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, os.getenv('JAVA8_HOME'))
+    analyzer = JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
+        str, os.getenv('JAVA8_HOME')), verbose=False)
     for buggy_file in bug.buggy_files:
         text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
         print(len(buggy_file.changes))
         print(buggy_file.path)
-        print([(c.start, len(c.removed_lines)) for c in reversed(buggy_file.changes)])
+        print([(c.start, len(c.removed_lines))
+              for c in reversed(buggy_file.changes)])
         for change in reversed(buggy_file.changes):
             start = change.start - 1
             end = start + len(change.removed_lines)
@@ -69,21 +71,28 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
                 prefix, suffix, do_sample=True, strict=False)
             assert well
 
-            text_file.change([{
+            text_file.change([cast(spec.TextDocumentContentChangeEvent, {
                 'text': output,
                 'range': {
                     'start': start_pos,
                     'end': end_pos
                 }
-            }])
+            })])
         text_file.write()
-        # analyzer.sync(text_file)
-        # analyzer.diagnose(5)
+        analyzer.sync(text_file)
+        result = analyzer.diagnose(5)
+        print('None' if result is None else [r for r in result if r['severity'] == 1])
 
 
+proj_accessed: Set[str] = set()
 for bug_id, bug in dataset.all_bugs().items():
+    proj = bug_id.split('-')[0]
+    if proj in proj_accessed:
+        continue
+    proj_accessed.add(proj)
     # if bug_id != 'Mockito-1':
     #     continue
+    print(bug_id)
     repair_proj(model, bug_id, bug)
 
 
