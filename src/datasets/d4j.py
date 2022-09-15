@@ -21,28 +21,39 @@ class BuggyFile(NamedTuple):
 
     @staticmethod
     def from_patch_file(patch_file: PatchedFile) -> 'BuggyFile':
+        def consecutive(lhs: Line, rhs: Line) -> bool:
+            if lhs.is_added and rhs.is_added:
+                return lhs.target_line_no + 1 == rhs.target_line_no
+            if lhs.is_removed and rhs.is_removed:
+                return lhs.source_line_no + 1 == rhs.source_line_no
+            return False
+
         changes: List[Change] = []
         lines_iter: Iterator[Line] = (
             line for hunk in patch_file for line in hunk)
-        for start_line in lines_iter:
-            if start_line.is_context:
-                continue
-            if start_line.is_added:
-                added_lines, iter_remaining = utils.take_while(
-                    lambda line: line.is_added, itertools.chain([start_line], lines_iter))
-                removed_lines: List[Line] = []
-            elif start_line.is_removed:
-                removed_lines, iter_remaining = utils.take_while(
-                    lambda line: line.is_removed, itertools.chain([start_line], lines_iter))
-                added_lines, iter_remaining = utils.take_while(
-                    lambda line: line.removed, iter_remaining)
-                # print(added_lines)
-            changes.append(Change(
-                start_line.source_line_no,
-                removed_lines,
-                added_lines
-            ))
-            lines_iter = iter_remaining
+        while True:
+            try:
+                start_line = next(lines_iter)
+                if start_line.is_context:
+                    continue
+                if start_line.is_added:
+                    added_lines, iter_remaining = utils.take_while_two(
+                        lambda lhs, rhs: consecutive(lhs, rhs), itertools.chain([start_line], lines_iter))
+                    removed_lines: List[Line] = []
+                elif start_line.is_removed:
+                    removed_lines, iter_remaining = utils.take_while_two(
+                        lambda lhs, rhs: consecutive(lhs, rhs), itertools.chain([start_line], lines_iter))
+                    added_lines, iter_remaining = utils.take_while_two(
+                        lambda lhs, rhs: consecutive(lhs, rhs), iter_remaining)
+                    # print(added_lines)
+                changes.append(Change(
+                    start_line.source_line_no,
+                    removed_lines,
+                    added_lines
+                ))
+                lines_iter = iter_remaining
+            except StopIteration:
+                break
 
         def remove_prefix(diff_fname: str) -> str:
             prefixes = ['a/', 'b/']
@@ -72,8 +83,6 @@ class Defects4J:
         patch_set = PatchSet.from_filename(patch_file, errors='ignore')
         patch_files: Iterator[PatchedFile] = filter(
             lambda f: f.is_modified_file, patch_set)
-        if bug['proj'] == 'Mockito' and bug['bug_id'] == '2':
-            BuggyFile.from_patch_file(next(patch_files))
         return list(map(BuggyFile.from_patch_file, patch_files))
 
     @staticmethod

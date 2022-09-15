@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 from time import sleep
 from Repair.LM.model import SpanLM
+from realm import utils
 from realm.analyze import java_syntax
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp import TextDocument
@@ -19,6 +20,10 @@ from datasets import d4j
 
 assert shutil.which('defects4j')
 assert os.getenv('JAVA8_HOME')
+
+x, y = utils.take_while_two(lambda x, y: x == y - 1, [1,2,3,4,6,7,8])
+print(x)
+print(list(y))
 
 dataset = d4j.Defects4J('/home/yuxiang/Developer/defects4j', data)
 model = SpanLM('facebook/incoder-1B')
@@ -42,7 +47,10 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
         text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
         print(len(buggy_file.changes))
         print(buggy_file.path)
+        print([c.start for c in reversed(buggy_file.changes)])
         for change in reversed(buggy_file.changes):
+            print("CHANGE")
+            print(change.removed_lines[0].source_line_no)
             start = change.start - 1
             end = start + len(change.removed_lines)
             start_pos = text_file.refine_index(start, 0)
@@ -68,7 +76,7 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
 
 
 for bug_id, bug in dataset.all_bugs().items():
-    if bug_id != 'Mockito-2':
+    if bug_id == 'Mockito-2':
         continue
     repair_proj(model, bug_id, bug)
 
