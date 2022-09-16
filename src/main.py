@@ -10,7 +10,7 @@ from realm.analyze import java_syntax
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp import TextDocument, spec
 import json
-from typing import List, Set, cast
+from typing import List, Set, Tuple, cast
 from init import data
 from unidiff import PatchSet
 import git
@@ -28,10 +28,12 @@ x, y = utils.take_while_two(lambda _: True,
 print(x)
 print(list(y))
 
-dataset = d4j.Defects4J('/home/yuxiang/Developer/defects4j', data)
-model = SpanLM('facebook/incoder-1B')
 
 CONTEXT_SIZE = 1000
+N_SAMPLE = 10
+
+dataset = d4j.Defects4J('/home/yuxiang/Developer/defects4j', data)
+model = SpanLM('facebook/incoder-1B', batch_size=N_SAMPLE)
 
 
 def server_cmd(bug_id: str) -> List[str]:
@@ -52,6 +54,7 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
     analyzer = JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
         str, os.getenv('JAVA8_HOME')), verbose=False)
     text_files: List[TextFile] = []
+    zipped_patches: List[List[Tuple[spec.EntireDocumentChange, TextFile]]] = []
     for buggy_file in bug.buggy_files:
         text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
         text_files.append(text_file)
@@ -70,39 +73,84 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
             prefix = text_file.content[max(
                 0, start_index - CONTEXT_SIZE):start_index]
             suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
-            well, _, [output], _ = model.model_predict(
+            well, _, outputs, _ = model.model_predict(
                 prefix, suffix, do_sample=True, strict=False)
+            assert len(outputs) == N_SAMPLE
             assert well
 
-            text_file.change([cast(spec.TextDocumentContentChangeEvent, {
+            def full_content(change: spec.TextChange) -> spec.EntireDocumentChange:
+                text = TextDocument(text_file.content)
+                text.change([change])
+                return {
+                    'text': text.content,
+                }
+
+            zipped_patches.append([(full_content({
                 'text': output,
                 'range': {
                     'start': start_pos,
                     'end': end_pos
                 }
-            })])
-        # text_file.write()
-        analyzer.sync(text_file)
-        result = analyzer.diagnose(5)
-        print('None' if result is None else [r for r in result if r['severity'] == 1])
+            }), text_file) for output in outputs])
+
+            # text_file.change([cast(spec.TextDocumentContentChangeEvent, {
+            #     'text': output,
+            #     'range': {
+            #         'start': start_pos,
+            #         'end': end_pos
+            #     }
+            # })])
+        # Choose the best patch group
+    patch_group_iter = zip(*zipped_patches)
+    best_group, best_error = None, 999999999999
+    for patch_group in patch_group_iter:
+        n_errors = 0
+        for change, patch in patch_group:
+            patch.change([change])
+            patch.write()
+            analyzer.sync(patch)
+            diagnosis = analyzer.diagnose(2)
+            if diagnosis is None:
+                n_errors += 0
+            else:
+                n_errors += sum(
+                    1 for d in diagnosis
+                    if d['severity'] == 1
+                )
+        print(n_errors)
+        if n_errors < best_error:
+            best_error = n_errors
+            best_group = patch_group
+    assert best_group is not None
+    for change, patch in best_group:
+        patch.change([change])
+        patch.write()
+
+    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     repo.git.execute(['defects4j', 'checkout', '-p', proj,
-                     f'-v{id_str}f', '-w', bug.proj_path]) 
-    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.']) 
+                     f'-v{id_str}f', '-w', bug.proj_path])
+    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+    for change, patch in best_group:
+        patch.change([change])
+        patch.write()
+    repo.git.execute(['git', 'clean', '-dfx'])
     repo.close()
-    for text_file in text_files:
-        text_file.write()
+    # for text_file in text_files:
+    #     text_file.write()
+
 
 def validate_proj(bug_id: str, bug: d4j.Bug):
-    proj, id_str = bug_id.split('-')
+    # proj, id_str = bug_id.split('-')
     java8_home = cast(str, os.getenv('JAVA8_HOME'))
     env = dict(os.environ, JAVA_HOME=java8_home)
     subprocess.run(['defects4j', 'compile'], env=env, cwd=bug.proj_path)
     subprocess.run(['defects4j', 'test'], env=env, cwd=bug.proj_path)
 
+
 proj_accessed: Set[str] = set()
 for bug_id, bug in dataset.all_bugs().items():
     proj = bug_id.split('-')[0]
-    if proj in proj_accessed:
+    if proj in proj_accessed or proj == 'Mockito':
         continue
     proj_accessed.add(proj)
     # if bug_id != 'Mockito-1':
