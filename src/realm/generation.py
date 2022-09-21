@@ -90,7 +90,8 @@ class Repairer:
         analyzer: JdtLspAnalyzer,
         text_file: TextFile,
         prefix: str,
-        suffix: str
+        suffix: str,
+        max_new_tokens: int = 30,
     ) -> str:
         # Must add a special BOS token. Maybe because this is a decoder only model, BOS
         # indicates the start of the generation
@@ -102,11 +103,11 @@ class Repairer:
         original_content = text_file.content
         original_cursor = text_file.cursor
         all_output = []
-        for _ in range(10):
+        for _ in range(50):
             text_file.content = original_content
             text_file.cursor = original_cursor
             text_file.sync()
-            text_file.write()
+            # text_file.write()
             analyzer.change(text_file)
             outputs = self.generate(
                 analyzer,
@@ -114,15 +115,15 @@ class Repairer:
                 inputs,
                 do_sample=True,
                 num_beams=1,
-                max_new_tokens=50,
+                max_new_tokens=max_new_tokens,
                 temperature=0.8,
                 top_p=0.95,
                 eos_token_id=self.EOM_ID,
                 stopping_criteria=StoppingCriteriaList([IncoderEOM()])
             )
             outputs = outputs[:, len(inputs[0]):]
-            outputs = (output[:-1] if len(output) > 0 and output[-1]
-                       == self.EOM_ID else output for output in outputs)
+            # outputs = (output[:-1] if len(output) > 0 and output[-1]
+            #            == self.EOM_ID else output for output in outputs)
             output = self.tokenizer.batch_decode(
                 outputs, clean_up_tokenization_spaces=False)[0]
             # if self.EOM in output:
@@ -590,10 +591,11 @@ class Repairer:
             renormalize_logits=renormalize_logits,
         )
 
+        # Do not prepare criteria
         # 8. prepare stopping criteria
-        stopping_criteria = self.model._get_stopping_criteria(
-            max_length=max_length, max_time=max_time, stopping_criteria=stopping_criteria
-        )
+        # stopping_criteria = self.model._get_stopping_criteria(
+        #     max_length=max_length, max_time=max_time, stopping_criteria=stopping_criteria
+        # )
 
         # 9. go into different generation modes
         if is_greedy_gen_mode:
@@ -647,6 +649,7 @@ class Repairer:
                 output_scores=output_scores,
                 return_dict_in_generate=return_dict_in_generate,
                 synced_gpus=synced_gpus,
+                max_length=max_length,
                 **model_kwargs,
             )
 
@@ -988,8 +991,9 @@ class Repairer:
                 " `stopping_criteria=StoppingCriteriaList(MaxLengthCriteria(max_length=max_length))` instead.",
                 UserWarning,
             )
-            stopping_criteria = validate_stopping_criteria(
-                stopping_criteria, max_length)
+            # Remove this max_length limitation
+            # stopping_criteria = validate_stopping_criteria(
+            #     stopping_criteria, max_length)
         logits_warper = logits_warper if logits_warper is not None else LogitsProcessorList()
         pad_token_id = pad_token_id if pad_token_id is not None else self.model.config.pad_token_id
         eos_token_id = eos_token_id if eos_token_id is not None else self.model.config.eos_token_id
@@ -1024,6 +1028,7 @@ class Repairer:
 
         this_peer_finished = False  # used by synced_gpus only
         # auto-regressive generation
+        max_length += 20
         while True:
             if synced_gpus:
                 # Under synced_gpus the `forward` call must continue until all gpus complete their sequence.
@@ -1080,8 +1085,10 @@ class Repairer:
 
             # sample
             probs = nn.functional.softmax(next_token_scores, dim=-1)
-            # next_tokens = torch.multinomial(probs, num_samples=10).squeeze(1)
-            all_next_tokens = torch.topk(probs, k=4).indices.view(4, 1)
+            all_next_tokens = torch.multinomial(probs, num_samples=6).squeeze(1).view(6, 1)
+            # all_next_tokens = torch.topk(next_token_scores, k=6, dim=-1).indices.view(6, 1)
+            # print(all_next_tokens)
+            # exit()
 
             # finished sentences should have their next token be a padding token
             # print(next_tokens)
@@ -1091,8 +1098,9 @@ class Repairer:
             #             "If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
             #     # print(pad_token_id)
             #     # print(unfinished_sequences)
-            #     next_tokens = next_tokens * unfinished_sequences + \
-            #         pad_token_id * (1 - unfinished_sequences)
+            #     for idx, _ in enumerate(all_next_tokens):
+            #         all_next_tokens[idx] = all_next_tokens[idx] * unfinished_sequences + \
+            #             pad_token_id * (1 - unfinished_sequences)
             #     # print(next_tokens)
             #     # exit()
 
@@ -1105,7 +1113,10 @@ class Repairer:
             # exit()
             # if token.strip() in ['//', '/*', '*/', '/**']:
             #     continue
-            if True:
+            # Force the model to complete the generation
+            if max_length - len(input_ids[0]) < 10 and self.EOM_ID in all_next_tokens:
+                next_tokens = torch.tensor([self.EOM_ID]).to(DEVICE)
+            else:
                 pos = text_file.get_position(text_file.cursor)
                 completions = [item['insertText'] for item in analyzer.client.textDocument_completion({
                     'textDocument': {
@@ -1114,16 +1125,24 @@ class Repairer:
                     'position': pos,
                 })['result']['items'] if 'insertText' in item]
                 new_index = 0
-                print("============================================")
-                print(pos)
-                print(completions)
-                print(tokens)
-                print("============================================")
+                # print("============================================")
+                # # print(pos)
+                # print(completions)
+                # print(tokens)
+                # print("============================================")
                 if len(completions) > 0:
                     for idx, token in random.sample(list(enumerate(tokens)), k=len(tokens)):
-                        if token.strip() in completions:
+                        t = token.strip()
+                        space_index = t.find(' ')
+                        t = t[:space_index] if space_index != -1 else t
+                        try:
+                            x = next(filter(lambda c: c == t, completions))
+                            if random.random() > 0.5:
+                                break
                             new_index = idx
-                            print("Log:", token, idx)
+                            print("Log (match):", token, idx, x, sep=' === ')
+                            print("All:", tokens)
+                        except StopIteration:
                             break
                         # next_tokens = self.tokenizer.encode(token, add_special_tokens=False, return_tensors='pt')[0][:1]
                         # next_tokens = next_tokens.to(DEVICE)
@@ -1132,18 +1151,18 @@ class Repairer:
                 # print(token)
                 # print(text_file.content[text_file.cursor - 100:text_file.cursor])
                 # exit()
-            next_tokens = all_next_tokens[new_index].view(1)
-            text_file.add(tokens[new_index])
-            text_file.write()
-            # if random.random() > 0.8:
-            #     exit()
-            analyzer.change(text_file)
+                next_tokens = all_next_tokens[new_index].view(1)
+                text_file.add(tokens[new_index])
+                # text_file.write()
+                # if random.random() > 0.8:
+                #     exit()
+                analyzer.change(text_file)
 
-            print('*****************************************')
-            print(next_tokens)
-            print(self.tokenizer.decode(next_tokens, clean_up_tokenization_spaces=False))
-            print(tokens[new_index])
-            print('*****************************************')
+            # print('*****************************************')
+            # print(next_tokens)
+            # print(self.tokenizer.decode(next_tokens, clean_up_tokenization_spaces=False))
+            # print(tokens[new_index])
+            # print('*****************************************')
 
             # print(input_ids.shape)
             input_ids = torch.cat([input_ids, next_tokens.view(1, -1)], dim=-1)
@@ -1160,7 +1179,9 @@ class Repairer:
                     (next_tokens != eos_token_id).long())
 
             # stop when each sentence is finished, or if we exceed the maximum length
-            if unfinished_sequences.max() == 0 or stopping_criteria(input_ids, scores):
+            if max_length == len(input_ids[0]) or stopping_criteria(input_ids, scores):
+                # assert input_ids[0, -1] == self.EOM_ID
+            # if unfinished_sequences.max() == 0 or max_length == len(input_ids) or stopping_criteria(input_ids, scores):
                 if not synced_gpus:
                     break
                 else:
