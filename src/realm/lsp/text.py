@@ -11,6 +11,12 @@ class MutableTextDocument(Protocol):
     lines: List[str]
     n_chars: List[int]
     content: str
+    cursor: int
+
+    def add(self, text: str):
+        self.content = self.content[:self.cursor] + text + self.content[self.cursor:]  # type: ignore # noqa
+        self.cursor += len(text)
+        self.sync()
 
     # Remember to sync everytime the content changes
     def sync(self):
@@ -18,6 +24,9 @@ class MutableTextDocument(Protocol):
         self.lines = self.content.split('\n')
         self.n_chars = [len(line) for line in self.lines]
         self.check()
+
+    def move_cursor(self, index: int):
+        self.cursor = index
 
     def check(self):
         assert self.n_lines >= 1
@@ -68,7 +77,7 @@ class MutableTextDocument(Protocol):
                     start_pos['line'], start_pos['character'])
                 end_index = self.form_index(
                     end_pos['line'], end_pos['character'])
-                self.content: str = self.content[:start_index] + \
+                self.content = self.content[:start_index] + \
                     text_change['text'] + self.content[end_index:]
             else:
                 text_change = cast(spec.EntireDocumentChange, text_change)
@@ -85,12 +94,14 @@ class MutableTextDocument(Protocol):
 class TextDocument(MutableTextDocument):
     def __init__(self, content: str) -> None:
         self.content = content
+        self.cursor = 0
         self.sync()
 
 
 class TextFile(MutableTextDocument):
     def __init__(self, path: PathLike) -> None:
         self._path = Path(path)
+        self.cursor = 0
         with open(path) as f:
             self.content = f.read()
         self.sync()

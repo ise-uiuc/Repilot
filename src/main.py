@@ -73,6 +73,7 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
 
             start_index = text_file.form_index(start, 0)
             end_index = text_file.form_index(end, 0)
+            text_file.move_cursor(start_index)
 
             text_file.change([{
                 'text': '',
@@ -88,6 +89,8 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
             repairer = Repairer()
             output = repairer.repair(analyzer, text_file, prefix, suffix)
             print(output)
+            # print()
+            # print(text_file)
             exit()
             well, _, outputs, _ = model.model_predict(
                 prefix, suffix, do_sample=True, strict=False)

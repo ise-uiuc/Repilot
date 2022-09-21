@@ -104,6 +104,7 @@ class Repairer:
             max_new_tokens=200,
             temperature=0.8,
             top_p=0.9,
+            eos_token_id=self.EOM_ID,
             stopping_criteria=StoppingCriteriaList([IncoderEOM()])
         )
         outputs = outputs[:, len(inputs[0]):]
@@ -615,6 +616,8 @@ class Repairer:
 
             # 12. run sample
             return self.sample(
+                analyzer,
+                text_file,
                 input_ids,
                 logits_processor=logits_processor,
                 logits_warper=logits_warper,
@@ -841,6 +844,8 @@ class Repairer:
     @typing.no_type_check
     def sample(
         self,
+        analyzer: JdtLspAnalyzer,
+        text_file: TextFile,
         input_ids: torch.LongTensor,
         logits_processor: Optional[LogitsProcessorList] = None,
         stopping_criteria: Optional[StoppingCriteriaList] = None,
@@ -1000,7 +1005,6 @@ class Repairer:
         this_peer_finished = False  # used by synced_gpus only
         # auto-regressive generation
         while True:
-
             if synced_gpus:
                 # Under synced_gpus the `forward` call must continue until all gpus complete their sequence.
                 # The following logic allows an early break if all peers finished generating their sequence
@@ -1028,6 +1032,7 @@ class Repairer:
                 cur_len = cur_len + 1
                 continue  # don't waste resources running the code we don't need
 
+            # -1 because decoder's self-attention produces n outputs given n inputs
             next_token_logits = outputs.logits[:, -1, :]
 
             # pre-process distribution
@@ -1055,21 +1060,64 @@ class Repairer:
 
             # sample
             probs = nn.functional.softmax(next_token_scores, dim=-1)
-            next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+            # next_tokens = torch.multinomial(probs, num_samples=10).squeeze(1)
+            all_next_tokens = torch.topk(probs, k=10).indices.view(10, 1)
 
             # finished sentences should have their next token be a padding token
-            if eos_token_id is not None:
-                if pad_token_id is None:
-                    raise ValueError(
-                        "If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
-                next_tokens = next_tokens * unfinished_sequences + \
-                    pad_token_id * (1 - unfinished_sequences)
+            # print(next_tokens)
+            # if eos_token_id is not None:
+            #     if pad_token_id is None:
+            #         raise ValueError(
+            #             "If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
+            #     # print(pad_token_id)
+            #     # print(unfinished_sequences)
+            #     next_tokens = next_tokens * unfinished_sequences + \
+            #         pad_token_id * (1 - unfinished_sequences)
+            #     # print(next_tokens)
+            #     # exit()
 
             # update generated ids, model inputs, and length for next step
-            input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+            for next_tokens in all_next_tokens:
+                assert next_tokens.shape == torch.Size([1]), next_tokens.shape
+            tokens = [self.tokenizer.decode(next_tokens[0], clean_up_tokenization_spaces=False) for next_tokens in all_next_tokens]
+            # print(tokens)
+            # exit()
+            # if token.strip() in ['//', '/*', '*/', '/**']:
+            #     continue
+            if True:
+                completions = [item['insertText'] for item in analyzer.client.textDocument_completion({
+                    'textDocument': {
+                        'uri': text_file.path.as_uri()
+                    },
+                    'position': text_file.get_position(text_file.cursor)
+                })['result']['items'] if 'insertText' in item]
+                new_index = 0
+                if len(completions) > 0:
+                    for idx, token in enumerate(tokens):
+                        if token.strip() in completions:
+                            new_index = idx
+                            print("Yo", token, idx)
+                            break
+                        # next_tokens = self.tokenizer.encode(token, add_special_tokens=False, return_tensors='pt')[0][:1]
+                        # next_tokens = next_tokens.to(DEVICE)
+                    # assert next_tokens.shape == torch.Size([1]), token
+                # print()
+                # print(token)
+                # print(text_file.content[text_file.cursor - 100:text_file.cursor])
+                # exit()
+            next_tokens = all_next_tokens[new_index].view(1)
+            text_file.add(tokens[new_index])
+            analyzer.client.textDocument_didChange({
+                'text': text_file.content
+            })
+
+            # print(input_ids.shape)
+            input_ids = torch.cat([input_ids, next_tokens.view(1, -1)], dim=-1)
+            # print(input_ids.shape, 'new')
             model_kwargs = self.model._update_model_kwargs_for_generation(
                 outputs, model_kwargs, is_encoder_decoder=self.model.config.is_encoder_decoder
             )
+            # print(model_kwargs['past'][0][0].shape)
             cur_len = cur_len + 1
 
             # if eos_token was found in one sentence, set sentence to finished
