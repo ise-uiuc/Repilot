@@ -8,6 +8,7 @@ from Repair.LM.model import SpanLM
 from realm import utils
 from realm.analyze import java_syntax
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
+from realm.generation import Repairer
 from realm.lsp import TextDocument, spec
 import json
 from typing import List, Set, Tuple, cast
@@ -30,10 +31,11 @@ print(list(y))
 
 
 CONTEXT_SIZE = 1000
-N_SAMPLE = 10
+N_SAMPLE = 1
 
 dataset = d4j.Defects4J('/home/yuxiang/Developer/defects4j', data)
-model = SpanLM('facebook/incoder-1B', batch_size=N_SAMPLE)
+# model = SpanLM('facebook/incoder-1B', batch_size=N_SAMPLE)
+model = None
 
 
 def server_cmd(bug_id: str) -> List[str]:
@@ -62,6 +64,7 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
         print(buggy_file.path)
         print([(c.start, len(c.removed_lines))
               for c in reversed(buggy_file.changes)])
+        # Generate N samples for each change
         for change in reversed(buggy_file.changes):
             start = change.start - 1
             end = start + len(change.removed_lines)
@@ -70,13 +73,28 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
 
             start_index = text_file.form_index(start, 0)
             end_index = text_file.form_index(end, 0)
+
+            text_file.change([{
+                'text': '',
+                'range': {
+                    'start': start_pos,
+                    'end': end_pos
+                }
+            }])
+
             prefix = text_file.content[max(
                 0, start_index - CONTEXT_SIZE):start_index]
             suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
+            repairer = Repairer()
+            output = repairer.repair(analyzer, text_file, prefix, suffix)
+            print(output)
+            exit()
             well, _, outputs, _ = model.model_predict(
                 prefix, suffix, do_sample=True, strict=False)
             assert len(outputs) == N_SAMPLE
             assert well
+            print(outputs[0])
+            exit()
 
             def full_content(change: spec.TextChange) -> spec.EntireDocumentChange:
                 text = TextDocument(text_file.content)
@@ -92,36 +110,29 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
                     'end': end_pos
                 }
             }), text_file) for output in outputs])
-
-            # text_file.change([cast(spec.TextDocumentContentChangeEvent, {
-            #     'text': output,
-            #     'range': {
-            #         'start': start_pos,
-            #         'end': end_pos
-            #     }
-            # })])
-        # Choose the best patch group
-    patch_group_iter = zip(*zipped_patches)
-    best_group, best_error = None, 999999999999
-    for patch_group in patch_group_iter:
-        n_errors = 0
-        for change, patch in patch_group:
-            patch.change([change])
-            patch.write()
-            analyzer.sync(patch)
-            diagnosis = analyzer.diagnose(2)
-            if diagnosis is None:
-                n_errors += 0
-            else:
-                n_errors += sum(
-                    1 for d in diagnosis
-                    if d['severity'] == 1
-                )
-        print(n_errors)
-        if n_errors < best_error:
-            best_error = n_errors
-            best_group = patch_group
-    assert best_group is not None
+        continue
+    # Choose the best patch group according to the analysis
+    # patch_group_iter = zip(*zipped_patches)
+    # best_group, best_error = None, 999999999999
+    # for patch_group in patch_group_iter:
+    #     n_errors = 0
+    #     for change, patch in patch_group:
+    #         patch.change([change])
+    #         patch.write()
+    #         analyzer.sync(patch)
+    #         diagnosis = analyzer.diagnose(2)
+    #         if diagnosis is None:
+    #             n_errors += 0
+    #         else:
+    #             n_errors += sum(
+    #                 1 for d in diagnosis
+    #                 if d['severity'] == 1
+    #             )
+    #     print(n_errors)
+    #     if n_errors < best_error:
+    #         best_error = n_errors
+    #         best_group = patch_group
+    # assert best_group is not None
     for change, patch in best_group:
         patch.change([change])
         patch.write()

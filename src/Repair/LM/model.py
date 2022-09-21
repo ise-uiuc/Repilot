@@ -183,6 +183,7 @@ class SpanLM(object):
             else:
                 raw_o = self.model.generate(input_tokens,
                                             max_length=len(input_tokens[0]) + 50,
+                                            # max_new_tokens=5,
                                             do_sample=do_sample,
                                             output_scores=True,
                                             return_dict_in_generate=True,
