@@ -76,7 +76,7 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
             text_file.move_cursor(start_index)
 
             text_file.change([{
-                'text': '',
+                'text': '\n',
                 'range': {
                     'start': start_pos,
                     'end': end_pos
@@ -88,7 +88,7 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
             suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
             repairer = Repairer()
             output = repairer.repair(analyzer, text_file, prefix, suffix)
-            print(output)
+            # print(output)
             # print()
             # print(text_file)
             exit()

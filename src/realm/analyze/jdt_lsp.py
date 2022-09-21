@@ -1,3 +1,4 @@
+import itertools
 import json
 from os import PathLike
 from pathlib import Path
@@ -17,16 +18,17 @@ from realm.lsp import TextFile
 #         return impl
 #     return decorator
 
-
 class JdtLspAnalyzer:
     """Jdt LSP based Java program analyzer leveraging whole-project information.
     Now assume only one active file for diagnosis"""
+    counter = itertools.count(0)
 
     def __init__(self, server_cmd: List[str], proj_path: PathLike, java_home: str, verbose: bool = False) -> None:
         self.process = subprocess.Popen(
             server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, shell=False)
         assert self.process.stdin is not None and self.process.stdout is not None
-        self.client = LSPClient(self.process.stdin, self.process.stdout, verbose)
+        self.client = LSPClient(
+            self.process.stdin, self.process.stdout, verbose)
 
         # self.active_text: Optional[TextDocument] = None
 
@@ -723,13 +725,28 @@ class JdtLspAnalyzer:
 
     def sync(self, text: TextFile):
         self.active_text = text
+
+    def open(self, text: TextFile):
+        self.sync(text)
         self.client.textDocument_didOpen(cast(spec.DidOpenTextDocumentParams, {
             'textDocument': {
                 'uri': text.path.as_uri(),
                 'languageId': 'java',
-                'version': 1,
+                'version': next(self.counter),
                 'text': text.content,
             }}))
+
+    def change(self, text: TextFile):
+        self.sync(text)
+        self.client.textDocument_didChange({
+            'textDocument': {
+                'uri': text.path.as_uri(),
+                'version': next(self.counter)
+            },
+            'contentChanges': [{
+                'text': text.content,
+            }]
+        })
 
     def save(self):
         self.client.textDocument_didSave({
@@ -754,4 +771,4 @@ class JdtLspAnalyzer:
                     return diagnostics['params']['diagnostics']  # type: ignore # noqa
                 # print(diagnostics)
             except TimeoutError:
-                return None # type: ignore
+                return None  # type: ignore

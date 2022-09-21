@@ -1,4 +1,5 @@
 """Copied and rewritted from transformers.generation_utils"""
+import random
 from datasets import d4j
 import inspect
 import typing
@@ -45,7 +46,7 @@ from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
-from realm.lsp.text import TextFile
+from realm.lsp.text import TextDocument, TextFile
 
 
 class IncoderEOM(StoppingCriteria):
@@ -65,8 +66,10 @@ class Repairer:
     META_FILE = "<|/ file"
 
     def __init__(self) -> None:
+        print("G")
         self.model: GenerationMixin = AutoModelForCausalLM.from_pretrained(
             MODEL).to(DEVICE)
+        print("G")
         self.max_length = self.model.config.to_dict()[
             'max_position_embeddings']
         self.infill_ph = "<|mask:0|>"
@@ -94,27 +97,44 @@ class Repairer:
         input_strings = self.inputs(prefix, '\n' + suffix)
         # print(input_strings)
         # exit()
-        inputs = self.tokenizer.encode(input_strings, return_tensors='pt').to(DEVICE)
-        outputs = self.generate(
-            analyzer,
-            text_file,
-            inputs,
-            do_sample=True,
-            num_beams=1,
-            max_new_tokens=200,
-            temperature=0.8,
-            top_p=0.9,
-            eos_token_id=self.EOM_ID,
-            stopping_criteria=StoppingCriteriaList([IncoderEOM()])
-        )
-        outputs = outputs[:, len(inputs[0]):]
-        outputs = (output[:-1] if len(output) > 0 and output[-1] == self.EOM_ID else output for output in outputs)
-        output = self.tokenizer.batch_decode(
-            outputs, clean_up_tokenization_spaces=False)[0]
-        # if self.EOM in output:
-        #     output = output[:output.index(self.EOM)]
-        if self.META_FILE in output:  # removes META file token that is sometimes generated
-            output = output[:output.index(self.META_FILE)]
+        inputs = self.tokenizer.encode(
+            input_strings, return_tensors='pt').to(DEVICE)
+        original_content = text_file.content
+        original_cursor = text_file.cursor
+        all_output = []
+        for _ in range(10):
+            text_file.content = original_content
+            text_file.cursor = original_cursor
+            text_file.sync()
+            text_file.write()
+            analyzer.change(text_file)
+            outputs = self.generate(
+                analyzer,
+                text_file,
+                inputs,
+                do_sample=True,
+                num_beams=1,
+                max_new_tokens=50,
+                temperature=0.8,
+                top_p=0.95,
+                eos_token_id=self.EOM_ID,
+                stopping_criteria=StoppingCriteriaList([IncoderEOM()])
+            )
+            outputs = outputs[:, len(inputs[0]):]
+            outputs = (output[:-1] if len(output) > 0 and output[-1]
+                       == self.EOM_ID else output for output in outputs)
+            output = self.tokenizer.batch_decode(
+                outputs, clean_up_tokenization_spaces=False)[0]
+            # if self.EOM in output:
+            #     output = output[:output.index(self.EOM)]
+            if self.META_FILE in output:  # removes META file token that is sometimes generated
+                output = output[:output.index(self.META_FILE)]
+            all_output.append(output)
+        for output in all_output:
+            print(output)
+            print("\n===========================================================\n")
+        print(len(all_output))
+        exit()
         return output
 
     @typing.no_type_check
@@ -1061,7 +1081,7 @@ class Repairer:
             # sample
             probs = nn.functional.softmax(next_token_scores, dim=-1)
             # next_tokens = torch.multinomial(probs, num_samples=10).squeeze(1)
-            all_next_tokens = torch.topk(probs, k=10).indices.view(10, 1)
+            all_next_tokens = torch.topk(probs, k=4).indices.view(4, 1)
 
             # finished sentences should have their next token be a padding token
             # print(next_tokens)
@@ -1079,24 +1099,31 @@ class Repairer:
             # update generated ids, model inputs, and length for next step
             for next_tokens in all_next_tokens:
                 assert next_tokens.shape == torch.Size([1]), next_tokens.shape
-            tokens = [self.tokenizer.decode(next_tokens[0], clean_up_tokenization_spaces=False) for next_tokens in all_next_tokens]
+            tokens = [self.tokenizer.decode(
+                next_tokens.view(1), clean_up_tokenization_spaces=False) for next_tokens in all_next_tokens]
             # print(tokens)
             # exit()
             # if token.strip() in ['//', '/*', '*/', '/**']:
             #     continue
             if True:
+                pos = text_file.get_position(text_file.cursor)
                 completions = [item['insertText'] for item in analyzer.client.textDocument_completion({
                     'textDocument': {
                         'uri': text_file.path.as_uri()
                     },
-                    'position': text_file.get_position(text_file.cursor)
+                    'position': pos,
                 })['result']['items'] if 'insertText' in item]
                 new_index = 0
+                print("============================================")
+                print(pos)
+                print(completions)
+                print(tokens)
+                print("============================================")
                 if len(completions) > 0:
-                    for idx, token in enumerate(tokens):
+                    for idx, token in random.sample(list(enumerate(tokens)), k=len(tokens)):
                         if token.strip() in completions:
                             new_index = idx
-                            print("Yo", token, idx)
+                            print("Log:", token, idx)
                             break
                         # next_tokens = self.tokenizer.encode(token, add_special_tokens=False, return_tensors='pt')[0][:1]
                         # next_tokens = next_tokens.to(DEVICE)
@@ -1107,9 +1134,16 @@ class Repairer:
                 # exit()
             next_tokens = all_next_tokens[new_index].view(1)
             text_file.add(tokens[new_index])
-            analyzer.client.textDocument_didChange({
-                'text': text_file.content
-            })
+            text_file.write()
+            # if random.random() > 0.8:
+            #     exit()
+            analyzer.change(text_file)
+
+            print('*****************************************')
+            print(next_tokens)
+            print(self.tokenizer.decode(next_tokens, clean_up_tokenization_spaces=False))
+            print(tokens[new_index])
+            print('*****************************************')
 
             # print(input_ids.shape)
             input_ids = torch.cat([input_ids, next_tokens.view(1, -1)], dim=-1)
