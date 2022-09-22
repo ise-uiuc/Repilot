@@ -107,8 +107,9 @@ class Repairer:
             text_file.content = original_content
             text_file.cursor = original_cursor
             text_file.sync()
-            # text_file.write()
+            text_file.write()
             print("NOW:", idx)
+            analyzer.open(text_file)
             analyzer.change(text_file)
             outputs = self.generate(
                 analyzer,
@@ -1159,6 +1160,8 @@ class Repairer:
                                     assert replace['end']['line'] == replace['start']['line']
                                     start_index = replace['end']['character'] - replace['start']['character']
                                     yield result['newText'][start_index:]
+                                else:
+                                    assert False
                     completions = list(completion_iter())
                     # print(completions)
                     # print(completion_result)
@@ -1172,7 +1175,7 @@ class Repairer:
                     # print("============================================")
                     completions = [(c if '${' not in c else c[:c.index('${')]) for c in completions]
                     completions = list(filter(lambda c: c != '', completions))
-                    print(completions)
+                    # print(completions)
                     if True:
                     # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '' and len(completions) > 0:
                         for idx, token in random.sample(list(enumerate(tokens)), k=len(tokens)):
@@ -1187,8 +1190,8 @@ class Repairer:
                                 # print(t)
                                 # print('====================')
                                 x = next(filter(lambda c: token.startswith(c) or c.startswith(token), completions))
-                                # if random.random() > 0.5:
-                                #     break
+                                if random.random() > 0.5:
+                                    break
                                 new_index = idx
                                 assert x != ''
                                 assert token != ''
