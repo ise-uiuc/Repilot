@@ -103,11 +103,12 @@ class Repairer:
         original_content = text_file.content
         original_cursor = text_file.cursor
         all_output = []
-        for _ in range(50):
+        for idx in range(20):
             text_file.content = original_content
             text_file.cursor = original_cursor
             text_file.sync()
             # text_file.write()
+            print("NOW:", idx)
             analyzer.change(text_file)
             outputs = self.generate(
                 analyzer,
@@ -121,6 +122,7 @@ class Repairer:
                 eos_token_id=self.EOM_ID,
                 stopping_criteria=StoppingCriteriaList([IncoderEOM()])
             )
+            text_file.write()
             outputs = outputs[:, len(inputs[0]):]
             # outputs = (output[:-1] if len(output) > 0 and output[-1]
             #            == self.EOM_ID else output for output in outputs)
@@ -1086,6 +1088,7 @@ class Repairer:
             # sample
             probs = nn.functional.softmax(next_token_scores, dim=-1)
             all_next_tokens = torch.multinomial(probs, num_samples=6).squeeze(1).view(6, 1)
+            new_index = 0
             # all_next_tokens = torch.topk(next_token_scores, k=6, dim=-1).indices.view(6, 1)
             # print(all_next_tokens)
             # exit()
@@ -1118,45 +1121,95 @@ class Repairer:
                 next_tokens = torch.tensor([self.EOM_ID]).to(DEVICE)
             else:
                 pos = text_file.get_position(text_file.cursor)
-                completions = [item['insertText'] for item in analyzer.client.textDocument_completion({
-                    'textDocument': {
-                        'uri': text_file.path.as_uri()
-                    },
-                    'position': pos,
-                })['result']['items'] if 'insertText' in item]
-                new_index = 0
-                # print("============================================")
-                # # print(pos)
-                # print(completions)
-                # print(tokens)
-                # print("============================================")
-                if len(completions) > 0:
-                    for idx, token in random.sample(list(enumerate(tokens)), k=len(tokens)):
-                        t = token.strip()
-                        space_index = t.find(' ')
-                        t = t[:space_index] if space_index != -1 else t
-                        try:
-                            x = next(filter(lambda c: c == t, completions))
-                            if random.random() > 0.5:
+                if True:
+                # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '':
+                    analyzer.change(text_file)
+                    text_file.write()
+                    completion_result = analyzer.client.textDocument_completion({
+                        'textDocument': {
+                            'uri': text_file.path.as_uri()
+                        },
+                        'position': pos,
+                        # {
+                        #     'line': 302,
+                        #     'character': 26,
+                        # },
+                    })
+                    # completion_result1 = analyzer.client.textDocument_completion({
+                    #     'textDocument': {
+                    #         'uri': text_file.path.as_uri()
+                    #     },
+                    #     'position': {
+                    #         'line': 302,
+                    #         'character': 45,
+                    #     },
+                    # })
+                    def completion_iter():
+                        for item in completion_result['result']['items']:
+                            if not 'textEdit' in item:
+                                pass
+                            else:
+                                result = item['textEdit']
+                                insert = result['insert']
+                                replace = result['replace']
+                                if replace['end'] == pos:
+                                    # print("EQ")
+                                    assert insert == replace
+                                    assert replace['end'] == pos, result
+                                    assert replace['end']['line'] == replace['start']['line']
+                                    start_index = replace['end']['character'] - replace['start']['character']
+                                    yield result['newText'][start_index:]
+                    completions = list(completion_iter())
+                    # print(completions)
+                    # print(completion_result)
+                    # print(completion_result1)
+                    # print(tokens)
+                    # print("============================================")
+                    # print(pos)
+                    # breakpoint()
+                    # print(completions)
+                    # print(tokens)
+                    # print("============================================")
+                    completions = [(c if '${' not in c else c[:c.index('${')]) for c in completions]
+                    completions = list(filter(lambda c: c != '', completions))
+                    print(completions)
+                    if True:
+                    # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '' and len(completions) > 0:
+                        for idx, token in random.sample(list(enumerate(tokens)), k=len(tokens)):
+                            # t = token.rstrip()
+                            # space_index = t.find(' ')
+                            # t = t[:space_index] if space_index != -1 else t
+                            try:
+                                # if t == '':
+                                #     break
+                                # print('====================')
+                                # print(completions)
+                                # print(t)
+                                # print('====================')
+                                x = next(filter(lambda c: token.startswith(c) or c.startswith(token), completions))
+                                # if random.random() > 0.5:
+                                #     break
+                                new_index = idx
+                                assert x != ''
+                                assert token != ''
+                                print("Log (match):", token, idx, x, sep=' === ')
+                                print("All:", tokens)
+                            except StopIteration:
                                 break
-                            new_index = idx
-                            print("Log (match):", token, idx, x, sep=' === ')
-                            print("All:", tokens)
-                        except StopIteration:
-                            break
-                        # next_tokens = self.tokenizer.encode(token, add_special_tokens=False, return_tensors='pt')[0][:1]
-                        # next_tokens = next_tokens.to(DEVICE)
-                    # assert next_tokens.shape == torch.Size([1]), token
-                # print()
-                # print(token)
-                # print(text_file.content[text_file.cursor - 100:text_file.cursor])
-                # exit()
+                            # next_tokens = self.tokenizer.encode(token, add_special_tokens=False, return_tensors='pt')[0][:1]
+                            # next_tokens = next_tokens.to(DEVICE)
+                        # assert next_tokens.shape == torch.Size([1]), token
+                    # print()
+                    # print(token)
+                    # print(text_file.content[text_file.cursor - 100:text_file.cursor])
+                    # exit()
                 next_tokens = all_next_tokens[new_index].view(1)
                 text_file.add(tokens[new_index])
                 # text_file.write()
-                # if random.random() > 0.8:
+                # if random.random() > 0.9:
+                #     text_file.write()
                 #     exit()
-                analyzer.change(text_file)
+                # analyzer.change(text_file)
 
             # print('*****************************************')
             # print(next_tokens)

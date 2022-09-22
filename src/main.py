@@ -73,21 +73,31 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
 
             start_index = text_file.form_index(start, 0)
             end_index = text_file.form_index(end, 0)
-            text_file.move_cursor(start_index)
+
+            removed_lines = '\n'.join('// Buggy: ' + line for line in change.removed_lines)
+            insertion = f'{removed_lines}\n\n'
 
             text_file.change([{
-                'text': '\n',
+                'text': insertion,
                 'range': {
                     'start': start_pos,
                     'end': end_pos
                 }
             }])
+            text_file.move_cursor(start_index + len(insertion) - 1)
+            assert text_file.content[text_file.cursor] == '\n'
+            # print(text_file.get_position(text_file.cursor))
+            # text_file.write()
+            # exit()
 
-            prefix = text_file.content[max(
-                0, start_index - CONTEXT_SIZE):start_index]
-            suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
+            lines = text_file.content.split('\n')
+            prefix = '\n'.join(lines[max(0, start_pos['line'] - 20):start_pos['line']]) + insertion
+            suffix = '\n'.join(lines[end_pos['line']:end_pos['line'] + 20])
+            # prefix = text_file.content[max(
+            #     0, start_index - CONTEXT_SIZE):start_index]
+            # suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
             repairer = Repairer()
-            output = repairer.repair(analyzer, text_file, prefix, suffix)
+            output = repairer.repair(analyzer, text_file, prefix, suffix, max_new_tokens=15)
             # print(output)
             # print()
             # print(text_file)
@@ -160,13 +170,19 @@ def validate_proj(bug_id: str, bug: d4j.Bug):
     subprocess.run(['defects4j', 'compile'], env=env, cwd=bug.proj_path)
     subprocess.run(['defects4j', 'test'], env=env, cwd=bug.proj_path)
 
-
-proj_accessed: Set[str] = set()
+import torch
+torch.manual_seed(0)
+import random
+random.seed(0)
+# proj_accessed: Set[str] = set()
 for bug_id, bug in dataset.all_bugs().items():
     proj = bug_id.split('-')[0]
-    if proj in proj_accessed or proj == 'Mockito':
+    # if proj in proj_accessed or proj == 'Mockito':
+    if proj == 'Mockito':
         continue
-    proj_accessed.add(proj)
+    # if bug_id == 'Math-1':
+    #     continue
+    # proj_accessed.add(proj)
     # if bug_id != 'Mockito-1':
     #     continue
     print(bug_id)
