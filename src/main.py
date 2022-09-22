@@ -52,8 +52,8 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
     proj, id_str = bug_id.split('-')
     repo = git.Repo(bug.proj_path)
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
-    repo.git.execute(['defects4j', 'checkout', '-p', proj,
-                     f'-v{id_str}b', '-w', bug.proj_path])
+    subprocess.run(['defects4j', 'checkout', '-p', proj,
+                    f'-v{id_str}b', '-w', bug.proj_path])
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     # repo.git.execute(['git', 'clean', '-xfd'])
 
@@ -169,8 +169,8 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
     env = dict(os.environ, JAVA_HOME=java8_home)
     repo = git.Repo(bug.proj_path)
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
-    repo.git.execute(['defects4j', 'checkout', '-p', proj,
-                     f'-v{id_str}f', '-w', bug.proj_path])
+    subprocess.run(['defects4j', 'checkout', '-p', proj,
+                    f'-v{id_str}f', '-w', bug.proj_path])
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     for patch_file in patch_group:
         patch_file.write()
@@ -204,9 +204,8 @@ for bug_id, bug in dataset.all_bugs().items():
     for idx, patch_group in enumerate(patch_groups):
         if validate_proj(bug_id, bug, patch_group):
             candidate_patch_groups.append(idx)
-    logging.log(logging.INFO, msg=str(bug_id))
-    logging.log(logging.INFO, msg=str(f'{len(candidate_patch_groups)} / {len(patch_groups)}'))
-
+    logging.info(bug_id)
+    logging.info(f'{len(candidate_patch_groups)} / {len(patch_groups)}')
 
 # file_path = Path(
 #     '/home/yuxiang/Developer/d4j-checkout/Lang-1-buggy/src/main/java/org/apache/commons/lang3/Validate.java')
