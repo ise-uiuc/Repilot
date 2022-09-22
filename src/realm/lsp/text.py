@@ -34,7 +34,7 @@ class MutableTextDocument(Protocol):
         assert sum(self.n_chars) + n_newline_chars == len(self.content)
 
     def refine_index(self, line: int, character: int) -> spec.Position:
-        if line == self.n_lines and character == 0:
+        if line >= self.n_lines and character >= 0:
             line = self.n_lines - 1
             character = self.n_chars[line]
         return spec.Position({

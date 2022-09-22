@@ -55,8 +55,9 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
 
     analyzer = JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
         str, os.getenv('JAVA8_HOME')), verbose=False)
+
     text_files: List[TextFile] = []
-    zipped_patches: List[List[Tuple[spec.EntireDocumentChange, TextFile]]] = []
+    # For each file, generated a patch for each change (in reversed order relative to change)
     for buggy_file in bug.buggy_files:
         text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
         text_files.append(text_file)
@@ -64,7 +65,7 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
         print(buggy_file.path)
         print([(c.start, len(c.removed_lines))
               for c in reversed(buggy_file.changes)])
-        # Generate N samples for each change
+
         for change in reversed(buggy_file.changes):
             start = change.start - 1
             end = start + len(change.removed_lines)
@@ -75,13 +76,27 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
             end_index = text_file.form_index(end, 0)
 
             insertion = ''.join('// Buggy: ' + line for line in change.removed_lines)
+            if not insertion.endswith('\n'):
+                insertion += '\n'
             # if not insertion.endswith('\n'):
             #     print('Warining:', insertion)
             #     insertion += '\n'
+            # print(text_file.get_position(text_file.cursor))
+            # text_file.write()
+            # exit()
+
             # prefix
-            # insertion
-            # \n
+            # removed_lines
             # suffix
+            prefix_start = text_file.form_index(max(0, start_pos['line'] - 30), 0)
+            suffix_end = text_file.form_index(end_pos['line'] + 30, 0)
+            prefix = text_file.content[prefix_start:start_index] + insertion
+            suffix = '\n' + text_file.content[end_index:suffix_end]
+
+            # prefix(\n)
+            # insertion(\n)
+            # <cursor:infill>
+            # (\n)suffix
             text_file.change([{
                 'text': insertion + '\n',
                 'range': {
@@ -89,14 +104,9 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
                     'end': end_pos
                 }
             }])
-            # print(text_file.get_position(text_file.cursor))
-            # text_file.write()
-            # exit()
 
-            lines = text_file.content.split('\n')
-            prefix = '\n'.join(lines[max(0, start_pos['line'] - 20):start_pos['line']]) + insertion
-            suffix = '\n' + '\n'.join(lines[end_pos['line']:end_pos['line'] + 20])
             text_file.move_cursor(start_index + len(insertion))
+            assert prefix.endswith('\n')
             assert text_file.content[text_file.cursor - 1] == '\n'
             assert text_file.content[text_file.cursor] == '\n'
             # prefix = text_file.content[max(
@@ -104,68 +114,18 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
             # suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
             repairer = Repairer(prefix, suffix)
             output = repairer.repair(analyzer, text_file, max_new_tokens=50)
-            # print(output)
-            # print()
-            # print(text_file)
-            exit()
-            well, _, outputs, _ = model.model_predict(
-                prefix, suffix, do_sample=True, strict=False)
-            assert len(outputs) == N_SAMPLE
-            assert well
-            print(outputs[0])
-            exit()
+            print(''.join(output[1]))
 
-            def full_content(change: spec.TextChange) -> spec.EntireDocumentChange:
-                text = TextDocument(text_file.content)
-                text.change([change])
-                return {
-                    'text': text.content,
-                }
-
-            zipped_patches.append([(full_content({
-                'text': output,
-                'range': {
-                    'start': start_pos,
-                    'end': end_pos
-                }
-            }), text_file) for output in outputs])
-        continue
-    # Choose the best patch group according to the analysis
-    # patch_group_iter = zip(*zipped_patches)
-    # best_group, best_error = None, 999999999999
-    # for patch_group in patch_group_iter:
-    #     n_errors = 0
-    #     for change, patch in patch_group:
-    #         patch.change([change])
-    #         patch.write()
-    #         analyzer.sync(patch)
-    #         diagnosis = analyzer.diagnose(2)
-    #         if diagnosis is None:
-    #             n_errors += 0
-    #         else:
-    #             n_errors += sum(
-    #                 1 for d in diagnosis
-    #                 if d['severity'] == 1
-    #             )
-    #     print(n_errors)
-    #     if n_errors < best_error:
-    #         best_error = n_errors
-    #         best_group = patch_group
-    # assert best_group is not None
-    for change, patch in best_group:
-        patch.change([change])
-        patch.write()
-
-    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
-    repo.git.execute(['defects4j', 'checkout', '-p', proj,
-                     f'-v{id_str}f', '-w', bug.proj_path])
-    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
-    for change, patch in best_group:
-        patch.change([change])
-        patch.write()
-    repo.git.execute(['git', 'clean', '-dfx'])
-    repo.close()
-    # for text_file in text_files:
+    # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+    # repo.git.execute(['defects4j', 'checkout', '-p', proj,
+    #                  f'-v{id_str}f', '-w', bug.proj_path])
+    # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+    # for change, patch in best_group:
+    #     patch.change([change])
+    #     patch.write()
+    # repo.git.execute(['git', 'clean', '-dfx'])
+    # repo.close()
+    # # for text_file in text_files:
     #     text_file.write()
 
 

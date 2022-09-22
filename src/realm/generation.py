@@ -58,6 +58,7 @@ MODEL = 'facebook/incoder-1B'
 DEVICE = 'cuda'
 
 
+Generation = Tuple[List[int], List[str]]
 class Repairer:
     EOM = "<|endofmask|>"
     EOM_ID = 50517
@@ -70,7 +71,7 @@ class Repairer:
         self.model: GenerationMixin = AutoModelForCausalLM.from_pretrained(
             MODEL).to(DEVICE)
         print("G")
-        self.max_length = self.model.config.to_dict()[
+        self.max_length = self.model.config.to_dict()[ # type: ignore # noqa
             'max_position_embeddings']
         self.infill_ph = "<|mask:0|>"
         self.extra_end = "<|mask:1|><|mask:0|>"
@@ -83,9 +84,11 @@ class Repairer:
         self.batch_size = 1
         # Must add a special BOS token. Maybe because this is a decoder only model, BOS
         # indicates the start of the generation
-        input_strings = self.inputs(prefix, suffix)
+        self.input_strings = self.inputs(prefix, suffix)
+        # print(self.input_strings)
+        # exit()
         self.input_tokens = self.tokenizer.encode(
-            input_strings, return_tensors='pt').to(DEVICE)
+            self.input_strings, return_tensors='pt').to(DEVICE)
 
     def inputs(self, prefix: str, suffix: str) -> str:
         return prefix + self.infill_ph + suffix + self.extra_end
@@ -95,7 +98,7 @@ class Repairer:
         analyzer: JdtLspAnalyzer,
         text_file: TextFile,
         max_new_tokens: int = 30,
-    ) -> str:
+    ) -> Generation:
         # original_content = text_file.content
         # original_cursor = text_file.cursor
         # for idx in range(1):
@@ -104,8 +107,7 @@ class Repairer:
         # text_file.sync()
         # text_file.write()
         analyzer.open(text_file)
-        analyzer.change(text_file)
-        outputs = self.generate(
+        return self.generate(
             analyzer,
             text_file,
             self.input_tokens,
@@ -186,7 +188,8 @@ class Repairer:
         synced_gpus: Optional[bool] = False,
         exponential_decay_length_penalty: Optional[Tuple[Union[int, float]]] = None,
         **model_kwargs,
-    ) -> Union[GreedySearchOutput, SampleOutput, BeamSearchOutput, BeamSampleOutput, torch.LongTensor]:
+    ) -> Generation:
+    # Union[GreedySearchOutput, SampleOutput, BeamSearchOutput, BeamSampleOutput, torch.LongTensor]:
         r"""
 
         Generates sequences of token ids for models with a language modeling head. The method supports the following
@@ -564,6 +567,8 @@ class Repairer:
             raise ValueError(
                 "Diverse beam search cannot be used in sampling mode. Make sure that `do_sample` is set to `False`."
             )
+        if not is_sample_gen_mode:
+            assert False
 
         # 7. prepare distribution pre_processing samplers
         logits_processor = self.model._get_logits_processor(
@@ -879,7 +884,8 @@ class Repairer:
         return_dict_in_generate: Optional[bool] = None,
         synced_gpus: Optional[bool] = False,
         **model_kwargs,
-    ) -> Union[SampleOutput, torch.LongTensor]:
+    ) -> Generation:
+    # Union[SampleOutput, torch.LongTensor]:
         r"""
         Generates sequences of token ids for models with a language modeling head using **multinomial sampling** and
         can be used for text-decoder, text-to-text, speech-to-text, and vision-to-text models.
@@ -1024,8 +1030,9 @@ class Repairer:
         cur_len = input_ids.shape[-1]
 
         this_peer_finished = False  # used by synced_gpus only
+        generated_ids: List[int] = []
+        generated_tokens: List[str] = []
         # auto-regressive generation
-        max_length += 20
         while True:
             if synced_gpus:
                 # Under synced_gpus the `forward` call must continue until all gpus complete their sequence.
@@ -1168,7 +1175,7 @@ class Repairer:
                     completions = [(c if '${' not in c else c[:c.index('${')]) for c in completions]
                     completions = list(filter(lambda c: c != '', completions))
                     # print(completions)
-                    if False:
+                    if random.random() > 0.2:
                     # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '' and len(completions) > 0:
                         for idx, token in random.sample(list(enumerate(tokens)), k=len(tokens)):
                             # t = token.rstrip()
@@ -1197,11 +1204,11 @@ class Repairer:
                     # print(token)
                     # print(text_file.content[text_file.cursor - 100:text_file.cursor])
                     # exit()
+                next_tokens = all_next_tokens[new_index].view(1)
                 if next_tokens.item() != self.EOM_ID:
                     text_file.add(tokens[new_index])
                     analyzer.change(text_file)
                     text_file.write()
-                    exit()
                 # text_file.write()
                 # if random.random() > 0.9:
                 #     text_file.write()
@@ -1216,6 +1223,8 @@ class Repairer:
 
             # print(input_ids.shape)
             input_ids = torch.cat([input_ids, next_tokens.view(1, -1)], dim=-1)
+            generated_ids.append(next_tokens.item())
+            generated_tokens.append(tokens[new_index])
             # print(input_ids.shape, 'new')
             model_kwargs = self.model._update_model_kwargs_for_generation(
                 outputs, model_kwargs, is_encoder_decoder=self.model.config.is_encoder_decoder
@@ -1238,6 +1247,7 @@ class Repairer:
                     this_peer_finished = True
 
         if return_dict_in_generate:
+            raise NotImplementedError
             if self.model.config.is_encoder_decoder:
                 return SampleEncoderDecoderOutput(
                     sequences=input_ids,
@@ -1256,4 +1266,4 @@ class Repairer:
                     hidden_states=decoder_hidden_states,
                 )
         else:
-            return input_ids
+            return generated_ids, generated_tokens
