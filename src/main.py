@@ -74,30 +74,36 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
             start_index = text_file.form_index(start, 0)
             end_index = text_file.form_index(end, 0)
 
-            removed_lines = '\n'.join('// Buggy: ' + line for line in change.removed_lines)
-            insertion = f'{removed_lines}\n\n'
-
+            insertion = ''.join('// Buggy: ' + line for line in change.removed_lines)
+            # if not insertion.endswith('\n'):
+            #     print('Warining:', insertion)
+            #     insertion += '\n'
+            # prefix
+            # insertion
+            # \n
+            # suffix
             text_file.change([{
-                'text': insertion,
+                'text': insertion + '\n',
                 'range': {
                     'start': start_pos,
                     'end': end_pos
                 }
             }])
-            text_file.move_cursor(start_index + len(insertion) - 1)
-            assert text_file.content[text_file.cursor] == '\n'
             # print(text_file.get_position(text_file.cursor))
             # text_file.write()
             # exit()
 
             lines = text_file.content.split('\n')
             prefix = '\n'.join(lines[max(0, start_pos['line'] - 20):start_pos['line']]) + insertion
-            suffix = '\n'.join(lines[end_pos['line']:end_pos['line'] + 20])
+            suffix = '\n' + '\n'.join(lines[end_pos['line']:end_pos['line'] + 20])
+            text_file.move_cursor(start_index + len(insertion))
+            assert text_file.content[text_file.cursor - 1] == '\n'
+            assert text_file.content[text_file.cursor] == '\n'
             # prefix = text_file.content[max(
             #     0, start_index - CONTEXT_SIZE):start_index]
             # suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
-            repairer = Repairer()
-            output = repairer.repair(analyzer, text_file, prefix, suffix, max_new_tokens=15)
+            repairer = Repairer(prefix, suffix)
+            output = repairer.repair(analyzer, text_file, max_new_tokens=50)
             # print(output)
             # print()
             # print(text_file)

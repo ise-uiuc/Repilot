@@ -65,7 +65,7 @@ class Repairer:
     BOS_ID = 2
     META_FILE = "<|/ file"
 
-    def __init__(self) -> None:
+    def __init__(self, prefix: str, suffix: str) -> None:
         print("G")
         self.model: GenerationMixin = AutoModelForCausalLM.from_pretrained(
             MODEL).to(DEVICE)
@@ -81,6 +81,11 @@ class Repairer:
         # print(self.tokenizer.encode(self.BOS, return_tensors='pt', add_special_tokens=False))
         # print(self.tokenizer.encode(self.EOM, return_tensors='pt', add_special_tokens=False))
         self.batch_size = 1
+        # Must add a special BOS token. Maybe because this is a decoder only model, BOS
+        # indicates the start of the generation
+        input_strings = self.inputs(prefix, suffix)
+        self.input_tokens = self.tokenizer.encode(
+            input_strings, return_tensors='pt').to(DEVICE)
 
     def inputs(self, prefix: str, suffix: str) -> str:
         return prefix + self.infill_ph + suffix + self.extra_end
@@ -89,57 +94,46 @@ class Repairer:
         self,
         analyzer: JdtLspAnalyzer,
         text_file: TextFile,
-        prefix: str,
-        suffix: str,
         max_new_tokens: int = 30,
     ) -> str:
-        # Must add a special BOS token. Maybe because this is a decoder only model, BOS
-        # indicates the start of the generation
-        input_strings = self.inputs(prefix, '\n' + suffix)
-        # print(input_strings)
-        # exit()
-        inputs = self.tokenizer.encode(
-            input_strings, return_tensors='pt').to(DEVICE)
-        original_content = text_file.content
-        original_cursor = text_file.cursor
-        all_output = []
-        for idx in range(20):
-            text_file.content = original_content
-            text_file.cursor = original_cursor
-            text_file.sync()
-            text_file.write()
-            print("NOW:", idx)
-            analyzer.open(text_file)
-            analyzer.change(text_file)
-            outputs = self.generate(
-                analyzer,
-                text_file,
-                inputs,
-                do_sample=True,
-                num_beams=1,
-                max_new_tokens=max_new_tokens,
-                temperature=0.8,
-                top_p=0.95,
-                eos_token_id=self.EOM_ID,
-                stopping_criteria=StoppingCriteriaList([IncoderEOM()])
-            )
-            text_file.write()
-            outputs = outputs[:, len(inputs[0]):]
+        # original_content = text_file.content
+        # original_cursor = text_file.cursor
+        # for idx in range(1):
+        # text_file.content = original_content
+        # text_file.cursor = original_cursor
+        # text_file.sync()
+        # text_file.write()
+        analyzer.open(text_file)
+        analyzer.change(text_file)
+        outputs = self.generate(
+            analyzer,
+            text_file,
+            self.input_tokens,
+            do_sample=True,
+            num_beams=1,
+            max_new_tokens=max_new_tokens,
+            temperature=0.8,
+            top_p=0.95,
+            eos_token_id=self.EOM_ID,
+            stopping_criteria=StoppingCriteriaList([IncoderEOM()])
+        )
+            # text_file.write()
+            # outputs = outputs[:, len(inputs[0]):]
             # outputs = (output[:-1] if len(output) > 0 and output[-1]
             #            == self.EOM_ID else output for output in outputs)
-            output = self.tokenizer.batch_decode(
-                outputs, clean_up_tokenization_spaces=False)[0]
+            # output = self.tokenizer.batch_decode(
+            #     outputs, clean_up_tokenization_spaces=False)[0]
             # if self.EOM in output:
             #     output = output[:output.index(self.EOM)]
-            if self.META_FILE in output:  # removes META file token that is sometimes generated
-                output = output[:output.index(self.META_FILE)]
-            all_output.append(output)
-        for output in all_output:
-            print(output)
-            print("\n===========================================================\n")
-        print(len(all_output))
-        exit()
-        return output
+            # if self.META_FILE in output:  # removes META file token that is sometimes generated
+            #     assert False
+            #     output = output[:output.index(self.META_FILE)]
+        #     all_output.append(output)
+        # for output in all_output:
+        #     print(output)
+        #     print("\n===========================================================\n")
+        # print(len(all_output))
+        # exit()
 
     @typing.no_type_check
     @torch.no_grad()
@@ -1124,8 +1118,6 @@ class Repairer:
                 pos = text_file.get_position(text_file.cursor)
                 if True:
                 # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '':
-                    analyzer.change(text_file)
-                    text_file.write()
                     completion_result = analyzer.client.textDocument_completion({
                         'textDocument': {
                             'uri': text_file.path.as_uri()
@@ -1176,7 +1168,7 @@ class Repairer:
                     completions = [(c if '${' not in c else c[:c.index('${')]) for c in completions]
                     completions = list(filter(lambda c: c != '', completions))
                     # print(completions)
-                    if True:
+                    if False:
                     # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '' and len(completions) > 0:
                         for idx, token in random.sample(list(enumerate(tokens)), k=len(tokens)):
                             # t = token.rstrip()
@@ -1190,13 +1182,12 @@ class Repairer:
                                 # print(t)
                                 # print('====================')
                                 x = next(filter(lambda c: token.startswith(c) or c.startswith(token), completions))
-                                if random.random() > 0.5:
-                                    break
                                 new_index = idx
                                 assert x != ''
                                 assert token != ''
                                 print("Log (match):", token, idx, x, sep=' === ')
                                 print("All:", tokens)
+                                break
                             except StopIteration:
                                 break
                             # next_tokens = self.tokenizer.encode(token, add_special_tokens=False, return_tensors='pt')[0][:1]
@@ -1206,8 +1197,11 @@ class Repairer:
                     # print(token)
                     # print(text_file.content[text_file.cursor - 100:text_file.cursor])
                     # exit()
-                next_tokens = all_next_tokens[new_index].view(1)
-                text_file.add(tokens[new_index])
+                if next_tokens.item() != self.EOM_ID:
+                    text_file.add(tokens[new_index])
+                    analyzer.change(text_file)
+                    text_file.write()
+                    exit()
                 # text_file.write()
                 # if random.random() > 0.9:
                 #     text_file.write()
