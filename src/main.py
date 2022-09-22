@@ -1,9 +1,13 @@
+import logging
+import torch
+import random
 import os
 import shlex
 from pathlib import Path
 import shutil
 import subprocess
 from time import sleep
+from tkinter import E
 from Repair.LM.model import SpanLM
 from realm import utils
 from realm.analyze import java_syntax
@@ -44,7 +48,7 @@ def server_cmd(bug_id: str) -> List[str]:
         -data .lsp_data/{bug_id}")
 
 
-def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
+def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
     repo = git.Repo(bug.proj_path)
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
@@ -56,65 +60,95 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
     analyzer = JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
         str, os.getenv('JAVA8_HOME')), verbose=False)
 
-    text_files: List[TextFile] = []
-    # For each file, generated a patch for each change (in reversed order relative to change)
-    for buggy_file in bug.buggy_files:
-        text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
-        text_files.append(text_file)
-        print(len(buggy_file.changes))
-        print(buggy_file.path)
-        print([(c.start, len(c.removed_lines))
-              for c in reversed(buggy_file.changes)])
+    patch_groups: List[List[TextFile]] = []
+    for idx in range(n_patch_groups):
+        print('Repair:', idx)
+        if idx != 0:
+            repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+            # TODO: refactor textfile
+            for buggy_file in bug.buggy_files:
+                text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
+                analyzer.change(text_file)
+        text_files: List[TextFile] = []
+        # For each file, generated a patch for each change (in reversed order relative to change)
+        for buggy_file in bug.buggy_files:
+            text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
+            if idx == 0:
+                analyzer.open(text_file)
+            print(len(buggy_file.changes))
+            print(buggy_file.path)
+            print([(c.start, len(c.removed_lines))
+                   for c in reversed(buggy_file.changes)])
 
-        for change in reversed(buggy_file.changes):
-            start = change.start - 1
-            end = start + len(change.removed_lines)
-            start_pos = text_file.refine_index(start, 0)
-            end_pos = text_file.refine_index(end, 0)
+            for change in reversed(buggy_file.changes):
+                original_content = text_file.content
+                original_cursor = text_file.cursor
+                while True:
+                    start = change.start - 1
+                    end = start + len(change.removed_lines)
+                    start_pos = text_file.refine_index(start, 0)
+                    end_pos = text_file.refine_index(end, 0)
 
-            start_index = text_file.form_index(start, 0)
-            end_index = text_file.form_index(end, 0)
+                    start_index = text_file.form_index(start, 0)
+                    end_index = text_file.form_index(end, 0)
 
-            insertion = ''.join('// Buggy: ' + line for line in change.removed_lines)
-            if not insertion.endswith('\n'):
-                insertion += '\n'
-            # if not insertion.endswith('\n'):
-            #     print('Warining:', insertion)
-            #     insertion += '\n'
-            # print(text_file.get_position(text_file.cursor))
-            # text_file.write()
-            # exit()
+                    insertion = ''.join(
+                        '// Buggy: ' + line for line in change.removed_lines)
+                    if not insertion.endswith('\n'):
+                        insertion += '\n'
+                    # if not insertion.endswith('\n'):
+                    #     print('Warining:', insertion)
+                    #     insertion += '\n'
+                    # print(text_file.get_position(text_file.cursor))
+                    # text_file.write()
+                    # exit()
 
-            # prefix
-            # removed_lines
-            # suffix
-            prefix_start = text_file.form_index(max(0, start_pos['line'] - 30), 0)
-            suffix_end = text_file.form_index(end_pos['line'] + 30, 0)
-            prefix = text_file.content[prefix_start:start_index] + insertion
-            suffix = '\n' + text_file.content[end_index:suffix_end]
+                    # prefix
+                    # removed_lines
+                    # suffix
+                    prefix_start = text_file.form_index(
+                        max(0, start_pos['line'] - 30), 0)
+                    suffix_end = text_file.form_index(end_pos['line'] + 30, 0)
+                    prefix = text_file.content[prefix_start:start_index] + insertion
+                    suffix = '\n' + text_file.content[end_index:suffix_end]
 
-            # prefix(\n)
-            # insertion(\n)
-            # <cursor:infill>
-            # (\n)suffix
-            text_file.change([{
-                'text': insertion + '\n',
-                'range': {
-                    'start': start_pos,
-                    'end': end_pos
-                }
-            }])
+                    # prefix(\n)
+                    # insertion(\n)
+                    # <cursor:infill>
+                    # (\n)suffix
+                    text_file.change([{
+                        'text': insertion + '\n',
+                        'range': {
+                            'start': start_pos,
+                            'end': end_pos
+                        }
+                    }])
 
-            text_file.move_cursor(start_index + len(insertion))
-            assert prefix.endswith('\n')
-            assert text_file.content[text_file.cursor - 1] == '\n'
-            assert text_file.content[text_file.cursor] == '\n'
-            # prefix = text_file.content[max(
-            #     0, start_index - CONTEXT_SIZE):start_index]
-            # suffix = text_file.content[end_index:end_index + CONTEXT_SIZE]
-            repairer = Repairer(prefix, suffix)
-            output = repairer.repair(analyzer, text_file, max_new_tokens=50)
-            print(''.join(output[1]))
+                    text_file.move_cursor(start_index + len(insertion))
+                    assert prefix.endswith('\n')
+                    assert text_file.content[text_file.cursor - 1] == '\n'
+                    assert text_file.content[text_file.cursor] == '\n'
+
+                    repairer = Repairer(prefix, suffix)
+                    output_ids, output = repairer.repair(
+                        analyzer, text_file, max_new_tokens=50)
+                    # Keeps generation until EOM
+                    if not output_ids[-1] == repairer.EOM_ID:
+                        print('Failure')
+                        print(''.join(output))
+                        text_file.content = original_content
+                        text_file.cursor = original_cursor
+                        text_file.sync()
+                        text_file.write()
+                        analyzer.change(text_file)
+                        continue
+                    else:
+                        print('Success')
+                        print(''.join(output))
+                        break
+            text_files.append(text_file)
+        patch_groups.append(text_files)
+    return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     # repo.git.execute(['defects4j', 'checkout', '-p', proj,
@@ -129,18 +163,31 @@ def repair_proj(model: SpanLM, bug_id: str, bug: d4j.Bug):
     #     text_file.write()
 
 
-def validate_proj(bug_id: str, bug: d4j.Bug):
-    # proj, id_str = bug_id.split('-')
+def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> bool:
+    proj, id_str = bug_id.split('-')
     java8_home = cast(str, os.getenv('JAVA8_HOME'))
     env = dict(os.environ, JAVA_HOME=java8_home)
+    repo = git.Repo(bug.proj_path)
+    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+    repo.git.execute(['defects4j', 'checkout', '-p', proj,
+                     f'-v{id_str}f', '-w', bug.proj_path])
+    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+    for patch_file in patch_group:
+        patch_file.write()
     subprocess.run(['defects4j', 'compile'], env=env, cwd=bug.proj_path)
-    subprocess.run(['defects4j', 'test'], env=env, cwd=bug.proj_path)
+    # Filter out candidate patches (not even plausible)
+    subprocess.run(['defects4j', 'test', '-r'], env=env, cwd=bug.proj_path)
+    failing_tests = Path(bug.proj_path) / 'failing_tests'
+    if not failing_tests.exists():
+        return False
+    with open(failing_tests) as f:
+        return f.read().strip() == ''
 
-import torch
+
 torch.manual_seed(0)
-import random
 random.seed(0)
 # proj_accessed: Set[str] = set()
+logging.basicConfig(filename='result.log')
 for bug_id, bug in dataset.all_bugs().items():
     proj = bug_id.split('-')[0]
     # if proj in proj_accessed or proj == 'Mockito':
@@ -152,8 +199,13 @@ for bug_id, bug in dataset.all_bugs().items():
     # if bug_id != 'Mockito-1':
     #     continue
     print(bug_id)
-    repair_proj(model, bug_id, bug)
-    validate_proj(bug_id, bug)
+    patch_groups = repair_proj(bug_id, bug, 20)
+    candidate_patch_groups: List[int] = []
+    for idx, patch_group in enumerate(patch_groups):
+        if validate_proj(bug_id, bug, patch_group):
+            candidate_patch_groups.append(idx)
+    logging.log(logging.INFO, msg=str(bug_id))
+    logging.log(logging.INFO, msg=str(f'{len(candidate_patch_groups)} / {len(patch_groups)}'))
 
 
 # file_path = Path(

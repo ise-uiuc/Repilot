@@ -59,34 +59,25 @@ DEVICE = 'cuda'
 
 
 Generation = Tuple[List[int], List[str]]
+
+
 class Repairer:
     EOM = "<|endofmask|>"
     EOM_ID = 50517
     BOS = "<|endoftext|>"
     BOS_ID = 2
     META_FILE = "<|/ file"
+    model: GenerationMixin = AutoModelForCausalLM.from_pretrained(
+        MODEL).to(DEVICE)
+    tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
+        MODEL)
+    infill_ph = "<|mask:0|>"
+    extra_end = "<|mask:1|><|mask:0|>"
 
     def __init__(self, prefix: str, suffix: str) -> None:
-        print("G")
-        self.model: GenerationMixin = AutoModelForCausalLM.from_pretrained(
-            MODEL).to(DEVICE)
-        print("G")
-        self.max_length = self.model.config.to_dict()[ # type: ignore # noqa
-            'max_position_embeddings']
-        self.infill_ph = "<|mask:0|>"
-        self.extra_end = "<|mask:1|><|mask:0|>"
-        # signals the end of a generated infill
-        print("Max length: {}".format(self.max_length))
-        self.tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
-            MODEL)
-        # print(self.tokenizer.encode(self.BOS, return_tensors='pt', add_special_tokens=False))
-        # print(self.tokenizer.encode(self.EOM, return_tensors='pt', add_special_tokens=False))
-        self.batch_size = 1
-        # Must add a special BOS token. Maybe because this is a decoder only model, BOS
-        # indicates the start of the generation
         self.input_strings = self.inputs(prefix, suffix)
-        # print(self.input_strings)
-        # exit()
+        # Must add a special BOS token (add_special_tokens=True). Maybe because this is
+        # a decoder only model, BOS indicates the start of the generation.
         self.input_tokens = self.tokenizer.encode(
             self.input_strings, return_tensors='pt').to(DEVICE)
 
@@ -106,7 +97,6 @@ class Repairer:
         # text_file.cursor = original_cursor
         # text_file.sync()
         # text_file.write()
-        analyzer.open(text_file)
         return self.generate(
             analyzer,
             text_file,
@@ -119,17 +109,17 @@ class Repairer:
             eos_token_id=self.EOM_ID,
             stopping_criteria=StoppingCriteriaList([IncoderEOM()])
         )
-            # text_file.write()
-            # outputs = outputs[:, len(inputs[0]):]
-            # outputs = (output[:-1] if len(output) > 0 and output[-1]
-            #            == self.EOM_ID else output for output in outputs)
-            # output = self.tokenizer.batch_decode(
-            #     outputs, clean_up_tokenization_spaces=False)[0]
-            # if self.EOM in output:
-            #     output = output[:output.index(self.EOM)]
-            # if self.META_FILE in output:  # removes META file token that is sometimes generated
-            #     assert False
-            #     output = output[:output.index(self.META_FILE)]
+        # text_file.write()
+        # outputs = outputs[:, len(inputs[0]):]
+        # outputs = (output[:-1] if len(output) > 0 and output[-1]
+        #            == self.EOM_ID else output for output in outputs)
+        # output = self.tokenizer.batch_decode(
+        #     outputs, clean_up_tokenization_spaces=False)[0]
+        # if self.EOM in output:
+        #     output = output[:output.index(self.EOM)]
+        # if self.META_FILE in output:  # removes META file token that is sometimes generated
+        #     assert False
+        #     output = output[:output.index(self.META_FILE)]
         #     all_output.append(output)
         # for output in all_output:
         #     print(output)
@@ -189,7 +179,7 @@ class Repairer:
         exponential_decay_length_penalty: Optional[Tuple[Union[int, float]]] = None,
         **model_kwargs,
     ) -> Generation:
-    # Union[GreedySearchOutput, SampleOutput, BeamSearchOutput, BeamSampleOutput, torch.LongTensor]:
+        # Union[GreedySearchOutput, SampleOutput, BeamSearchOutput, BeamSampleOutput, torch.LongTensor]:
         r"""
 
         Generates sequences of token ids for models with a language modeling head. The method supports the following
@@ -885,7 +875,7 @@ class Repairer:
         synced_gpus: Optional[bool] = False,
         **model_kwargs,
     ) -> Generation:
-    # Union[SampleOutput, torch.LongTensor]:
+        # Union[SampleOutput, torch.LongTensor]:
         r"""
         Generates sequences of token ids for models with a language modeling head using **multinomial sampling** and
         can be used for text-decoder, text-to-text, speech-to-text, and vision-to-text models.
@@ -1089,7 +1079,8 @@ class Repairer:
 
             # sample
             probs = nn.functional.softmax(next_token_scores, dim=-1)
-            all_next_tokens = torch.multinomial(probs, num_samples=6).squeeze(1).view(6, 1)
+            all_next_tokens = torch.multinomial(
+                probs, num_samples=6).squeeze(1).view(6, 1)
             new_index = 0
             # all_next_tokens = torch.topk(next_token_scores, k=6, dim=-1).indices.view(6, 1)
             # print(all_next_tokens)
@@ -1124,7 +1115,7 @@ class Repairer:
             else:
                 pos = text_file.get_position(text_file.cursor)
                 if True:
-                # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '':
+                    # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '':
                     completion_result = analyzer.client.textDocument_completion({
                         'textDocument': {
                             'uri': text_file.path.as_uri()
@@ -1144,6 +1135,7 @@ class Repairer:
                     #         'character': 45,
                     #     },
                     # })
+
                     def completion_iter():
                         for item in completion_result['result']['items']:
                             if not 'textEdit' in item:
@@ -1157,7 +1149,8 @@ class Repairer:
                                     assert insert == replace
                                     assert replace['end'] == pos, result
                                     assert replace['end']['line'] == replace['start']['line']
-                                    start_index = replace['end']['character'] - replace['start']['character']
+                                    start_index = replace['end']['character'] - \
+                                        replace['start']['character']
                                     yield result['newText'][start_index:]
                                 else:
                                     assert False
@@ -1172,11 +1165,12 @@ class Repairer:
                     # print(completions)
                     # print(tokens)
                     # print("============================================")
-                    completions = [(c if '${' not in c else c[:c.index('${')]) for c in completions]
+                    completions = [
+                        (c if '${' not in c else c[:c.index('${')]) for c in completions]
                     completions = list(filter(lambda c: c != '', completions))
                     # print(completions)
                     if random.random() > 0.2:
-                    # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '' and len(completions) > 0:
+                        # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '' and len(completions) > 0:
                         for idx, token in random.sample(list(enumerate(tokens)), k=len(tokens)):
                             # t = token.rstrip()
                             # space_index = t.find(' ')
@@ -1188,11 +1182,13 @@ class Repairer:
                                 # print(completions)
                                 # print(t)
                                 # print('====================')
-                                x = next(filter(lambda c: token.startswith(c) or c.startswith(token), completions))
+                                x = next(filter(lambda c: token.startswith(
+                                    c) or c.startswith(token), completions))
                                 new_index = idx
                                 assert x != ''
                                 assert token != ''
-                                print("Log (match):", token, idx, x, sep=' === ')
+                                print("Log (match):", token,
+                                      idx, x, sep=' === ')
                                 print("All:", tokens)
                                 break
                             except StopIteration:
@@ -1240,7 +1236,7 @@ class Repairer:
             # stop when each sentence is finished, or if we exceed the maximum length
             if max_length == len(input_ids[0]) or stopping_criteria(input_ids, scores):
                 # assert input_ids[0, -1] == self.EOM_ID
-            # if unfinished_sequences.max() == 0 or max_length == len(input_ids) or stopping_criteria(input_ids, scores):
+                # if unfinished_sequences.max() == 0 or max_length == len(input_ids) or stopping_criteria(input_ids, scores):
                 if not synced_gpus:
                     break
                 else:
