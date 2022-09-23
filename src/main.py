@@ -174,20 +174,20 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     for patch_file in patch_group:
         patch_file.write()
-    subprocess.run(['defects4j', 'compile'], env=env, cwd=bug.proj_path)
+    result = subprocess.run(['defects4j', 'compile'],
+                            env=env, cwd=bug.proj_path)
+    if result.returncode != 0:
+        return False
     # Filter out candidate patches (not even plausible)
     subprocess.run(['defects4j', 'test', '-r'], env=env, cwd=bug.proj_path)
     failing_tests = Path(bug.proj_path) / 'failing_tests'
-    if not failing_tests.exists():
-        return False
+    assert failing_tests.exists()
     with open(failing_tests) as f:
         return f.read().strip() == ''
 
 
 torch.manual_seed(0)
 random.seed(0)
-# proj_accessed: Set[str] = set()
-logging.basicConfig(filename='result.log')
 for bug_id, bug in dataset.all_bugs().items():
     proj = bug_id.split('-')[0]
     # if proj in proj_accessed or proj == 'Mockito':
@@ -204,8 +204,9 @@ for bug_id, bug in dataset.all_bugs().items():
     for idx, patch_group in enumerate(patch_groups):
         if validate_proj(bug_id, bug, patch_group):
             candidate_patch_groups.append(idx)
-    logging.info(bug_id)
-    logging.info(f'{len(candidate_patch_groups)} / {len(patch_groups)}')
+    with open('result.log', 'a') as f:
+        f.writelines(
+            [str(bug_id), f'{len(candidate_patch_groups)} / {len(patch_groups)}'])
 
 # file_path = Path(
 #     '/home/yuxiang/Developer/d4j-checkout/Lang-1-buggy/src/main/java/org/apache/commons/lang3/Validate.java')
