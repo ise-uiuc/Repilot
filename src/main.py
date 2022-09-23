@@ -199,14 +199,14 @@ for bug_id, bug in dataset.all_bugs().items():
     # if bug_id != 'Mockito-1':
     #     continue
     print(bug_id)
-    patch_groups = repair_proj(bug_id, bug, 20)
+    patch_groups = repair_proj(bug_id, bug, 100)
     candidate_patch_groups: List[int] = []
     for idx, patch_group in enumerate(patch_groups):
         if validate_proj(bug_id, bug, patch_group):
             candidate_patch_groups.append(idx)
     with open('result.log', 'a') as f:
         f.writelines(
-            [str(bug_id), f'{len(candidate_patch_groups)} / {len(patch_groups)}'])
+            [str(bug_id), ' : ', f'{len(candidate_patch_groups)} / {len(patch_groups)}'])
 
 # file_path = Path(
 #     '/home/yuxiang/Developer/d4j-checkout/Lang-1-buggy/src/main/java/org/apache/commons/lang3/Validate.java')
