@@ -1,6 +1,7 @@
 from select import select
 import json
-from typing import IO, Callable, Tuple, TypeVar, Type, cast
+from threading import Condition, Thread
+from typing import IO, Callable, Dict, Optional, Tuple, TypeVar, Type, cast
 from typing import ParamSpec
 from itertools import count
 from . import spec
@@ -65,29 +66,57 @@ def d_notify(method: str, _: Type[T]) -> Callable[['LSPClient', T], None]:
     return impl
 
 
-class LSPClient:
+class LSPClient(Thread):
     def __init__(self, stdin: IO[bytes], stdout: IO[bytes], verbose: bool = False):
+        super().__init__()
         self.stdin = stdin
         self.stdout = stdout
         self.verbose = verbose
-        # self.responses: Dict[str, Msg] = {}
-
-    def call(self, method: str, params: spec.array | spec.object) -> spec.ResponseMessage:
-        message = request(method, params)
-        id = message['id']
-        self.send(message)
+        self.responses: Dict[
+            spec.integer | str | None, 
+            spec.ResponseMessage
+        ] = {}
+        self.lock = Condition()
+    
+    def run(self) -> None:
         while True:
             server_response = self.recv()
-            # and server_response['method'] == 'client/registerCapability':
-            # print(server_response)
             if 'method' in server_response and 'id' in server_response:
                 # print(server_response)
                 server_response = cast(spec.RequestMessage, server_response)
                 self.send(response(server_response['id'], None))
-            if 'id' in server_response:
+            elif 'id' in server_response:
                 server_response = cast(spec.ResponseMessage, server_response)
-                if server_response['id'] == id:
-                    return server_response
+                id = server_response['id']
+                self.responses[id] = server_response
+                self.lock.acquire()
+                self.lock.notify()
+                self.lock.release()
+            # else:
+            #     assert False, server_response
+
+    def call(self, method: str, params: spec.array | spec.object, timeout: float = 2) -> spec.ResponseMessage:
+        message = request(method, params)
+        id = message['id']
+        self.lock.acquire()
+        self.send(message)
+        if not self.lock.wait(timeout):
+            self.lock.release()
+            raise TimeoutError
+        self.lock.release()
+        return self.responses.pop(id)
+        # while True:
+        #     server_response = self.recv()
+        #     # and server_response['method'] == 'client/registerCapability':
+        #     # print(server_response)
+        #     if 'method' in server_response and 'id' in server_response:
+        #         # print(server_response)
+        #         server_response = cast(spec.RequestMessage, server_response)
+        #         self.send(response(server_response['id'], None))
+        #     if 'id' in server_response:
+        #         server_response = cast(spec.ResponseMessage, server_response)
+        #         if server_response['id'] == id:
+        #             return server_response
 
     def notify(self, method: str, params: spec.array | spec.object):
         # if 'textDocument/didChange' == method:
@@ -100,6 +129,8 @@ class LSPClient:
     def send(self, message: spec.RequestMessage | spec.ResponseMessage | spec.NotificationMessage):
         content = json.dumps(message)
         content = add_header(content)
+        if self.verbose:
+            print('SEND:', message)
         # print(content)
         self.stdin.write(content.encode())
         self.stdin.flush()
@@ -128,7 +159,8 @@ class LSPClient:
 
     initialize = d_call('initialize', spec.InitializeParams)
     initialized = d_notify('initialized', spec.InitializedParams)
-    workspace_didChangeConfiguration = d_notify('textDocument/didChangeConfiguration', dict)
+    workspace_didChangeConfiguration = d_notify(
+        'textDocument/didChangeConfiguration', dict)
     textDocument_didOpen = d_notify(
         'textDocument/didOpen', spec.DidOpenTextDocumentParams)
     textDocument_didSave = d_notify(

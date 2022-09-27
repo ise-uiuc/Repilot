@@ -27,11 +27,15 @@ from datasets import d4j
 assert shutil.which('defects4j')
 assert os.getenv('JAVA8_HOME')
 
-x, y = utils.take_while_two(lambda _: True,
-                            lambda x, y: x == y - 1,
-                            [1, 2, 3, 4, 6, 7, 8])
-print(x)
-print(list(y))
+# print(Repairer.tokenizer.encode("<s> </s> <pad> <extra_id_0> <extra_id_1> <unk> <mask>", add_special_tokens=False))
+# print(Repairer.tokenizer.decode(torch.tensor(range(32000, 32100)).to('cuda'), clean_up_tokenization_spaces = False))
+# exit()
+# print(Repairer.tokenizer.tokenize("def long_function(): <extra_id_0> ", padding=True))
+# tokens = Repairer.tokenizer.encode("def long_function(): <extra_id_0>", return_tensors='pt', add_special_tokens=True).to('cuda')
+# print(tokens)
+# tokens = torch.cat((tokens, torch.tensor([[Repairer.END_ID]]).to('cuda')), dim=-1)
+# print(Repairer.tokenizer.batch_decode(Repairer.model.generate(tokens, max_new_tokens=25), skip_special_tokens=False))
+# exit()
 
 
 CONTEXT_SIZE = 1000
@@ -68,7 +72,6 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
             # TODO: refactor textfile
             for buggy_file in bug.buggy_files:
                 text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
-                analyzer.change(text_file)
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
         for buggy_file in bug.buggy_files:
@@ -133,7 +136,7 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
                     output_ids, output = repairer.repair(
                         analyzer, text_file, max_new_tokens=50)
                     # Keeps generation until EOM
-                    if not output_ids[-1] == repairer.EOM_ID:
+                    if not output_ids[-1] == repairer.END_ID:
                         print('Failure')
                         print(''.join(output))
                         text_file.content = original_content
@@ -162,6 +165,7 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
     # # for text_file in text_files:
     #     text_file.write()
 
+TIMEOUT = 60
 
 def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> bool:
     proj, id_str = bug_id.split('-')
@@ -179,11 +183,14 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
     if result.returncode != 0:
         return False
     # Filter out candidate patches (not even plausible)
-    subprocess.run(['defects4j', 'test', '-r'], env=env, cwd=bug.proj_path)
-    failing_tests = Path(bug.proj_path) / 'failing_tests'
-    assert failing_tests.exists()
-    with open(failing_tests) as f:
-        return f.read().strip() == ''
+    try:
+        subprocess.run(['defects4j', 'test'], env=env, cwd=bug.proj_path, timeout=60)
+        failing_tests = Path(bug.proj_path) / 'failing_tests'
+        assert failing_tests.exists()
+        with open(failing_tests) as f:
+            return f.read().strip() == ''
+    except subprocess.TimeoutExpired:
+        return False
 
 
 torch.manual_seed(0)
@@ -199,7 +206,7 @@ for bug_id, bug in dataset.all_bugs().items():
     # if bug_id != 'Mockito-1':
     #     continue
     print(bug_id)
-    patch_groups = repair_proj(bug_id, bug, 100)
+    patch_groups = repair_proj(bug_id, bug, 50)
     candidate_patch_groups: List[int] = []
     for idx, patch_group in enumerate(patch_groups):
         if validate_proj(bug_id, bug, patch_group):

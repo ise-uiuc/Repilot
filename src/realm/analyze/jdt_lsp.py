@@ -29,6 +29,7 @@ class JdtLspAnalyzer:
         assert self.process.stdin is not None and self.process.stdout is not None
         self.client = LSPClient(
             self.process.stdin, self.process.stdout, verbose)
+        self.client.start()
 
         # self.active_text: Optional[TextDocument] = None
 
@@ -757,6 +758,7 @@ class JdtLspAnalyzer:
         })
 
     # TODO: opt return type
+    # TODO: this implementation not gonna work
     def diagnose(self, timeout: float = 0.5) -> List[dict]:
         self.save()
         while True:

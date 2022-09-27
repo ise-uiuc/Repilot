@@ -11,6 +11,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
+from transformers import T5ForConditionalGeneration
 from transformers.generation_utils import GenerationMixin, GreedySearchOutput, SampleOutput, BeamSearchOutput, BeamSampleOutput, logger, SampleEncoderDecoderOutput, SampleDecoderOnlyOutput
 from transformers.generation_beam_constraints import Constraint, DisjunctiveConstraint, PhrasalConstraint
 from transformers.generation_beam_search import BeamScorer, BeamSearchScorer, ConstrainedBeamSearchScorer
@@ -49,30 +50,27 @@ from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp.text import TextDocument, TextFile
 
 
-class IncoderEOM(StoppingCriteria):
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-        return True if input_ids[0, -1] == Repairer.EOM_ID else False
+# class IncoderEOM(StoppingCriteria):
+#     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
+#         return True if input_ids[0, -1] == Repairer.EOM_ID else False
 
 
-MODEL = 'facebook/incoder-1B'
+MODEL = 'Salesforce/codet5-large'
 DEVICE = 'cuda'
+NUM_SAMPLES = 6
 
 
 Generation = Tuple[List[int], List[str]]
 
 
 class Repairer:
-    EOM = "<|endofmask|>"
-    EOM_ID = 50517
-    BOS = "<|endoftext|>"
-    BOS_ID = 2
-    META_FILE = "<|/ file"
-    model: GenerationMixin = AutoModelForCausalLM.from_pretrained(
+    model: GenerationMixin = T5ForConditionalGeneration.from_pretrained(
         MODEL).to(DEVICE)
+    max_length: int = model.config.to_dict()['n_positions']  # type: ignore # noqa
+    infill_ph = "<extra_id_0>"
+    END_ID = 2
     tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
         MODEL)
-    infill_ph = "<|mask:0|>"
-    extra_end = "<|mask:1|><|mask:0|>"
 
     def __init__(self, prefix: str, suffix: str) -> None:
         self.input_strings = self.inputs(prefix, suffix)
@@ -82,7 +80,7 @@ class Repairer:
             self.input_strings, return_tensors='pt').to(DEVICE)
 
     def inputs(self, prefix: str, suffix: str) -> str:
-        return prefix + self.infill_ph + suffix + self.extra_end
+        return prefix + self.infill_ph + suffix
 
     def repair(
         self,
@@ -106,8 +104,8 @@ class Repairer:
             max_new_tokens=max_new_tokens,
             temperature=0.8,
             top_p=0.95,
-            eos_token_id=self.EOM_ID,
-            stopping_criteria=StoppingCriteriaList([IncoderEOM()])
+            eos_token_id=self.END_ID,
+            # stopping_criteria=StoppingCriteriaList([IncoderEOM()])
         )
         # text_file.write()
         # outputs = outputs[:, len(inputs[0]):]
@@ -1080,10 +1078,9 @@ class Repairer:
             # sample
             probs = nn.functional.softmax(next_token_scores, dim=-1)
             all_next_tokens = torch.multinomial(
-                probs, num_samples=6).squeeze(1).view(6, 1)
+                probs, num_samples=NUM_SAMPLES).squeeze(1).view(NUM_SAMPLES, 1)
             new_index = 0
             # all_next_tokens = torch.topk(next_token_scores, k=6, dim=-1).indices.view(6, 1)
-            # print(all_next_tokens)
             # exit()
 
             # finished sentences should have their next token be a padding token
@@ -1103,16 +1100,18 @@ class Repairer:
             # update generated ids, model inputs, and length for next step
             for next_tokens in all_next_tokens:
                 assert next_tokens.shape == torch.Size([1]), next_tokens.shape
-            tokens = [self.tokenizer.decode(
-                next_tokens.view(1), clean_up_tokenization_spaces=False) for next_tokens in all_next_tokens]
-            # print(tokens)
+            tokens = self.tokenizer.batch_decode(all_next_tokens, skip_special_tokens=False)
+            assert len(tokens) == NUM_SAMPLES
+            # [self.tokenizer.decode(
+                # next_tokens.view(1)) for next_tokens in all_next_tokens]
             # exit()
             # if token.strip() in ['//', '/*', '*/', '/**']:
             #     continue
             # Force the model to complete the generation
-            if max_length - len(input_ids[0]) < 10 and self.EOM_ID in all_next_tokens:
-                next_tokens = torch.tensor([self.EOM_ID]).to(DEVICE)
-            else:
+            if True:
+            # max_length - len(input_ids[0]) < 10 and self.EOM_ID in all_next_tokens:
+            #     next_tokens = torch.tensor([self.EOM_ID]).to(DEVICE)
+            # else:
                 pos = text_file.get_position(text_file.cursor)
                 if True:
                     # if not pos['character'] == 0 and not text_file.content[text_file.cursor - 1].strip() == '':
@@ -1201,7 +1200,7 @@ class Repairer:
                     # print(text_file.content[text_file.cursor - 100:text_file.cursor])
                     # exit()
                 next_tokens = all_next_tokens[new_index].view(1)
-                if next_tokens.item() != self.EOM_ID:
+                if next_tokens.item() != self.END_ID:
                     text_file.add(tokens[new_index])
                     analyzer.change(text_file)
                     text_file.write()
