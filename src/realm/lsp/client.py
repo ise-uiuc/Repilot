@@ -67,7 +67,7 @@ def d_notify(method: str, _: Type[T]) -> Callable[['LSPClient', T], None]:
 
 
 class LSPClient(Thread):
-    def __init__(self, stdin: IO[bytes], stdout: IO[bytes], verbose: bool = False):
+    def __init__(self, stdin: IO[bytes], stdout: IO[bytes], verbose: bool = False, timeout: float = 5):
         super().__init__()
         self.stdin = stdin
         self.stdout = stdout
@@ -77,6 +77,7 @@ class LSPClient(Thread):
             spec.ResponseMessage
         ] = {}
         self.lock = Condition()
+        self.timeout = timeout
     
     def run(self) -> None:
         while True:
@@ -95,12 +96,12 @@ class LSPClient(Thread):
             # else:
             #     assert False, server_response
 
-    def call(self, method: str, params: spec.array | spec.object, timeout: float = 2) -> spec.ResponseMessage:
+    def call(self, method: str, params: spec.array | spec.object) -> spec.ResponseMessage:
         message = request(method, params)
         id = message['id']
         self.lock.acquire()
         self.send(message)
-        if not self.lock.wait(timeout):
+        if not self.lock.wait(self.timeout):
             self.lock.release()
             raise TimeoutError
         self.lock.release()
