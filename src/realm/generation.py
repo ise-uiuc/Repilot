@@ -1037,8 +1037,15 @@ class Repairer:
         this_peer_finished = False  # used by synced_gpus only
         generated_ids: List[int] = []
         generated_tokens: List[str] = []
+        # Context variable controling when to do analysis
+        # TODO(future): use AST for more accurate analysis (e.g., inside string literal, etc.)
+        context = {
+            'inside_line_comment': False,
+            'inside_block_comment': False,
+        }
         # auto-regressive generation
         while True:
+            do_analysis = not context['inside_line_comment'] and not context['inside_block_comment']
             if synced_gpus:
                 # Under synced_gpus the `forward` call must continue until all gpus complete their sequence.
                 # The following logic allows an early break if all peers finished generating their sequence
@@ -1122,7 +1129,7 @@ class Repairer:
             assert len(tokens) == NUM_SAMPLES
 
             def satisfy(analyzer: JdtLspAnalyzer, token: str, pos: spec.Position) -> bool:
-                token = token.strip()
+                # token = token.strip()
                 if len(token) > 0 and token[-1] != '.':
                     token = token if (idx := token.rfind(
                         '.')) == -1 else token[idx+1:]
@@ -1146,20 +1153,20 @@ class Repairer:
                 ]
                 if any(filter(
                     # token: some, completion: some_id
-                    lambda completion: completion.startswith(token),
+                    # token : Den, previous: max, completion: maxDenominator
+                    lambda completion: token in completion,
                     # token: a.b.c, completion: c
                     # or token.endswith(completion),
                     completions
                 )):
-                    print(completions)
-                    breakpoint()
+                    # breakpoint()
+                    # if 'lastFraction' in completions:
+                    #     breakpoint()
                     # print("Yes!")
                     # print(completions)
                     return True
                 else:
-                    breakpoint()
-                    print(''.join(generated_tokens))
-                    # print(token)
+                    # breakpoint()
                     return False
 
             def is_special_token(token: str) -> bool:
@@ -1167,21 +1174,22 @@ class Repairer:
             
             all_next_tokens, tokens = zip(*filter(lambda x : x[1].strip() not in ['//', '/*', '/**'], zip(all_next_tokens, tokens)))
 
-            for idx, token in enumerate(tokens):
-                if is_special_token(token):
-                    new_index = idx
-                    break
-                content = text_file.content
-                text_file.add(token)
-                analyzer.change(text_file)
-                pos = text_file.get_cursor_position()
-                satisfied = satisfy(analyzer, token, pos)
-                text_file.delete(len(token))
-                analyzer.change(text_file)
-                assert content == text_file.content
-                if satisfied:
-                    new_index = idx
-                    break
+            if do_analysis:
+                for idx, token in enumerate(tokens):
+                    if is_special_token(token):
+                        new_index = idx
+                        break
+                    content = text_file.content
+                    text_file.add(token)
+                    analyzer.change(text_file)
+                    pos = text_file.get_cursor_position()
+                    satisfied = satisfy(analyzer, token, pos)
+                    text_file.delete(len(token))
+                    analyzer.change(text_file)
+                    assert content == text_file.content
+                    if satisfied:
+                        new_index = idx
+                        break
 
             next_tokens = all_next_tokens[new_index].view(1)
             if next_tokens.item() != self.END_ID:
@@ -1297,6 +1305,19 @@ class Repairer:
             # print(self.tokenizer.decode(next_tokens, clean_up_tokenization_spaces=False))
             # print(tokens[new_index])
             # print('*****************************************')
+
+            next_token_string = tokens[new_index]
+            if ' ' in next_token_string:
+                print(repr(next_token_string))
+                breakpoint()
+            if next_token_string.strip().startswith('//'):
+                context['inside_line_comment'] = True
+            elif next_token_string.endswith('\n'):
+                context['inside_line_comment'] = False
+            elif next_token_string.strip().startswith('/*'):
+                context['inside_block_comment'] = True
+            elif next_token_string.endswith('*/'):
+                context['inside_block_comment'] = False
 
             # print(input_ids.shape)
             input_ids = torch.cat([input_ids, next_tokens.view(1, -1)], dim=-1)

@@ -102,12 +102,13 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
                     def comment(line: str) -> str:
                         stripped = line.lstrip()
                         index = len(line) - len(stripped)
-                        return line[:index] + '// Buggy: ' + stripped
+                        return line[:index] + '// ' + stripped
 
                     insertion = ''.join(comment(line) for line in change.removed_lines)
-                    insertion = ''
                     if not insertion.endswith('\n'):
                         insertion += '\n'
+                    # Disable buggy line encoding for now
+                    insertion = ''
                     # if not insertion.endswith('\n'):
                     #     print('Warining:', insertion)
                     #     insertion += '\n'
@@ -149,7 +150,7 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
                     # print(repairer.tokenizer.batch_decode(repairer.model.generate(repairer.input_tokens, decoder_input_ids=dummy, max_length=50), skip_special_tokens=True)[0])
                     # exit()
                     output_ids, output = repairer.repair(
-                        analyzer, text_file, max_new_tokens=200)
+                        analyzer, text_file, max_new_tokens=70)
                     # Keeps generation until EOM
                     if not output_ids[-1] == repairer.END_ID:
                         print('Failure')
@@ -213,7 +214,7 @@ random.seed(0)
 for bug_id, bug in dataset.all_bugs().items():
     proj = bug_id.split('-')[0]
     # if proj in proj_accessed or proj == 'Mockito':
-    if proj != 'Chart':
+    if proj != 'Math':
         continue
     # if bug_id == 'Math-1':
     #     continue
