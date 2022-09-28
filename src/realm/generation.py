@@ -59,7 +59,7 @@ from realm.lsp.text import TextDocument, TextFile
 
 MODEL = 'Salesforce/codet5-large'
 DEVICE = 'cuda'
-NUM_SAMPLES = 4
+NUM_SAMPLES = 6
 
 JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
                  'assert', 'default', 'goto', 'package', 'synchronized',
@@ -108,17 +108,21 @@ class Repairer:
         # text_file.cursor = original_cursor
         # text_file.sync()
         # text_file.write()
+        kwargs = {
+            'do_sample': True,
+            'max_new_tokens': max_new_tokens,
+            'temperature': 0.8,
+            'top_p': 0.95,
+            'eos_token_id': self.END_ID,
+        }
+        # output_ids = self.model.generate(self.input_tokens, **kwargs)[0]
+        # output = self.tokenizer.decode(output_ids, skip_special_tokens=False)
+        # return output_ids, output
         return self.generate(
             analyzer,
             text_file,
             self.input_tokens,
-            do_sample=True,
-            num_beams=1,
-            max_new_tokens=max_new_tokens,
-            temperature=0.8,
-            top_p=0.95,
-            eos_token_id=self.END_ID,
-            # stopping_criteria=StoppingCriteriaList([IncoderEOM()])
+            **kwargs,
         )
         # text_file.write()
         # outputs = outputs[:, len(inputs[0]):]
@@ -1117,9 +1121,6 @@ class Repairer:
                 all_next_tokens, skip_special_tokens=False, clean_up_tokenization_spaces=False)
             assert len(tokens) == NUM_SAMPLES
 
-            if 'public' in tokens or 'void' in tokens:
-                breakpoint()
-
             def satisfy(analyzer: JdtLspAnalyzer, token: str, pos: spec.Position) -> bool:
                 token = token.strip()
                 if len(token) > 0 and token[-1] != '.':
@@ -1150,19 +1151,21 @@ class Repairer:
                     # or token.endswith(completion),
                     completions
                 )):
-                    # breakpoint()
+                    print(completions)
+                    breakpoint()
                     # print("Yes!")
                     # print(completions)
                     return True
                 else:
-                    # breakpoint()
+                    breakpoint()
+                    print(''.join(generated_tokens))
                     # print(token)
                     return False
 
             def is_special_token(token: str) -> bool:
                 return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
             
-            # all_next_tokens, tokens = zip(*filter(lambda x : x[1].strip() not in ['//', '/*', '/**'], zip(all_next_tokens, tokens)))
+            all_next_tokens, tokens = zip(*filter(lambda x : x[1].strip() not in ['//', '/*', '/**'], zip(all_next_tokens, tokens)))
 
             for idx, token in enumerate(tokens):
                 if is_special_token(token):
@@ -1314,7 +1317,9 @@ class Repairer:
                     (next_tokens != eos_token_id).long())
 
             # stop when each sentence is finished, or if we exceed the maximum length
-            if next_tokens.item() == self.END_ID or max_length == len(input_ids[0]) or stopping_criteria(input_ids, scores):
+            # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
+            # Mask ids are 32099, 32098, 32097...
+            if next_tokens.item() == 32098 or next_tokens.item() == self.END_ID or max_length == len(input_ids[0]) or stopping_criteria(input_ids, scores):
                 # assert input_ids[0, -1] == self.EOM_ID
                 # if unfinished_sequences.max() == 0 or max_length == len(input_ids) or stopping_criteria(input_ids, scores):
                 if not synced_gpus:

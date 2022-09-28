@@ -15,7 +15,7 @@ from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.generation import Repairer
 from realm.lsp import TextDocument, spec
 import json
-from typing import List, Set, Tuple, cast
+from typing import Generator, List, Set, Tuple, cast
 from init import data
 from unidiff import PatchSet
 import git
@@ -99,8 +99,13 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
                     start_index = text_file.form_index(start, 0)
                     end_index = text_file.form_index(end, 0)
 
-                    insertion = ''.join(
-                        '// Buggy: ' + line for line in change.removed_lines)
+                    def comment(line: str) -> str:
+                        stripped = line.lstrip()
+                        index = len(line) - len(stripped)
+                        return line[:index] + '// Buggy: ' + stripped
+
+                    insertion = ''.join(comment(line) for line in change.removed_lines)
+                    insertion = ''
                     if not insertion.endswith('\n'):
                         insertion += '\n'
                     # if not insertion.endswith('\n'):
@@ -137,11 +142,14 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
                     assert text_file.content[text_file.cursor] == '\n'
 
                     repairer = Repairer(prefix, suffix)
+                    # text_file.write()
+                    # print(repairer.input_strings)
+                    # exit()
                     # print(repairer.tokenizer.batch_decode(dummy))
                     # print(repairer.tokenizer.batch_decode(repairer.model.generate(repairer.input_tokens, decoder_input_ids=dummy, max_length=50), skip_special_tokens=True)[0])
                     # exit()
                     output_ids, output = repairer.repair(
-                        analyzer, text_file, max_new_tokens=50)
+                        analyzer, text_file, max_new_tokens=200)
                     # Keeps generation until EOM
                     if not output_ids[-1] == repairer.END_ID:
                         print('Failure')
@@ -205,7 +213,7 @@ random.seed(0)
 for bug_id, bug in dataset.all_bugs().items():
     proj = bug_id.split('-')[0]
     # if proj in proj_accessed or proj == 'Mockito':
-    if proj == 'Mockito':
+    if proj != 'Chart':
         continue
     # if bug_id == 'Math-1':
     #     continue
