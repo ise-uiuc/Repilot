@@ -18,6 +18,15 @@ class MutableTextDocument(Protocol):
         self.cursor += len(text)
         self.sync()
 
+    def delete(self, length: int):
+        self.content = self.content[:self.cursor - length] \
+            + self.content[self.cursor:]
+        self.cursor -= length
+        self.sync()
+
+    def get_cursor_position(self) -> spec.Position:
+        return self.get_position(self.cursor)
+
     # Remember to sync everytime the content changes
     def sync(self):
         # TODO?: make this more efficient (only count the numbers w/o returning str)

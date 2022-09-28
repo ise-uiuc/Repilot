@@ -28,7 +28,7 @@ assert shutil.which('defects4j')
 assert os.getenv('JAVA8_HOME')
 
 # print(Repairer.tokenizer.encode("<s> </s> <pad> <extra_id_0> <extra_id_1> <unk> <mask>", add_special_tokens=False))
-# print(Repairer.tokenizer.decode(torch.tensor(range(32000, 32100)).to('cuda'), clean_up_tokenization_spaces = False))
+# print(Repairer.tokenizer.decode(torch.tensor(range(0, 10)).to('cuda'), clean_up_tokenization_spaces = False))
 # exit()
 # print(Repairer.tokenizer.tokenize("def long_function(): <extra_id_0> ", padding=True))
 # tokens = Repairer.tokenizer.encode("def long_function(): <extra_id_0>", return_tensors='pt', add_special_tokens=True).to('cuda')
@@ -38,7 +38,6 @@ assert os.getenv('JAVA8_HOME')
 # exit()
 
 
-CONTEXT_SIZE = 1000
 N_SAMPLE = 1
 
 dataset = d4j.Defects4J('/home/yuxiang/Developer/defects4j', data)
@@ -51,6 +50,11 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{bug_id}")
 
+dummy = torch.tensor([[    0, 32099,   203,  7734,   368,   203,  7734,   368,   333,   353,
+           358,  4543,   333,    18,   203,  7734,   368, 32098,  7734, 32097,
+           203,  5411,   289,   203,   203,  5411, 32096,   203, 32095,   203,
+         32094,   203, 32093,   203,  3639, 32092,   203,   565,   289,  1044,
+           261,  6385,   478,     2,     1]], device='cuda:0')
 
 def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
@@ -110,8 +114,8 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
                     # removed_lines
                     # suffix
                     prefix_start = text_file.form_index(
-                        max(0, start_pos['line'] - 30), 0)
-                    suffix_end = text_file.form_index(end_pos['line'] + 30, 0)
+                        max(0, start_pos['line'] - 25), 0)
+                    suffix_end = text_file.form_index(end_pos['line'] + 25, 0)
                     prefix = text_file.content[prefix_start:start_index] + insertion
                     suffix = '\n' + text_file.content[end_index:suffix_end]
 
@@ -133,6 +137,9 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
                     assert text_file.content[text_file.cursor] == '\n'
 
                     repairer = Repairer(prefix, suffix)
+                    # print(repairer.tokenizer.batch_decode(dummy))
+                    # print(repairer.tokenizer.batch_decode(repairer.model.generate(repairer.input_tokens, decoder_input_ids=dummy, max_length=50), skip_special_tokens=True)[0])
+                    # exit()
                     output_ids, output = repairer.repair(
                         analyzer, text_file, max_new_tokens=50)
                     # Keeps generation until EOM
