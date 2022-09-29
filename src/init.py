@@ -3,6 +3,7 @@ import multiprocessing as mp
 import csv
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, TypeVar
+from realm.utils import chunked
 
 D4J_PATH = Path('/home/yuxiang/Developer/defects4j')
 assert D4J_PATH.exists()
@@ -10,19 +11,6 @@ assert D4J_PATH.exists()
 Metadata = Dict[str, List[Dict[str, str]]]
 
 T = TypeVar('T')
-
-
-def chunked(n: int, data: Iterable[T]) -> Iterator[List[T]]:
-    data_iter = iter(data)
-
-    def take(n: int, data_iter: Iterator[T]) -> Iterable[T]:
-        for _ in range(n):
-            try:
-                yield next(data_iter)
-            except StopIteration:
-                return
-    while len(result := list(take(n, data_iter))) > 0:
-        yield result
 
 
 def get_all_bugs() -> Metadata:
@@ -65,6 +53,7 @@ def get_all_checkout_meta(bugs: Metadata) -> List[Dict[str, str]]:
     return [get_checkout_meta(proj, bug)
             for proj, proj_bugs in bugs.items()
             for bug in proj_bugs]
+
 
 all_bugs = get_all_bugs()
 data = get_all_checkout_meta(all_bugs)

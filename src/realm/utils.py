@@ -45,3 +45,16 @@ def line_consecutive(lhs: Line, rhs: Line) -> bool:
     if lhs.is_removed and rhs.is_removed:
         return lhs.source_line_no + 1 == rhs.source_line_no
     return False
+
+
+def chunked(n: int, data: Iterable[T]) -> Iterator[List[T]]:
+    data_iter = iter(data)
+
+    def take(n: int, data_iter: Iterator[T]) -> Iterable[T]:
+        for _ in range(n):
+            try:
+                yield next(data_iter)
+            except StopIteration:
+                return
+    while len(result := list(take(n, data_iter))) > 0:
+        yield result

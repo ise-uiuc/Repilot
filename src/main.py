@@ -1,4 +1,6 @@
+from realm.generation import Repairer
 import uuid
+from joblib import Parallel, delayed
 import regex as re
 from string import whitespace
 import time
@@ -39,8 +41,10 @@ assert shutil.which('defects4j')
 # print(Repairer.tokenizer.batch_decode(Repairer.model.generate(tokens, max_new_tokens=25), skip_special_tokens=False))
 # exit()
 
+
 def str_hash(s: str) -> int:
     return int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**8
+
 
 N_SAMPLE = 1
 
@@ -232,8 +236,10 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
 TIMEOUT = 60
 
+
 def compress(patch_group: List[TextFile]) -> int:
     return str_hash(''.join(re.sub(r'\s+', '', t.content) for t in patch_group))
+
 
 def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> bool:
     proj, id_str = bug_id.split('-')
@@ -276,98 +282,117 @@ def get_patch_groups(bug_dir: Path) -> List[List[TextFile]]:
         result.append(files)
     return result
 
-if os.getenv('VAL') is not None:
-    import sys
-    result_dir = Path(sys.argv[1])
-    all_bugs = dataset.all_bugs()
-    assert result_dir.exists()
-    for proj_dir in filter(Path.is_dir, result_dir.iterdir()):
-        result: dict = {}
-        appeared_patches: Set[int] = set()
-        bug_dirs: List[Path] = sorted(
-            list(filter(Path.is_dir, proj_dir.iterdir())), key=lambda p: int(str(p.stem)))
-        for bug_dir in bug_dirs:
-            bug_id = proj_dir.stem + '-' + bug_dir.stem
-            patch_groups = get_patch_groups(bug_dir)
-            result[bug_id] = { 
-                'succeeded': [],
-                'duplicated': [],
-            }
-            half = len(patch_groups) // 2 
-            for idx, patch_group in enumerate(patch_groups[:half]):
-                hash = compress(patch_group)
-                if hash in appeared_patches:
-                    print(bug_id, idx, 'is duplicated')
-                    result[bug_id]['duplicated'].append(idx)
-                    continue
-                appeared_patches.add(hash)
-                if validate_proj(bug_id, all_bugs[bug_id], patch_group):
-                    result[bug_id]['succeeded'].append(idx)
-                    break
-            for idx, patch_group in enumerate(patch_groups[half:]):
-                idx += half
-                hash = compress(patch_group)
-                if hash in appeared_patches:
-                    print(bug_id, idx, 'is duplicated')
-                    result[bug_id]['duplicated'].append(idx)
-                    if len(result[bug_id]['succeeded']) > 0:
-                        break
-                    else:
-                        continue
-                appeared_patches.add(hash)
-                if validate_proj(bug_id, all_bugs[bug_id], patch_group):
-                    result[bug_id]['succeeded'].append(idx)
-                    break
+
+def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
+    appeared_patches: Set[int] = set()
+    patch_groups = get_patch_groups(bug_dir)
+    result: dict = {
+        'succeeded': [],
+        'duplicated': [],
+    }
+    half = len(patch_groups) // 2
+    for idx, patch_group in enumerate(patch_groups[:half]):
+        hash = compress(patch_group)
+        if hash in appeared_patches:
+            print(bug_id, idx, 'is duplicated')
+            result['duplicated'].append(idx)
+            continue
+        appeared_patches.add(hash)
+        if validate_proj(bug_id, bug, patch_group):
+            result['succeeded'].append(idx)
+            break
+    for idx, patch_group in enumerate(patch_groups[half:]):
+        idx += half
+        hash = compress(patch_group)
+        if hash in appeared_patches:
+            print(bug_id, idx, 'is duplicated')
+            result['duplicated'].append(idx)
+            if len(result['succeeded']) > 0:
+                break
+            else:
+                continue
+        appeared_patches.add(hash)
+        if validate_proj(bug_id, bug, patch_group):
+            result['succeeded'].append(idx)
+            break
+    return result
+
+
+BATCH_SIZE = 16
+
+
+def validate_all_bugs(all_bugs: dict, proj_dir: Path) -> dict:
+    ret: dict = {}
+    bug_dirs: List[Path] = sorted(
+        list(filter(Path.is_dir, proj_dir.iterdir())), key=lambda p: int(str(p.stem)))
+    for bug_dir_batch in utils.chunked(BATCH_SIZE, bug_dirs):
+        params_list = [(bug_dir, (bug_id := proj_dir.stem + '-' + bug_dir.stem),
+                   all_bugs[bug_id]) for bug_dir in bug_dir_batch]
+        results: List[dict] = Parallel(n_jobs=BATCH_SIZE)(delayed(do_validation)(*params) for params in params_list)
+        for (_, bug_id, _), result in zip(params_list, results):
+            ret[bug_id] = result
+    return ret
+
+
+if __name__ == '__main__':
+    if os.getenv('VAL') is not None:
+        import sys
+        result_dir = Path(sys.argv[1])
+        all_bugs = dataset.all_bugs()
+        assert result_dir.exists()
+        all_results: dict = {}
+        for proj_dir in filter(Path.is_dir, result_dir.iterdir()):
+            result = validate_all_bugs(all_bugs, proj_dir)
+            all_results = dict(all_results, **result)
             with open(proj_dir / proj_dir.with_suffix('.json').name, 'w') as f:
-                json.dump(result, f, indent=2)
-    exit()
+                json.dump(all_results, f, indent=2)
+        exit()
 
-from realm.generation import Repairer
-assert os.getenv('JAVA8_HOME')
+    assert os.getenv('JAVA8_HOME')
 
-torch.manual_seed(0)
-random.seed(0)
-result_dir = Path(f'results-{uuid.uuid4()}')
-result_dir.mkdir(exist_ok=False, parents=True)
-for bug_id, bug in dataset.all_bugs().items():
-    proj = bug_id.split('-')[0]
-    # if proj in proj_accessed or proj == 'Mockito':
-    if not bug_id.startswith('Chart'):
-        continue
-    # if bug_id == 'Math-1':
-    #     continue
-    # proj_accessed.add(proj)
-    # if bug_id != 'Mockito-1':
-    #     continue
-    print(bug_id)
-    patch_groups = repair_proj(result_dir, bug_id, bug, 300)
-    # candidate_patch_groups: List[int] = []
-    # for idx, patch_group in enumerate(patch_groups):
-    #     if validate_proj(bug_id, bug, patch_group):
-    #         candidate_patch_groups.append(idx)
-    # with open('result.log', 'a') as f:
-    #     f.writelines(
-    #         [str(bug_id), ' : ', f'{len(candidate_patch_groups)} / {len(patch_groups)}'])
+    torch.manual_seed(0)
+    random.seed(0)
+    result_dir = Path(f'results-{uuid.uuid4()}')
+    result_dir.mkdir(exist_ok=False, parents=True)
+    for bug_id, bug in dataset.all_bugs().items():
+        proj = bug_id.split('-')[0]
+        # if proj in proj_accessed or proj == 'Mockito':
+        if not bug_id.startswith('Chart'):
+            continue
+        # if bug_id == 'Math-1':
+        #     continue
+        # proj_accessed.add(proj)
+        # if bug_id != 'Mockito-1':
+        #     continue
+        print(bug_id)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 300)
+        # candidate_patch_groups: List[int] = []
+        # for idx, patch_group in enumerate(patch_groups):
+        #     if validate_proj(bug_id, bug, patch_group):
+        #         candidate_patch_groups.append(idx)
+        # with open('result.log', 'a') as f:
+        #     f.writelines(
+        #         [str(bug_id), ' : ', f'{len(candidate_patch_groups)} / {len(patch_groups)}'])
 
-# file_path = Path(
-#     '/home/yuxiang/Developer/d4j-checkout/Lang-1-buggy/src/main/java/org/apache/commons/lang3/Validate.java')
-# with open(file_path) as f:
-#     content = TextDocument(f.read())
+    # file_path = Path(
+    #     '/home/yuxiang/Developer/d4j-checkout/Lang-1-buggy/src/main/java/org/apache/commons/lang3/Validate.java')
+    # with open(file_path) as f:
+    #     content = TextDocument(f.read())
 
-# a = java_syntax.reduce(content)
-# print(content.content)
-# print(a.content)
-# a.feed(';;')
+    # a = java_syntax.reduce(content)
+    # print(content.content)
+    # print(a.content)
+    # a.feed(';;')
 
-# try:
-#     a.feed('test')
-# except java_syntax.TokenizeError:
-#     print(a.parser.tokens.look())
-#     pass
-# # try:
-# #     a.feed('')
-# # except java_syntax.AnalysisError:
-# #     pass
-# # a.feed('package com.yourorganization.maven_sample')
-# #     # print(a.parser.tokens.look())
-# #     # a.feed(content[:10])
+    # try:
+    #     a.feed('test')
+    # except java_syntax.TokenizeError:
+    #     print(a.parser.tokens.look())
+    #     pass
+    # # try:
+    # #     a.feed('')
+    # # except java_syntax.AnalysisError:
+    # #     pass
+    # # a.feed('package com.yourorganization.maven_sample')
+    # #     # print(a.parser.tokens.look())
+    # #     # a.feed(content[:10])
