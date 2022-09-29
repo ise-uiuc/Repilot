@@ -300,16 +300,16 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
         if validate_proj(bug_id, bug, patch_group):
             result['succeeded'].append(idx)
             break
+    
+    # Do it again
+    appeared_patches = set()
     for idx, patch_group in enumerate(patch_groups[half:]):
         idx += half
         hash = compress(patch_group)
         if hash in appeared_patches:
             print(bug_id, idx, 'is duplicated')
             result['duplicated'].append(idx)
-            if len(result['succeeded']) > 0:
-                break
-            else:
-                continue
+            continue
         appeared_patches.add(hash)
         if validate_proj(bug_id, bug, patch_group):
             result['succeeded'].append(idx)
