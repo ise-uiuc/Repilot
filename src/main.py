@@ -160,8 +160,14 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     # print(repairer.tokenizer.batch_decode(repairer.model.generate(repairer.input_tokens, decoder_input_ids=dummy, max_length=50), skip_special_tokens=True)[0])
                     # exit()
                     start_time = time.time()
-                    output_ids, output = repairer.repair(
-                        analyzer, text_file, max_new_tokens=70)
+                    try:
+                        _, output = repairer.repair(
+                            analyzer, text_file, max_new_tokens=70)
+                    except TimeoutError:
+                        print('Fatal timeout error')
+                        with open('timeout-error', 'a') as f:
+                            f.write("TIMEOUT\n")
+                        output = ['']
                     end_time = time.time()
                     if do_analysis:
                         times_lsp.append(end_time - start_time)
