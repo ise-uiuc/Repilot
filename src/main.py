@@ -320,7 +320,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
 BATCH_SIZE = 32
 
 
-def validate_all_bugs(all_bugs: dict, proj_dir: Path) -> dict:
+def validate_all_bugs(all_bugs: dict, proj_dir: Path):
     ret: dict = {}
     bug_dirs: List[Path] = sorted(
         list(filter(Path.is_dir, proj_dir.iterdir())), key=lambda p: int(str(p.stem)))
@@ -330,7 +330,8 @@ def validate_all_bugs(all_bugs: dict, proj_dir: Path) -> dict:
         results: List[dict] = Parallel(n_jobs=BATCH_SIZE)(delayed(do_validation)(*params) for params in params_list)
         for (_, bug_id, _), result in zip(params_list, results):
             ret[bug_id] = result
-    return ret
+        with open(proj_dir / proj_dir.with_suffix('.json').name, 'w') as f:
+            json.dump(ret, f, indent=2)
 
 
 if __name__ == '__main__':
@@ -341,10 +342,8 @@ if __name__ == '__main__':
         assert result_dir.exists()
         all_results: dict = {}
         for proj_dir in filter(Path.is_dir, result_dir.iterdir()):
-            result = validate_all_bugs(all_bugs, proj_dir)
-            all_results = dict(all_results, **result)
-            with open(proj_dir / proj_dir.with_suffix('.json').name, 'w') as f:
-                json.dump(all_results, f, indent=2)
+            validate_all_bugs(all_bugs, proj_dir)
+            # all_results = dict(all_results, **result)
         exit()
 
     assert os.getenv('JAVA8_HOME')
