@@ -8,6 +8,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 import regex
+import itertools
 
 import torch
 import torch.distributed as dist
@@ -72,6 +73,7 @@ JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
                  'class', 'finally', 'long', 'strictfp', 'volatile',
                  'const' 'float', 'native', 'super', 'while']
 
+class IDTokenError(Exception): pass
 
 Generation = Tuple[List[int], List[str]]
 
@@ -1101,35 +1103,34 @@ class Repairer:
 
             # sample
             probs = nn.functional.softmax(next_token_scores, dim=-1)
-            all_next_tokens = torch.multinomial(
+            all_next_token_ids = torch.multinomial(
                 probs, num_samples=NUM_SAMPLES).squeeze(1).view(NUM_SAMPLES, 1)
             new_index = 0
-            # all_next_tokens = torch.topk(next_token_scores, k=6, dim=-1).indices.view(6, 1)
+            # all_next_token_ids = torch.topk(next_token_scores, k=6, dim=-1).indices.view(6, 1)
             # exit()
 
             # finished sentences should have their next token be a padding token
-            # print(next_tokens)
+            # print(next_token_id)
             # if eos_token_id is not None:
             #     if pad_token_id is None:
             #         raise ValueError(
             #             "If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
             #     # print(pad_token_id)
             #     # print(unfinished_sequences)
-            #     for idx, _ in enumerate(all_next_tokens):
-            #         all_next_tokens[idx] = all_next_tokens[idx] * unfinished_sequences + \
+            #     for idx, _ in enumerate(all_next_token_ids):
+            #         all_next_token_ids[idx] = all_next_token_ids[idx] * unfinished_sequences + \
             #             pad_token_id * (1 - unfinished_sequences)
-            #     # print(next_tokens)
+            #     # print(next_token_id)
             #     # exit()
 
             # update generated ids, model inputs, and length for next step
-            for next_tokens in all_next_tokens:
-                assert next_tokens.shape == torch.Size([1]), next_tokens.shape
+            for next_token_id in all_next_token_ids:
+                assert next_token_id.shape == torch.Size([1]), next_token_id.shape
             tokens = self.tokenizer.batch_decode(
-                all_next_tokens, skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                all_next_token_ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)
             assert len(tokens) == NUM_SAMPLES
 
             def satisfy(analyzer: JdtLspAnalyzer, token: str, pos: spec.Position) -> bool:
-                # token = token.strip()
                 if len(token) > 0 and token[-1] != '.':
                     token = token if (idx := token.rfind(
                         '.')) == -1 else token[idx+1:]
@@ -1171,41 +1172,76 @@ class Repairer:
 
             def is_special_token(token: str) -> bool:
                 return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
-            
-            all_next_tokens, tokens = zip(*filter(lambda x : x[1].strip() not in ['//', '/*', '/**'], zip(all_next_tokens, tokens)))
 
+            all_next_token_ids, tokens = zip(
+                *filter(lambda x: x[1].strip() not in ['//', '/*', '/**'], zip(all_next_token_ids, tokens)))
+
+            # Get the exact identifier token position
+            def get_id_token_and_rspace_len(token: str, generated_tokens: List[str]) -> Tuple[str, int]:
+                if token == ' q':
+                    breakpoint()
+                token_rstrip = token.rstrip()
+                rspace_len = len(token) - len(token_rstrip)
+
+                def get():
+                    for token in itertools.chain(
+                        [token_rstrip],
+                        reversed(generated_tokens),
+                    ):
+                        for c in reversed(token):
+                            if c.isdigit() or c.isalpha() or c == '_':
+                                yield c
+                            else:
+                                return
+                result = ''.join(reversed(list(get())))
+
+                if len(result) > 0 and not result[0].isdigit():
+                    return result, rspace_len
+                else:
+                    raise IDTokenError
+
+            satisfied = False
             if do_analysis:
                 for idx, token in enumerate(tokens):
                     if is_special_token(token):
                         new_index = idx
                         break
-                    content = text_file.content
                     text_file.add(token)
                     analyzer.change(text_file)
-                    pos = text_file.get_cursor_position()
-                    satisfied = satisfy(analyzer, token, pos)
-                    text_file.delete(len(token))
-                    analyzer.change(text_file)
-                    assert content == text_file.content
+                    try:
+                        id_token, rspace_len = get_id_token_and_rspace_len(
+                            token, generated_tokens)
+                        print(repr(id_token), repr(token))
+                        breakpoint()
+                        content = text_file.content
+                        pos = text_file.get_position(text_file.cursor - rspace_len)
+                        satisfied = satisfy(analyzer, id_token, pos)
+                    except IDTokenError:
+                        print(repr(token))
+                        breakpoint()
+                        satisfied = True
                     if satisfied:
                         new_index = idx
                         break
+                    else:
+                        text_file.delete(len(token))
+                        analyzer.change(text_file)
+                        assert content == text_file.content
 
-            next_tokens = all_next_tokens[new_index].view(1)
-            if next_tokens.item() != self.END_ID:
-                if not is_special_token(tokens[new_index]):
-                    text_file.add(tokens[new_index])
-                    text_file.write()
-                    analyzer.change(text_file)
+            next_token_id = all_next_token_ids[new_index].view(1)
+            if not satisfied and not is_special_token(tokens[new_index]):
+                text_file.add(tokens[new_index])
+                text_file.write()
+                analyzer.change(text_file)
             # [self.tokenizer.decode(
-                # next_tokens.view(1)) for next_tokens in all_next_tokens]
+                # next_token_id.view(1)) for next_token_id in all_next_token_ids]
             # exit()
             # if token.strip() in ['//', '/*', '*/', '/**']:
             #     continue
             # Force the model to complete the generation
             # if True:
-            #     # max_length - len(input_ids[0]) < 10 and self.EOM_ID in all_next_tokens:
-            #     #     next_tokens = torch.tensor([self.EOM_ID]).to(DEVICE)
+            #     # max_length - len(input_ids[0]) < 10 and self.EOM_ID in all_next_token_ids:
+            #     #     next_token_id = torch.tensor([self.EOM_ID]).to(DEVICE)
             #     # else:
             #     pos = text_file.get_position(text_file.cursor)
                 # if False:
@@ -1287,9 +1323,9 @@ class Repairer:
                 #                 break
                 #             except StopIteration:
                 #                 break
-                #             # next_tokens = self.tokenizer.encode(token, add_special_tokens=False, return_tensors='pt')[0][:1]
-                #             # next_tokens = next_tokens.to(DEVICE)
-                #         # assert next_tokens.shape == torch.Size([1]), token
+                #             # next_token_id = self.tokenizer.encode(token, add_special_tokens=False, return_tensors='pt')[0][:1]
+                #             # next_token_id = next_token_id.to(DEVICE)
+                #         # assert next_token_id.shape == torch.Size([1]), token
                 #     # print()
                 #     # print(token)
                 #     # print(text_file.content[text_file.cursor - 100:text_file.cursor])
@@ -1301,15 +1337,15 @@ class Repairer:
                 # analyzer.change(text_file)
 
             # print('*****************************************')
-            # print(next_tokens)
-            # print(self.tokenizer.decode(next_tokens, clean_up_tokenization_spaces=False))
+            # print(next_token_id)
+            # print(self.tokenizer.decode(next_token_id, clean_up_tokenization_spaces=False))
             # print(tokens[new_index])
             # print('*****************************************')
 
             next_token_string = tokens[new_index]
-            if ' ' in next_token_string:
-                print(repr(next_token_string))
-                breakpoint()
+            # if ' ' in next_token_string:
+            #     print(repr(next_token_string))
+            #     breakpoint()
             if next_token_string.strip().startswith('//'):
                 context['inside_line_comment'] = True
             elif next_token_string.endswith('\n'):
@@ -1320,10 +1356,10 @@ class Repairer:
                 context['inside_block_comment'] = False
 
             # print(input_ids.shape)
-            input_ids = torch.cat([input_ids, next_tokens.view(1, -1)], dim=-1)
+            input_ids = torch.cat([input_ids, next_token_id.view(1, -1)], dim=-1)
             # print(repr(tokens[new_index]), end=' ')
             if not is_special_token(tokens[new_index]):
-                generated_ids.append(next_tokens.item())
+                generated_ids.append(next_token_id.item())
                 generated_tokens.append(tokens[new_index])
             # print(input_ids.shape, 'new')
             model_kwargs = self.model._update_model_kwargs_for_generation(
@@ -1335,12 +1371,12 @@ class Repairer:
             # if eos_token was found in one sentence, set sentence to finished
             if eos_token_id is not None:
                 unfinished_sequences = unfinished_sequences.mul(
-                    (next_tokens != eos_token_id).long())
+                    (next_token_id != eos_token_id).long())
 
             # stop when each sentence is finished, or if we exceed the maximum length
             # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
             # Mask ids are 32099, 32098, 32097...
-            if next_tokens.item() == 32098 or next_tokens.item() == self.END_ID or max_length == len(input_ids[0]) or stopping_criteria(input_ids, scores):
+            if next_token_id.item() == 32098 or next_token_id.item() == self.END_ID or max_length == len(input_ids[0]) or stopping_criteria(input_ids, scores):
                 # assert input_ids[0, -1] == self.EOM_ID
                 # if unfinished_sequences.max() == 0 or max_length == len(input_ids) or stopping_criteria(input_ids, scores):
                 if not synced_gpus:
