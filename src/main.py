@@ -305,6 +305,7 @@ if os.getenv('VAL') is not None:
                     result[bug_id]['succeeded'].append(idx)
                     break
             for idx, patch_group in enumerate(patch_groups[half:]):
+                idx += half
                 hash = compress(patch_group)
                 if hash in appeared_patches:
                     print(bug_id, idx, 'is duplicated')
@@ -314,7 +315,6 @@ if os.getenv('VAL') is not None:
                     else:
                         continue
                 appeared_patches.add(hash)
-                idx += half
                 if validate_proj(bug_id, all_bugs[bug_id], patch_group):
                     result[bug_id]['succeeded'].append(idx)
                     break
