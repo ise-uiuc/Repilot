@@ -78,9 +78,13 @@ class LSPClient(Thread):
         ] = {}
         self.lock = Condition()
         self.timeout = timeout
+        self.stopped = False
+    
+    def stop(self):
+        self.stopped = True
     
     def run(self) -> None:
-        while True:
+        while not self.stopped:
             server_response = self.recv()
             if 'method' in server_response and 'id' in server_response:
                 # print(server_response)

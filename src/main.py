@@ -1,4 +1,5 @@
-import logging
+import uuid
+import time
 import torch
 import random
 import os
@@ -56,7 +57,7 @@ dummy = torch.tensor([[    0, 32099,   203,  7734,   368,   203,  7734,   368,  
          32094,   203, 32093,   203,  3639, 32092,   203,   565,   289,  1044,
            261,  6385,   478,     2,     1]], device='cuda:0')
 
-def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
+def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
     repo = git.Repo(bug.proj_path)
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
@@ -69,13 +70,18 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
         str, os.getenv('JAVA8_HOME')), verbose=False)
 
     patch_groups: List[List[TextFile]] = []
-    for idx in range(n_patch_groups):
+    times_no_lsp: List[float] = []
+    times_lsp: List[float] = []
+    base_dir = result_dir / proj / id_str
+    base_dir.mkdir(exist_ok=False, parents=True)
+    for idx in range(2 * n_patch_groups):
         print('Repair:', idx)
         if idx != 0:
             repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
             # TODO: refactor textfile
             for buggy_file in bug.buggy_files:
                 text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
+                analyzer.change(text_file)
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
         for buggy_file in bug.buggy_files:
@@ -138,22 +144,32 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
                     }])
 
                     text_file.move_cursor(start_index + len(insertion))
+                    # start_cursor = text_file.cursor
                     assert prefix.endswith('\n')
                     assert text_file.content[text_file.cursor - 1] == '\n'
                     assert text_file.content[text_file.cursor] == '\n'
 
-                    repairer = Repairer(prefix, suffix)
+                    do_analysis = True if idx < n_patch_groups else False 
+                    repairer = Repairer(prefix, suffix, do_analysis=do_analysis)
                     # text_file.write()
                     # print(repairer.input_strings)
                     # exit()
                     # print(repairer.tokenizer.batch_decode(dummy))
                     # print(repairer.tokenizer.batch_decode(repairer.model.generate(repairer.input_tokens, decoder_input_ids=dummy, max_length=50), skip_special_tokens=True)[0])
                     # exit()
+                    start_time = time.time()
                     output_ids, output = repairer.repair(
                         analyzer, text_file, max_new_tokens=70)
-                    # Keeps generation until EOM
-                    if not output_ids[-1] == repairer.END_ID:
-                        print('Failure')
+                    end_time = time.time()
+                    if do_analysis:
+                        times_lsp.append(end_time - start_time)
+                    else:
+                        times_no_lsp.append(end_time - start_time)
+                    # This is always True
+                    # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
+                    if not True:
+                    # output_ids[-1] == repairer.END_ID:
+                        print('===============================')
                         print(''.join(output))
                         text_file.content = original_content
                         text_file.cursor = original_cursor
@@ -165,8 +181,26 @@ def repair_proj(bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List
                         print('Success')
                         print(''.join(output))
                         break
+            # text_file.write()
             text_files.append(text_file)
         patch_groups.append(text_files)
+        # TODO: opt
+        save_dir = base_dir / str(len(patch_groups))
+        save_dir.mkdir(exist_ok=False, parents=True)
+        for text_file in text_files:
+            with open(save_dir / text_file.path.with_suffix('.json').name, 'w') as f:
+                json.dump({
+                    'path': str(text_file.path.absolute()),
+                    'cursor': text_file.cursor,
+                    'content': text_file.content,
+                }, f, indent=2)
+    with open(base_dir / 'time.json', 'w') as f:
+        json.dump({
+            'with_lsp': times_lsp,
+            'no_lsp': times_no_lsp,
+        }, f, indent=2)
+
+    analyzer.client.stop()
     return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
@@ -211,10 +245,12 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
 
 torch.manual_seed(0)
 random.seed(0)
+result_dir = Path(f'results-{uuid.uuid4()}')
+result_dir.mkdir(exist_ok=False, parents=True)
 for bug_id, bug in dataset.all_bugs().items():
     proj = bug_id.split('-')[0]
     # if proj in proj_accessed or proj == 'Mockito':
-    if proj != 'Math':
+    if not bug_id.startswith('Chart'):
         continue
     # if bug_id == 'Math-1':
     #     continue
@@ -222,14 +258,14 @@ for bug_id, bug in dataset.all_bugs().items():
     # if bug_id != 'Mockito-1':
     #     continue
     print(bug_id)
-    patch_groups = repair_proj(bug_id, bug, 50)
-    candidate_patch_groups: List[int] = []
-    for idx, patch_group in enumerate(patch_groups):
-        if validate_proj(bug_id, bug, patch_group):
-            candidate_patch_groups.append(idx)
-    with open('result.log', 'a') as f:
-        f.writelines(
-            [str(bug_id), ' : ', f'{len(candidate_patch_groups)} / {len(patch_groups)}'])
+    patch_groups = repair_proj(result_dir, bug_id, bug, 2)
+    # candidate_patch_groups: List[int] = []
+    # for idx, patch_group in enumerate(patch_groups):
+    #     if validate_proj(bug_id, bug, patch_group):
+    #         candidate_patch_groups.append(idx)
+    # with open('result.log', 'a') as f:
+    #     f.writelines(
+    #         [str(bug_id), ' : ', f'{len(candidate_patch_groups)} / {len(patch_groups)}'])
 
 # file_path = Path(
 #     '/home/yuxiang/Developer/d4j-checkout/Lang-1-buggy/src/main/java/org/apache/commons/lang3/Validate.java')
