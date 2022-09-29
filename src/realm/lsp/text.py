@@ -2,7 +2,7 @@ from functools import partial
 from operator import add
 from os import PathLike
 from pathlib import Path
-from typing import List, Protocol, cast
+from typing import List, Optional, Protocol, cast
 from . import spec
 
 
@@ -108,11 +108,14 @@ class TextDocument(MutableTextDocument):
 
 
 class TextFile(MutableTextDocument):
-    def __init__(self, path: PathLike) -> None:
+    def __init__(self, path: PathLike, content: Optional[str] = None) -> None:
         self._path = Path(path)
         self.cursor = 0
-        with open(path) as f:
-            self.content = f.read()
+        if content is None:
+            with open(path) as f:
+                self.content = f.read()
+        else:
+            self.content = content
         self.sync()
 
     def write(self):

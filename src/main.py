@@ -13,7 +13,6 @@ from Repair.LM.model import SpanLM
 from realm import utils
 from realm.analyze import java_syntax
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
-from realm.generation import Repairer
 from realm.lsp import TextDocument, spec
 import json
 from typing import Generator, List, Set, Tuple, cast
@@ -26,7 +25,6 @@ from realm.lsp.text import TextFile
 from datasets import d4j
 
 assert shutil.which('defects4j')
-assert os.getenv('JAVA8_HOME')
 
 # print(Repairer.tokenizer.encode("<s> </s> <pad> <extra_id_0> <extra_id_1> <unk> <mask>", add_special_tokens=False))
 # print(Repairer.tokenizer.decode(torch.tensor(range(0, 10)).to('cuda'), clean_up_tokenization_spaces = False))
@@ -51,11 +49,13 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{bug_id}")
 
-dummy = torch.tensor([[    0, 32099,   203,  7734,   368,   203,  7734,   368,   333,   353,
-           358,  4543,   333,    18,   203,  7734,   368, 32098,  7734, 32097,
-           203,  5411,   289,   203,   203,  5411, 32096,   203, 32095,   203,
-         32094,   203, 32093,   203,  3639, 32092,   203,   565,   289,  1044,
-           261,  6385,   478,     2,     1]], device='cuda:0')
+
+dummy = torch.tensor([[0, 32099,   203,  7734,   368,   203,  7734,   368,   333,   353,
+                       358,  4543,   333,    18,   203,  7734,   368, 32098,  7734, 32097,
+                       203,  5411,   289,   203,   203,  5411, 32096,   203, 32095,   203,
+                       32094,   203, 32093,   203,  3639, 32092,   203,   565,   289,  1044,
+                       261,  6385,   478,     2,     1]], device='cuda:0')
+
 
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
@@ -110,7 +110,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                         index = len(line) - len(stripped)
                         return line[:index] + '// ' + stripped
 
-                    insertion = ''.join(comment(line) for line in change.removed_lines)
+                    insertion = ''.join(comment(line)
+                                        for line in change.removed_lines)
                     if not insertion.endswith('\n'):
                         insertion += '\n'
                     # Disable buggy line encoding for now
@@ -149,8 +150,9 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     assert text_file.content[text_file.cursor - 1] == '\n'
                     assert text_file.content[text_file.cursor] == '\n'
 
-                    do_analysis = True if idx < n_patch_groups else False 
-                    repairer = Repairer(prefix, suffix, do_analysis=do_analysis)
+                    do_analysis = True if idx < n_patch_groups else False
+                    repairer = Repairer(
+                        prefix, suffix, do_analysis=do_analysis)
                     # text_file.write()
                     # print(repairer.input_strings)
                     # exit()
@@ -168,7 +170,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     # This is always True
                     # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
                     if not True:
-                    # output_ids[-1] == repairer.END_ID:
+                        # output_ids[-1] == repairer.END_ID:
                         print('===============================')
                         print(''.join(output))
                         text_file.content = original_content
@@ -200,6 +202,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             'no_lsp': times_no_lsp,
         }, f, indent=2)
 
+    # TODO: still buggy
     analyzer.client.stop()
     return patch_groups
 
@@ -215,7 +218,9 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     # # for text_file in text_files:
     #     text_file.write()
 
+
 TIMEOUT = 60
+
 
 def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> bool:
     proj, id_str = bug_id.split('-')
@@ -234,7 +239,8 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
         return False
     # Filter out candidate patches (not even plausible)
     try:
-        subprocess.run(['defects4j', 'test'], env=env, cwd=bug.proj_path, timeout=60)
+        subprocess.run(['defects4j', 'test'], env=env,
+                       cwd=bug.proj_path, timeout=60)
         failing_tests = Path(bug.proj_path) / 'failing_tests'
         assert failing_tests.exists()
         with open(failing_tests) as f:
@@ -242,6 +248,50 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
     except subprocess.TimeoutExpired:
         return False
 
+
+def get_patch_groups(bug_dir: Path) -> List[List[TextFile]]:
+    result: List[List[TextFile]] = []
+    for patch_group_dir in sorted(list(filter(Path.is_dir, bug_dir.iterdir())), key=lambda p: int(str(p.stem))):
+        files: List[TextFile] = []
+        for json_file in patch_group_dir.iterdir():
+            assert json_file.name.endswith('.json')
+            with open(json_file) as f:
+                data = json.load(f)
+            text_file = TextFile(data['path'], data['content'])
+            text_file.move_cursor(data['cursor'])
+            files.append(text_file)
+        result.append(files)
+    return result
+
+if os.getenv('VAL') is not None:
+    import sys
+    result_dir = Path(sys.argv[1])
+    all_bugs = dataset.all_bugs()
+    assert result_dir.exists()
+    for proj_dir in filter(Path.is_dir, result_dir.iterdir()):
+        result: dict = {}
+        bug_dirs: List[Path] = sorted(
+            list(filter(Path.is_dir, proj_dir.iterdir())), key=lambda p: int(str(p.stem)))
+        for bug_dir in bug_dirs:
+            bug_id = proj_dir.stem + '-' + bug_dir.stem
+            patch_groups = get_patch_groups(bug_dir)
+            result[bug_id] = []
+            half = len(patch_groups) // 2 
+            for idx, patch_group in enumerate(patch_groups[:half]):
+                if validate_proj(bug_id, all_bugs[bug_id], patch_group):
+                    result[bug_id].append(idx)
+                    break
+            for idx, patch_group in enumerate(patch_groups[half:]):
+                idx += half
+                if validate_proj(bug_id, all_bugs[bug_id], patch_group):
+                    result[bug_id].append(idx)
+                    break
+            with open(proj_dir / proj_dir.with_suffix('.json').name, 'w') as f:
+                json.dump(result, f, indent=2)
+    exit()
+
+from realm.generation import Repairer
+assert os.getenv('JAVA8_HOME')
 
 torch.manual_seed(0)
 random.seed(0)
