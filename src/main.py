@@ -1,4 +1,6 @@
 import uuid
+import regex as re
+from string import whitespace
 import time
 import torch
 import random
@@ -19,6 +21,7 @@ from typing import Generator, List, Set, Tuple, cast
 from init import data
 from unidiff import PatchSet
 import git
+import hashlib
 
 from realm.lsp.spec import TextChange
 from realm.lsp.text import TextFile
@@ -36,6 +39,8 @@ assert shutil.which('defects4j')
 # print(Repairer.tokenizer.batch_decode(Repairer.model.generate(tokens, max_new_tokens=25), skip_special_tokens=False))
 # exit()
 
+def str_hash(s: str) -> int:
+    return int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**8
 
 N_SAMPLE = 1
 
@@ -227,6 +232,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
 TIMEOUT = 60
 
+def compress(patch_group: List[TextFile]) -> int:
+    return str_hash(''.join(re.sub(r'\s+', '', t.content) for t in patch_group))
 
 def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> bool:
     proj, id_str = bug_id.split('-')
@@ -276,21 +283,40 @@ if os.getenv('VAL') is not None:
     assert result_dir.exists()
     for proj_dir in filter(Path.is_dir, result_dir.iterdir()):
         result: dict = {}
+        appeared_patches: Set[int] = set()
         bug_dirs: List[Path] = sorted(
             list(filter(Path.is_dir, proj_dir.iterdir())), key=lambda p: int(str(p.stem)))
         for bug_dir in bug_dirs:
             bug_id = proj_dir.stem + '-' + bug_dir.stem
             patch_groups = get_patch_groups(bug_dir)
-            result[bug_id] = []
+            result[bug_id] = { 
+                'succeeded': [],
+                'duplicated': [],
+            }
             half = len(patch_groups) // 2 
             for idx, patch_group in enumerate(patch_groups[:half]):
+                hash = compress(patch_group)
+                if hash in appeared_patches:
+                    print(bug_id, idx, 'is duplicated')
+                    result[bug_id]['duplicated'].append(idx)
+                    continue
+                appeared_patches.add(hash)
                 if validate_proj(bug_id, all_bugs[bug_id], patch_group):
-                    result[bug_id].append(idx)
+                    result[bug_id]['succeeded'].append(idx)
                     break
             for idx, patch_group in enumerate(patch_groups[half:]):
+                hash = compress(patch_group)
+                if hash in appeared_patches:
+                    print(bug_id, idx, 'is duplicated')
+                    result[bug_id]['duplicated'].append(idx)
+                    if len(result[bug_id]['succeeded']) > 0:
+                        break
+                    else:
+                        continue
+                appeared_patches.add(hash)
                 idx += half
                 if validate_proj(bug_id, all_bugs[bug_id], patch_group):
-                    result[bug_id].append(idx)
+                    result[bug_id]['succeeded'].append(idx)
                     break
             with open(proj_dir / proj_dir.with_suffix('.json').name, 'w') as f:
                 json.dump(result, f, indent=2)
