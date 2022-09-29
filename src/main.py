@@ -1,4 +1,3 @@
-from realm.generation import Repairer
 import uuid
 from joblib import Parallel, delayed
 import regex as re
@@ -318,7 +317,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     return result
 
 
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 
 
 def validate_all_bugs(all_bugs: dict, proj_dir: Path) -> dict:
@@ -350,6 +349,7 @@ if __name__ == '__main__':
 
     assert os.getenv('JAVA8_HOME')
 
+    from realm.generation import Repairer
     torch.manual_seed(0)
     random.seed(0)
     result_dir = Path(f'results-{uuid.uuid4()}')
