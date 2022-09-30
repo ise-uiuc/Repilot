@@ -23,6 +23,9 @@ class JdtLspAnalyzer:
     Now assume only one active file for diagnosis"""
     counter = itertools.count(0)
 
+    def stop(self):
+        self.process.terminate()
+
     def __init__(self, server_cmd: List[str], proj_path: PathLike, java_home: str, verbose: bool = False) -> None:
         self.process = subprocess.Popen(
             server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, shell=False)

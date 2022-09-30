@@ -218,6 +218,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
     # TODO: still buggy
     analyzer.client.stop()
+    analyzer.stop()
     return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
@@ -356,7 +357,9 @@ if __name__ == '__main__':
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
-        if not bug_id.startswith('Chart'):
+        if not bug_id.startswith('Closure'):
+            continue
+        if int(bug_id.split('-')[1]) < 115:
             continue
         # if bug_id == 'Math-1':
         #     continue
