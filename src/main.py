@@ -1,3 +1,4 @@
+import difflib
 import uuid
 from joblib import Parallel, delayed
 import regex as re
@@ -72,14 +73,15 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     subprocess.run(['defects4j', 'checkout', '-p', proj,
                     f'-v{id_str}b', '-w', bug.proj_path])
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
-    # repo.git.execute(['git', 'clean', '-xfd'])
+    repo.git.execute(['git', 'clean', '-xfd'])
 
     analyzer = JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
         str, os.getenv('JAVA8_HOME')), verbose=False)
 
     patch_groups: List[List[TextFile]] = []
-    times_no_lsp: List[float] = []
-    times_lsp: List[float] = []
+    time_no_lsp: List[float] = []
+    time_completion: List[float] = []
+    time_lsp: List[float] = []
     base_dir = result_dir / proj / id_str
     base_dir.mkdir(exist_ok=False, parents=True)
     for idx in range(2 * n_patch_groups):
@@ -102,118 +104,130 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                    for c in reversed(buggy_file.changes)])
 
             for change in reversed(buggy_file.changes):
-                original_content = text_file.content
-                original_cursor = text_file.cursor
-                while True:
-                    start = change.start - 1
-                    end = start + len(change.removed_lines)
-                    start_pos = text_file.refine_index(start, 0)
-                    end_pos = text_file.refine_index(end, 0)
+                start = change.start - 1
+                end = start + len(change.removed_lines)
+                start_pos = text_file.refine_index(start, 0)
+                end_pos = text_file.refine_index(end, 0)
 
-                    start_index = text_file.form_index(start, 0)
-                    end_index = text_file.form_index(end, 0)
+                start_index = text_file.form_index(start, 0)
+                end_index = text_file.form_index(end, 0)
 
-                    def comment(line: str) -> str:
-                        stripped = line.lstrip()
-                        index = len(line) - len(stripped)
-                        return line[:index] + '// ' + stripped
+                def comment(line: str) -> str:
+                    stripped = line.lstrip()
+                    index = len(line) - len(stripped)
+                    return line[:index] + '// ' + stripped
 
-                    insertion = ''.join(comment(line)
-                                        for line in change.removed_lines)
-                    if not insertion.endswith('\n'):
-                        insertion += '\n'
-                    # Disable buggy line encoding for now
-                    insertion = ''
-                    # if not insertion.endswith('\n'):
-                    #     print('Warining:', insertion)
-                    #     insertion += '\n'
-                    # print(text_file.get_position(text_file.cursor))
-                    # text_file.write()
-                    # exit()
+                insertion = ''.join(comment(line)
+                                    for line in change.removed_lines)
+                if not insertion.endswith('\n'):
+                    insertion += '\n'
+                # Disable buggy line encoding for now
+                insertion = ''
+                # if not insertion.endswith('\n'):
+                #     print('Warining:', insertion)
+                #     insertion += '\n'
+                # print(text_file.get_position(text_file.cursor))
+                # text_file.write()
+                # exit()
 
-                    # prefix
-                    # removed_lines
-                    # suffix
-                    prefix_start = text_file.form_index(
-                        max(0, start_pos['line'] - 25), 0)
-                    suffix_end = text_file.form_index(end_pos['line'] + 25, 0)
-                    prefix = text_file.content[prefix_start:start_index] + insertion
-                    suffix = '\n' + text_file.content[end_index:suffix_end]
+                # prefix
+                # removed_lines
+                # suffix
+                prefix_start = text_file.form_index(
+                    max(0, start_pos['line'] - 25), 0)
+                suffix_end = text_file.form_index(end_pos['line'] + 25, 0)
+                prefix = text_file.content[prefix_start:start_index] + insertion
+                suffix = '\n' + text_file.content[end_index:suffix_end]
 
-                    # prefix(\n)
-                    # insertion(\n)
-                    # <cursor:infill>
-                    # (\n)suffix
-                    text_file.change([{
-                        'text': insertion + '\n',
-                        'range': {
-                            'start': start_pos,
-                            'end': end_pos
-                        }
-                    }])
+                # prefix(\n)
+                # insertion(\n)
+                # <cursor:infill>
+                # (\n)suffix
+                text_file.change([cast(spec.EntireDocumentChange, {
+                    'text': insertion + '\n',
+                    'range': {
+                        'start': start_pos,
+                        'end': end_pos
+                    }
+                })])
 
-                    text_file.move_cursor(start_index + len(insertion))
-                    # start_cursor = text_file.cursor
-                    assert prefix.endswith('\n')
-                    assert text_file.content[text_file.cursor - 1] == '\n'
-                    assert text_file.content[text_file.cursor] == '\n'
+                text_file.move_cursor(start_index + len(insertion))
+                # start_cursor = text_file.cursor
+                assert prefix.endswith('\n')
+                assert text_file.content[text_file.cursor - 1] == '\n'
+                assert text_file.content[text_file.cursor] == '\n'
 
-                    do_analysis = True if idx < n_patch_groups else False
-                    repairer = Repairer(
-                        prefix, suffix, do_analysis=do_analysis)
-                    # text_file.write()
-                    # print(repairer.input_strings)
-                    # exit()
-                    # print(repairer.tokenizer.batch_decode(dummy))
-                    # print(repairer.tokenizer.batch_decode(repairer.model.generate(repairer.input_tokens, decoder_input_ids=dummy, max_length=50), skip_special_tokens=True)[0])
-                    # exit()
-                    start_time = time.time()
-                    try:
-                        _, output = repairer.repair(
-                            analyzer, text_file, max_new_tokens=70)
-                    except TimeoutError:
-                        print('Fatal timeout error')
-                        with open('timeout-error', 'a') as f:
-                            f.write("TIMEOUT\n")
-                        output = ['']
-                    end_time = time.time()
-                    if do_analysis:
-                        times_lsp.append(end_time - start_time)
-                    else:
-                        times_no_lsp.append(end_time - start_time)
-                    # This is always True
-                    # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
-                    if not True:
-                        # output_ids[-1] == repairer.END_ID:
-                        print('===============================')
-                        print(''.join(output))
-                        text_file.content = original_content
-                        text_file.cursor = original_cursor
-                        text_file.sync()
-                        text_file.write()
-                        analyzer.change(text_file)
-                        continue
-                    else:
-                        print('Success')
-                        print(''.join(output))
-                        break
+                # if len(change.removed_lines) > 0:
+                #     indent = len(change.removed_lines[0]) - len(change.removed_lines[0].lstrip())
+                # else:
+                #     indent = 0
+                # prefix += ' ' * indent
+                # text_file.move_cursor(text_file.cursor + indent)
+
+                do_analysis = True if idx < n_patch_groups else False
+                repairer = Repairer(
+                    prefix, suffix, do_analysis=do_analysis)
+                # text_file.write()
+                # print(repairer.input_strings)
+                # exit()
+                # print(repairer.tokenizer.batch_decode(dummy))
+                # print(repairer.tokenizer.batch_decode(repairer.model.generate(repairer.input_tokens, decoder_input_ids=dummy, max_length=50), skip_special_tokens=True)[0])
+                # exit()
+                start_time = time.time()
+                try:
+                    completion_overhead, _, output = repairer.repair(
+                        analyzer, text_file, max_new_tokens=70)
+                except TimeoutError:
+                    print('Fatal timeout error')
+                    with open('timeout-error', 'a') as f:
+                        f.write("TIMEOUT\n")
+                    output = ['']
+                    completion_overhead = []
+                end_time = time.time()
+                if do_analysis:
+                    time_lsp.append(end_time - start_time)
+                else:
+                    time_no_lsp.append(end_time - start_time)
+                time_completion.extend(completion_overhead)
+                # This is always True
+                # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
+                print('Success')
+                print(''.join(output))
             # text_file.write()
             text_files.append(text_file)
         patch_groups.append(text_files)
         # TODO: opt
         save_dir = base_dir / str(len(patch_groups))
         save_dir.mkdir(exist_ok=False, parents=True)
-        for text_file in text_files:
+        debug_dir = save_dir / 'debug'
+        debug_dir.mkdir()
+        assert len(text_files) == len(bug.buggy_files)
+        for text_file, buggy_file_path in zip(
+            text_files,
+            map(lambda b : Path(bug.proj_path) / b.path, bug.buggy_files)
+        ):
             with open(save_dir / text_file.path.with_suffix('.json').name, 'w') as f:
                 json.dump({
                     'path': str(text_file.path.absolute()),
                     'cursor': text_file.cursor,
                     'content': text_file.content,
                 }, f, indent=2)
+            with open(buggy_file_path) as f:
+                buggy_file_lines = f.readlines()
+            unified_diff = difflib.unified_diff(
+                buggy_file_lines,
+                text_file.content.splitlines(keepends=True),
+                fromfile='bug',
+                tofile='patch'
+            )
+            with open(debug_dir / 'bug_vs_patch.diff', 'w') as f:
+                f.writelines(unified_diff)
+            # with open()
     with open(base_dir / 'time.json', 'w') as f:
         json.dump({
-            'with_lsp': times_lsp,
-            'no_lsp': times_no_lsp,
+            'completion': time_completion,
+            'with_lsp': time_lsp,
+            'no_lsp': time_no_lsp,
         }, f, indent=2)
 
     # TODO: still buggy
@@ -250,6 +264,7 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
     subprocess.run(['defects4j', 'checkout', '-p', proj,
                     f'-v{id_str}f', '-w', bug.proj_path])
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+    repo.git.execute(['git', 'clean', '-xfd'])
     for patch_file in patch_group:
         patch_file.write()
     result = subprocess.run(['defects4j', 'compile'],
@@ -259,7 +274,7 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
     # Filter out candidate patches (not even plausible)
     try:
         subprocess.run(['defects4j', 'test'], env=env,
-                       cwd=bug.proj_path, timeout=60)
+                       cwd=bug.proj_path, timeout=120)
         failing_tests = Path(bug.proj_path) / 'failing_tests'
         assert failing_tests.exists()
         with open(failing_tests) as f:
@@ -272,7 +287,7 @@ def get_patch_groups(bug_dir: Path) -> List[List[TextFile]]:
     result: List[List[TextFile]] = []
     for patch_group_dir in sorted(list(filter(Path.is_dir, bug_dir.iterdir())), key=lambda p: int(str(p.stem))):
         files: List[TextFile] = []
-        for json_file in patch_group_dir.iterdir():
+        for json_file in filter(Path.is_file, patch_group_dir.iterdir()):
             assert json_file.name.endswith('.json')
             with open(json_file) as f:
                 data = json.load(f)
@@ -287,7 +302,8 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     appeared_patches: Set[int] = set()
     patch_groups = get_patch_groups(bug_dir)
     result: dict = {
-        'succeeded': [],
+        'succeeded w/  lsp': [],
+        'succeeded w/o lsp': [],
         'duplicated': [],
     }
     half = len(patch_groups) // 2
@@ -299,7 +315,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
             continue
         appeared_patches.add(hash)
         if validate_proj(bug_id, bug, patch_group):
-            result['succeeded'].append(idx)
+            result['succeeded w/  lsp'].append(idx)
             break
     
     # Do it again
@@ -313,7 +329,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
             continue
         appeared_patches.add(hash)
         if validate_proj(bug_id, bug, patch_group):
-            result['succeeded'].append(idx)
+            result['succeeded w/o lsp'].append(idx - half)
             break
     return result
 
@@ -354,13 +370,14 @@ if __name__ == '__main__':
     random.seed(0)
     result_dir = Path(f'results-{uuid.uuid4()}')
     result_dir.mkdir(exist_ok=False, parents=True)
+    print(f'Metadata will be saved in {result_dir}')
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
         if not bug_id.startswith('Closure'):
             continue
-        if int(bug_id.split('-')[1]) < 115:
-            continue
+        # if int(bug_id.split('-')[1]) < 115:
+        #     continue
         # if bug_id == 'Math-1':
         #     continue
         # proj_accessed.add(proj)

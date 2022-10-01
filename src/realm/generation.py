@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 import regex
 import itertools
+import time
 
 import torch
 import torch.distributed as dist
@@ -75,7 +76,7 @@ JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
 
 class IDTokenError(Exception): pass
 
-Generation = Tuple[List[int], List[str]]
+Generation = Tuple[List[float], List[int], List[str]]
 
 
 class Repairer:
@@ -1038,6 +1039,7 @@ class Repairer:
         cur_len = input_ids.shape[-1]
 
         this_peer_finished = False  # used by synced_gpus only
+        completion_overhead: List[float] = []
         generated_ids: List[int] = []
         generated_tokens: List[str] = []
         # Context variable controling when to do analysis
@@ -1138,12 +1140,14 @@ class Repairer:
                     assert False
                 if token in JAVA_KEYWORDS:
                     return True
+                start_time = time.time()
                 completion_result = analyzer.client.textDocument_completion({
                     'textDocument': {
                         'uri': text_file.path.as_uri()
                     },
                     'position': pos,
                 })
+                completion_overhead.append(time.time() - start_time)
                 completions = [
                     item['textEdit']['newText']
                     if 'textEdit' in item
@@ -1158,6 +1162,7 @@ class Repairer:
                     # or token.endswith(completion),
                     completions
                 )):
+                    print('Accepted')
                     # breakpoint()
                     # if 'lastFraction' in completions:
                     #     breakpoint()
@@ -1165,6 +1170,8 @@ class Repairer:
                     # print(completions)
                     return True
                 else:
+                    print('Denied')
+                    # breakpoint()
                     return False
 
             def is_special_token(token: str) -> bool:
@@ -1189,6 +1196,7 @@ class Repairer:
                     return result
                 else:
                     raise IDTokenError
+            breakpoint()
 
             token_is_already_added = False
             if do_analysis:
@@ -1238,12 +1246,14 @@ class Repairer:
                     text_file.add(' ')
                     space_before = True
                 pos = text_file.get_cursor_position()
+                start_time = time.time()
                 completion_result = analyzer.client.textDocument_completion({
                     'textDocument': {
                         'uri': text_file.path.as_uri()
                     },
                     'position': pos,
                 })
+                completion_overhead.append(time.time() - start_time)
                 
                 # TODO: opt
                 completions = [
@@ -1351,4 +1361,4 @@ class Repairer:
                     hidden_states=decoder_hidden_states,
                 )
         else:
-            return generated_ids, generated_tokens
+            return completion_overhead, generated_ids, generated_tokens

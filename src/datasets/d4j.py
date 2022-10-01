@@ -25,10 +25,6 @@ class BuggyFile(NamedTuple):
         lines_iter: Iterator[Line] = (
             line for hunk in patch_file for line in hunk)
 
-        def get_source_line(line: Line) -> int:
-            ret = line.target_line_no if reversed else line.source_line_no
-            assert ret
-            return ret
         try:
             last_context = next(lines_iter)
             while True:
