@@ -374,7 +374,7 @@ if __name__ == '__main__':
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
-        if not bug_id.startswith('Closure'):
+        if not bug_id.startswith('Chart'):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue

@@ -2,3 +2,4 @@ __pycache__
 .mypy_cache
 .vscode
 .path_to_data
+results-*

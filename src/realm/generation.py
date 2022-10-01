@@ -1,4 +1,5 @@
 """Copied and rewritted from transformers.generation_utils"""
+from logging import warning
 import random
 from datasets import d4j
 from realm.lsp import spec
@@ -61,7 +62,7 @@ from realm.lsp.text import TextDocument, TextFile
 
 MODEL = 'Salesforce/codet5-large'
 DEVICE = 'cuda'
-NUM_SAMPLES = 6
+TOP_K = 50
 
 JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
                  'assert', 'default', 'goto', 'package', 'synchronized',
@@ -74,7 +75,10 @@ JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
                  'class', 'finally', 'long', 'strictfp', 'volatile',
                  'const' 'float', 'native', 'super', 'while']
 
-class IDTokenError(Exception): pass
+
+class IDTokenError(Exception):
+    pass
+
 
 Generation = Tuple[List[float], List[int], List[str]]
 
@@ -116,7 +120,8 @@ class Repairer:
             'do_sample': True,
             'max_new_tokens': max_new_tokens,
             'temperature': 0.8,
-            'top_p': 0.95,
+            'top_k': TOP_K,
+            # 'top_p': 0.95,
             'eos_token_id': self.END_ID,
         }
         # output_ids = self.model.generate(self.input_tokens, **kwargs)[0]
@@ -1108,9 +1113,10 @@ class Repairer:
 
             # sample
             probs = nn.functional.softmax(next_token_scores, dim=-1)
-            all_next_token_ids = torch.multinomial(
-                probs, num_samples=NUM_SAMPLES).squeeze(1).view(NUM_SAMPLES, 1)
-            new_index = 0
+            # batch_size * TOP_K
+            all_next_token_ids = torch.topk(probs, k=TOP_K, dim=-1).indices
+            # all_next_token_ids = torch.multinomial(
+            #     probs, num_samples=TOP_K).squeeze(1).view(TOP_K, 1)
             # all_next_token_ids = torch.topk(next_token_scores, k=6, dim=-1).indices.view(6, 1)
             # exit()
 
@@ -1129,15 +1135,40 @@ class Repairer:
             #     # exit()
 
             # update generated ids, model inputs, and length for next step
-            for next_token_ids in all_next_token_ids:
-                assert next_token_ids.shape == torch.Size([1]), next_token_ids.shape
-            tokens = self.tokenizer.batch_decode(
-                all_next_token_ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)
-            assert len(tokens) == NUM_SAMPLES
+            # for next_token_ids in all_next_token_ids:
+            #     assert next_token_ids.shape == torch.Size([1]), next_token_ids.shape
+            # Don't use `convert_ids_to_tokens`, which would give weird results
+            tokens = [{
+                id.item(): token
+                for (id, token) in
+                zip(
+                    ids,
+                    (self.tokenizer.decode(
+                        id,
+                        skip_special_tokens=False,
+                        clean_up_tokenization_spaces=False
+                    ) for id in ids)
+                )} for ids in all_next_token_ids
+            ]
+            # breakpoint()
+            # TODO: support parallel processing
+            if len(tokens) != 1:
+                raise NotImplementedError
+            if len(all_next_token_ids) != 1:
+                raise NotImplementedError
+            if len(probs) != 1:
+                raise NotImplementedError
+            probs = probs[0]
+            all_next_token_ids = all_next_token_ids[0]
+            tokens = tokens[0]
+            # tokens = self.tokenizer.batch_decode(
+            # all_next_token_ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)
+            assert len(tokens) == TOP_K
 
             def satisfy(analyzer: JdtLspAnalyzer, token: str, pos: spec.Position) -> bool:
                 if regex.match('^([a-zA-Z_][a-zA-Z\\d_]*)$', token) is None:
-                    assert False
+                    warning(
+                        f'Cannot recognize {token} as an identifier, probabily unicode.')
                 if token in JAVA_KEYWORDS:
                     return True
                 start_time = time.time()
@@ -1162,7 +1193,7 @@ class Repairer:
                     # or token.endswith(completion),
                     completions
                 )):
-                    print('Accepted')
+                    print('Accepted:', token, completions)
                     # breakpoint()
                     # if 'lastFraction' in completions:
                     #     breakpoint()
@@ -1170,16 +1201,16 @@ class Repairer:
                     # print(completions)
                     return True
                 else:
-                    print('Denied')
+                    print('Denied', token, completions)
                     # breakpoint()
                     return False
 
             def is_special_token(token: str) -> bool:
                 return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
 
-            # Disable comment for now
-            all_next_token_ids, tokens = zip(
-                *filter(lambda x: x[1].strip() not in ['//', '/*', '/**'], zip(all_next_token_ids, tokens)))
+            # Not Disable comment for now
+            # all_next_token_ids, tokens = zip(
+            #     *filter(lambda x: x[1].strip() not in ['//', '/*', '/**'], zip(all_next_token_ids, tokens)))
 
             # Get the exact identifier token position
             def get_id_token_and_rspace_len(generated_tokens: List[str]) -> Tuple[str, int]:
@@ -1196,47 +1227,47 @@ class Repairer:
                     return result
                 else:
                     raise IDTokenError
-            breakpoint()
 
-            token_is_already_added = False
+            exists_satsified_token = False
+            old_content = text_file.content
             if do_analysis:
-                for idx, token in enumerate(tokens):
-                    old_content = text_file.content
-                    if is_special_token(token):
-                        token_is_already_added = True
-                        new_index = idx
-                        break
+                for token_id in all_next_token_ids:
+                    token = tokens[token_id.item()]
                     text_file.add(token)
                     analyzer.change(text_file)
                     # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
                     # NOTE: do not do it now. Just evaluate on both
                     # if idx == 0 and random.random() < 0.1:
-                    #     token_is_already_added = True
+                    #     exists_satsified_token = True
                     #     new_index = idx
                     #     break
                     try:
                         token_rstrip = token.rstrip()
                         rspace_len = len(token) - len(token_rstrip)
-                        id_token = get_id_token_and_rspace_len(generated_tokens + [token_rstrip])
+                        id_token = get_id_token_and_rspace_len(
+                            generated_tokens + [token_rstrip])
                         # No exception afterwards
-                        pos = text_file.get_position(text_file.cursor - rspace_len)
-                        token_is_already_added = satisfy(analyzer, id_token, pos)
-                        # Try an aggressive manner
+                        pos = text_file.get_position(
+                            text_file.cursor - rspace_len)
+                        if satisfy(analyzer, id_token, pos):
+                            exists_satisfied_token = True
+                        else:
+                            # zero out the token's probability
+                            probs[token_id] = 0.
                     except IDTokenError:
-                        token_is_already_added = True
-                    if token_is_already_added:
-                        new_index = idx
-                        break
-                    else:
-                        text_file.delete(len(token))
-                        analyzer.change(text_file)
-                        assert old_content == text_file.content
-                        # Aggressive
-                        # break
+                        exists_satsified_token = True
+                    text_file.delete(len(token))
+                    analyzer.change(text_file)
 
-            next_token_ids = all_next_token_ids[new_index].view(1)
-            next_token = tokens[new_index]
-            if not token_is_already_added and do_analysis:
+            assert old_content == text_file.content
+
+            if not exists_satisfied_token and do_analysis:
+                # Now all top k tokens are zeroed out
+                # Default to the token with the highest probability
+                # But if LSP finds a completion, use that.
+                next_token_ids = all_next_token_ids[0].view(1)
+                next_token = tokens[next_token_ids.item()]
+
                 # Here we know in the above loop all tokens fail to pass the check,
                 # so they are all identifiers (type, var, etc.)
                 # So it is safe to call language server (but cannot prove w/o AST)
@@ -1254,7 +1285,7 @@ class Repairer:
                     'position': pos,
                 })
                 completion_overhead.append(time.time() - start_time)
-                
+
                 # TODO: opt
                 completions = [
                     item['textEdit']['newText']
@@ -1264,7 +1295,8 @@ class Repairer:
                 ]
                 if not space_before:
                     try:
-                        id_token = get_id_token_and_rspace_len(generated_tokens)
+                        id_token = get_id_token_and_rspace_len(
+                            generated_tokens)
                         completions = []
                         for item in completion_result['result']['items']:
                             if 'textEdit' in item:
@@ -1281,22 +1313,30 @@ class Repairer:
                                 start_index = replace['end']['character'] - \
                                     replace['start']['character']
                                 if result['newText'][:start_index] == id_token:
-                                    completions.append(result['newText'][start_index:])
+                                    completions.append(
+                                        result['newText'][start_index:])
                             else:
                                 assert 'insertText' in item
                                 completions.append(item['insertText'])
                     except IDTokenError:
                         pass
 
-                completions = ((c if '${' not in c else c[:c.index('${')]) for c in completions)
+                completions = (
+                    (c if '${' not in c else c[:c.index('${')]) for c in completions)
                 completions = list(filter(lambda c: len(c) > 0, completions))
                 if len(completions) > 0:
                     # breakpoint()
                     next_token = completions[0]
-                    next_token_ids = self.tokenizer.encode(next_token, return_tensors='pt', add_special_tokens=False).to(DEVICE)[0]
+                    next_token_ids = self.tokenizer.encode(
+                        next_token, return_tensors='pt', add_special_tokens=False).to(DEVICE)[0]
                     # if len(next_token_ids) > 1:
                     #     breakpoint()
-            
+            else:
+                # Either 1) not using LSP or 2) there is/are matched tokens
+                next_token_ids = torch.multinomial(
+                    probs, num_samples=1).view(1)
+                next_token = tokens[next_token_ids.item()]
+
             if next_token.strip().startswith('//'):
                 context['inside_line_comment'] = True
             elif next_token.endswith('\n'):
@@ -1309,13 +1349,13 @@ class Repairer:
                 context['inside_block_comment'] = False
 
             # print(input_ids.shape)
-            input_ids = torch.cat([input_ids, next_token_ids.view(1, -1)], dim=-1)
+            input_ids = torch.cat(
+                [input_ids, next_token_ids.view(1, -1)], dim=-1)
             # print(repr(next_token), end=' ')
             if not is_special_token(next_token):
-                if not token_is_already_added:
-                    text_file.add(next_token)
-                    if do_analysis:
-                        analyzer.change(text_file)
+                text_file.add(next_token)
+                if do_analysis:
+                    analyzer.change(text_file)
                 generated_ids.extend(next_token_ids)
                 generated_tokens.append(next_token)
             # print(input_ids.shape, 'new')
