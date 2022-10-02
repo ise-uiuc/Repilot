@@ -1228,7 +1228,7 @@ class Repairer:
                 else:
                     raise IDTokenError
 
-            exists_satsified_token = False
+            exists_satisfied_token = False
             old_content = text_file.content
             if do_analysis:
                 for token_id in all_next_token_ids:
@@ -1255,7 +1255,7 @@ class Repairer:
                             # zero out the token's probability
                             probs[token_id] = 0.
                     except IDTokenError:
-                        exists_satsified_token = True
+                        exists_satisfied_token = True
                     text_file.delete(len(token))
                     analyzer.change(text_file)
 
