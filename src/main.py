@@ -220,7 +220,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 fromfile='bug',
                 tofile='patch'
             )
-            with open(debug_dir / 'bug_vs_patch.diff', 'w') as f:
+            with open(debug_dir / buggy_file_path.with_suffix('.diff').name, 'w') as f:
                 f.writelines(unified_diff)
             # with open()
     with open(base_dir / 'time.json', 'w') as f:

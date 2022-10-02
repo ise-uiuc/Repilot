@@ -1186,15 +1186,10 @@ class Repairer:
                     for item in completion_result['result']['items']
                 ]
                 if any(filter(
-                    # token: some, completion: some_id
-                    # token : Den, previous: max, completion: maxDenominator
-                    lambda completion: token in completion,
-                    # token: a.b.c, completion: c
-                    # or token.endswith(completion),
+                    lambda completion: completion.startswith(token),
                     completions
                 )):
                     print('Accepted:', token, completions)
-                    # breakpoint()
                     # if 'lastFraction' in completions:
                     #     breakpoint()
                     # print("Yes!")
@@ -1202,7 +1197,6 @@ class Repairer:
                     return True
                 else:
                     print('Denied', token, completions)
-                    # breakpoint()
                     return False
 
             def is_special_token(token: str) -> bool:
