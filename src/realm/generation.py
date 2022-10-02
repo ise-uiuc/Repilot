@@ -1233,8 +1233,6 @@ class Repairer:
             if do_analysis:
                 for token_id in all_next_token_ids:
                     token = tokens[token_id.item()]
-                    text_file.add(token)
-                    analyzer.change(text_file)
                     # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
                     # NOTE: do not do it now. Just evaluate on both
                     # if idx == 0 and random.random() < 0.1:
@@ -1246,6 +1244,8 @@ class Repairer:
                         rspace_len = len(token) - len(token_rstrip)
                         id_token = get_id_token_and_rspace_len(
                             generated_tokens + [token_rstrip])
+                        text_file.add(token)
+                        analyzer.change(text_file)
                         # No exception afterwards
                         pos = text_file.get_position(
                             text_file.cursor - rspace_len)
@@ -1254,10 +1254,10 @@ class Repairer:
                         else:
                             # zero out the token's probability
                             probs[token_id] = 0.
+                        text_file.delete(len(token))
+                        analyzer.change(text_file)
                     except IDTokenError:
                         exists_satisfied_token = True
-                    text_file.delete(len(token))
-                    analyzer.change(text_file)
 
             assert old_content == text_file.content
 
