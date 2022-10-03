@@ -107,7 +107,7 @@ class Repairer:
         self,
         analyzer: JdtLspAnalyzer,
         text_file: TextFile,
-        max_new_tokens: int = 30,
+        max_new_tokens: int,
     ) -> Generation:
         # original_content = text_file.content
         # original_cursor = text_file.cursor
