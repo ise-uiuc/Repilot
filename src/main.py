@@ -230,7 +230,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             'no_lsp': time_no_lsp,
         }, f, indent=2)
 
-    # TODO: still buggy
+    # TODO: still buggy (because when analyzer.stop() the process terminates,
+    # but the client is still in the while loop)
     analyzer.client.stop()
     analyzer.stop()
     return patch_groups
@@ -283,8 +284,8 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
         return False
 
 
-def get_patch_groups(bug_dir: Path) -> List[List[TextFile]]:
-    result: List[List[TextFile]] = []
+def get_patch_groups(bug_dir: Path) -> List[Tuple[str, List[TextFile]]]:
+    result: List[Tuple[str, List[TextFile]]] = []
     for patch_group_dir in sorted(list(filter(Path.is_dir, bug_dir.iterdir())), key=lambda p: int(str(p.stem))):
         files: List[TextFile] = []
         for json_file in filter(Path.is_file, patch_group_dir.iterdir()):
@@ -294,7 +295,7 @@ def get_patch_groups(bug_dir: Path) -> List[List[TextFile]]:
             text_file = TextFile(data['path'], data['content'])
             text_file.move_cursor(data['cursor'])
             files.append(text_file)
-        result.append(files)
+        result.append((patch_group_dir.name, files))
     return result
 
 
@@ -304,33 +305,31 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     result: dict = {
         'succeeded w/  lsp': [],
         'succeeded w/o lsp': [],
-        'duplicated': [],
+        'duplicated w/  lsp': [],
+        'duplicated w/o lsp': [],
     }
     half = len(patch_groups) // 2
-    for idx, patch_group in enumerate(patch_groups[:half]):
+    for idx, patch_group in patch_groups[:half]:
         hash = compress(patch_group)
         if hash in appeared_patches:
             print(bug_id, idx, 'is duplicated')
-            result['duplicated'].append(idx)
+            result['duplicated w/  lsp'].append(int(idx))
             continue
         appeared_patches.add(hash)
         if validate_proj(bug_id, bug, patch_group):
-            result['succeeded w/  lsp'].append(idx)
-            break
+            result['succeeded w/  lsp'].append(int(idx))
     
     # Do it again
     appeared_patches = set()
-    for idx, patch_group in enumerate(patch_groups[half:]):
-        idx += half
+    for idx, patch_group in patch_groups[half:]:
         hash = compress(patch_group)
         if hash in appeared_patches:
             print(bug_id, idx, 'is duplicated')
-            result['duplicated'].append(idx)
+            result['duplicated w/o lsp'].append(int(idx) - half)
             continue
         appeared_patches.add(hash)
         if validate_proj(bug_id, bug, patch_group):
-            result['succeeded w/o lsp'].append(idx - half)
-            break
+            result['succeeded w/o lsp'].append(int(idx) - half)
     return result
 
 
@@ -374,7 +373,7 @@ if __name__ == '__main__':
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
-        if not bug_id.startswith('Chart'):
+        if not bug_id.startswith('Closure'):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
