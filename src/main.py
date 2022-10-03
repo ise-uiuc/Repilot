@@ -46,8 +46,6 @@ def str_hash(s: str) -> int:
     return int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**8
 
 
-N_SAMPLE = 1
-
 dataset = d4j.Defects4J('/home/yuxiang/Developer/defects4j', data)
 # model = SpanLM('facebook/incoder-1B', batch_size=N_SAMPLE)
 model = None
@@ -204,7 +202,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         assert len(text_files) == len(bug.buggy_files)
         for text_file, buggy_file_path in zip(
             text_files,
-            map(lambda b : Path(bug.proj_path) / b.path, bug.buggy_files)
+            map(lambda b: Path(bug.proj_path) / b.path, bug.buggy_files)
         ):
             with open(save_dir / text_file.path.with_suffix('.json').name, 'w') as f:
                 json.dump({
@@ -247,9 +245,6 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     # repo.close()
     # # for text_file in text_files:
     #     text_file.write()
-
-
-TIMEOUT = 60
 
 
 def compress(patch_group: List[TextFile]) -> int:
@@ -318,7 +313,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
         appeared_patches.add(hash)
         if validate_proj(bug_id, bug, patch_group):
             result['succeeded w/  lsp'].append(int(idx))
-    
+
     # Do it again
     appeared_patches = set()
     for idx, patch_group in patch_groups[half:]:
@@ -342,8 +337,9 @@ def validate_all_bugs(all_bugs: dict, proj_dir: Path):
         list(filter(Path.is_dir, proj_dir.iterdir())), key=lambda p: int(str(p.stem)))
     for bug_dir_batch in utils.chunked(BATCH_SIZE, bug_dirs):
         params_list = [(bug_dir, (bug_id := proj_dir.stem + '-' + bug_dir.stem),
-                   all_bugs[bug_id]) for bug_dir in bug_dir_batch]
-        results: List[dict] = Parallel(n_jobs=BATCH_SIZE)(delayed(do_validation)(*params) for params in params_list)
+                        all_bugs[bug_id]) for bug_dir in bug_dir_batch]
+        results: List[dict] = Parallel(n_jobs=BATCH_SIZE)(
+            delayed(do_validation)(*params) for params in params_list)
         for (_, bug_id, _), result in zip(params_list, results):
             ret[bug_id] = result
         with open(proj_dir / proj_dir.with_suffix('.json').name, 'w') as f:

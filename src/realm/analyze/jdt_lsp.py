@@ -31,7 +31,7 @@ class JdtLspAnalyzer:
             server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, shell=False)
         assert self.process.stdin is not None and self.process.stdout is not None
         self.client = LSPClient(
-            self.process.stdin, self.process.stdout, verbose)
+            self.process.stdin, self.process.stdout, verbose, 30)
         self.client.start()
 
         # self.active_text: Optional[TextDocument] = None

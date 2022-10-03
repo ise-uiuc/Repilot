@@ -67,7 +67,7 @@ def d_notify(method: str, _: Type[T]) -> Callable[['LSPClient', T], None]:
 
 
 class LSPClient(Thread):
-    def __init__(self, stdin: IO[bytes], stdout: IO[bytes], verbose: bool = False, timeout: float = 5):
+    def __init__(self, stdin: IO[bytes], stdout: IO[bytes], verbose: bool, timeout: float):
         super().__init__()
         self.stdin = stdin
         self.stdout = stdout
