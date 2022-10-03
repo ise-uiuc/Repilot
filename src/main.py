@@ -352,22 +352,26 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
                 succeeded_patches.add(hash)
 
     # Do it again
-    appeared_patches = set()
+    comp_failed_patches = set()
+    test_failed_patches = set()
+    succeeded_patches = set()
     for idx, patch_group in patch_groups[half:]:
         hash = compress(patch_group)
         if hash in comp_failed_patches:
             # print(bug_id, idx, 'is duplicated')
             result['without_lsp']['dup_comp_failed'].append(int(idx) - half)
+            comp_failed_patches.add(hash)
             continue
         if hash in test_failed_patches:
             # print(bug_id, idx, 'is duplicated')
             result['without_lsp']['dup_test_failed'].append(int(idx) - half)
+            test_failed_patches.add(hash)
             continue
         if hash in succeeded_patches:
             # print(bug_id, idx, 'is duplicated')
             result['without_lsp']['dup_succeeded'].append(int(idx) - half)
+            succeeded_patches.add(hash)
             continue
-        appeared_patches.add(hash)
         val_result = validate_proj(bug_id, bug, patch_group)
         match val_result:
             case ValResult.CompilationError:
@@ -423,7 +427,7 @@ if __name__ == '__main__':
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
-        if not bug_id.startswith('Closure'):
+        if not bug_id.startswith('Chart'):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
