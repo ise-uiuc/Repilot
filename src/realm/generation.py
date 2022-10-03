@@ -62,7 +62,7 @@ from realm.lsp.text import TextDocument, TextFile
 
 MODEL = 'Salesforce/codet5-large'
 DEVICE = 'cuda'
-TOP_K = 50
+TOP_K = 10
 
 JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
                  'assert', 'default', 'goto', 'package', 'synchronized',
