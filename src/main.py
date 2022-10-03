@@ -1,4 +1,5 @@
 import difflib
+from enum import Enum
 import uuid
 from joblib import Parallel, delayed
 import regex as re
@@ -251,7 +252,13 @@ def compress(patch_group: List[TextFile]) -> int:
     return str_hash(''.join(re.sub(r'\s+', '', t.content) for t in patch_group))
 
 
-def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> bool:
+class ValResult(Enum):
+    CompilationError = 0
+    TestingError = 1
+    Success = 2
+
+
+def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> ValResult:
     proj, id_str = bug_id.split('-')
     java8_home = cast(str, os.getenv('JAVA8_HOME'))
     env = dict(os.environ, JAVA_HOME=java8_home)
@@ -266,7 +273,7 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
     result = subprocess.run(['defects4j', 'compile'],
                             env=env, cwd=bug.proj_path)
     if result.returncode != 0:
-        return False
+        return ValResult.CompilationError
     # Filter out candidate patches (not even plausible)
     try:
         subprocess.run(['defects4j', 'test'], env=env,
@@ -274,9 +281,9 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> boo
         failing_tests = Path(bug.proj_path) / 'failing_tests'
         assert failing_tests.exists()
         with open(failing_tests) as f:
-            return f.read().strip() == ''
+            return ValResult.Success if f.read().strip() == '' else ValResult.TestingError
     except subprocess.TimeoutExpired:
-        return False
+        return ValResult.TestingError
 
 
 def get_patch_groups(bug_dir: Path) -> List[Tuple[str, List[TextFile]]]:
@@ -299,10 +306,12 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     patch_groups = get_patch_groups(bug_dir)
     result: dict = {
         'succeeded w/  lsp': [],
+        'compilation failed w/  lsp': [],
         'failed w/  lsp': [],
         'duplicated w/  lsp': [],
 
         'succeeded w/o lsp': [],
+        'compilation failed w/o lsp': [],
         'failed w/o lsp': [],
         'duplicated w/o lsp': [],
     }
@@ -314,10 +323,14 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
             result['duplicated w/  lsp'].append(int(idx))
             continue
         appeared_patches.add(hash)
-        if validate_proj(bug_id, bug, patch_group):
-            result['succeeded w/  lsp'].append(int(idx))
-        else:
-            result['failed w/  lsp'].append(int(idx))
+        val_result = validate_proj(bug_id, bug, patch_group)
+        match val_result:
+            case ValResult.CompilationError:
+                result['compilation failed w/  lsp'].append(int(idx))
+            case ValResult.TestingError:
+                result['failed w/  lsp'].append(int(idx))
+            case ValResult.Success:
+                result['succeeded w/  lsp'].append(int(idx))
 
     # Do it again
     appeared_patches = set()
@@ -328,10 +341,14 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
             result['duplicated w/o lsp'].append(int(idx) - half)
             continue
         appeared_patches.add(hash)
-        if validate_proj(bug_id, bug, patch_group):
-            result['succeeded w/o lsp'].append(int(idx) - half)
-        else:
-            result['failed w/o lsp'].append(int(idx) - half)
+        val_result = validate_proj(bug_id, bug, patch_group)
+        match val_result:
+            case ValResult.CompilationError:
+                result['compilation failed w/o lsp'].append(int(idx) - half)
+            case ValResult.TestingError:
+                result['failed w/o lsp'].append(int(idx) - half)
+            case ValResult.Success:
+                result['succeeded w/o lsp'].append(int(idx) - half)
     return result
 
 
