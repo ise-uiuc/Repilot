@@ -299,8 +299,11 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     patch_groups = get_patch_groups(bug_dir)
     result: dict = {
         'succeeded w/  lsp': [],
-        'succeeded w/o lsp': [],
+        'failed w/  lsp': [],
         'duplicated w/  lsp': [],
+
+        'succeeded w/o lsp': [],
+        'failed w/o lsp': [],
         'duplicated w/o lsp': [],
     }
     half = len(patch_groups) // 2
@@ -313,6 +316,8 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
         appeared_patches.add(hash)
         if validate_proj(bug_id, bug, patch_group):
             result['succeeded w/  lsp'].append(int(idx))
+        else:
+            result['failed w/  lsp'].append(int(idx))
 
     # Do it again
     appeared_patches = set()
@@ -325,6 +330,8 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
         appeared_patches.add(hash)
         if validate_proj(bug_id, bug, patch_group):
             result['succeeded w/o lsp'].append(int(idx) - half)
+        else:
+            result['failed w/o lsp'].append(int(idx) - half)
     return result
 
 
