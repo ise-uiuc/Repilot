@@ -1,6 +1,6 @@
 from select import select
 import json
-from threading import Condition, Thread
+from threading import Condition, Lock, Thread
 from typing import IO, Callable, Dict, Optional, Tuple, TypeVar, Type, cast
 from typing import ParamSpec
 from itertools import count
@@ -79,6 +79,8 @@ class LSPClient(Thread):
         self.lock = Condition()
         self.timeout = timeout
         self.stopped = False
+        self.read_lock = Lock()
+        self.write_lock = Lock()
     
     def stop(self):
         self.stopped = True
@@ -136,9 +138,10 @@ class LSPClient(Thread):
         content = add_header(content)
         if self.verbose:
             print('SEND:', message)
-        # print(content)
-        self.stdin.write(content.encode())
-        self.stdin.flush()
+        with self.write_lock:
+            # print(content)
+            self.stdin.write(content.encode())
+            self.stdin.flush()
 
     def try_recv(self, timeout: float) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
         reader, _, _ = select([self.stdout], [], [], timeout)
@@ -147,17 +150,18 @@ class LSPClient(Thread):
         return self.recv()
 
     def recv(self) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
-        # read header
-        line = self.stdout.readline().decode()
-        assert line.endswith('\r\n'), repr(line)
-        assert line.startswith(HEADER) and line.endswith('\r\n'), line
+        with self.read_lock:
+            # read header
+            line = self.stdout.readline().decode()
+            assert line.endswith('\r\n'), repr(line)
+            assert line.startswith(HEADER) and line.endswith('\r\n'), line
 
-        # get content length
-        content_len = int(line[len(HEADER):].strip())
-        line_breaks = self.stdout.readline().decode()
-        assert line_breaks == '\r\n', line_breaks
-        response = self.stdout.read(content_len).decode()
-        # if 'textDocument/publishDiagnostics' in response:
+            # get content length
+            content_len = int(line[len(HEADER):].strip())
+            line_breaks = self.stdout.readline().decode()
+            assert line_breaks == '\r\n', line_breaks
+            response = self.stdout.read(content_len).decode()
+            # if 'textDocument/publishDiagnostics' in response:
         if self.verbose:
             print(response)
         return json.loads(response)
