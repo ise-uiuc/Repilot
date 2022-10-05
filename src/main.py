@@ -3,7 +3,6 @@ from enum import Enum
 import uuid
 from joblib import Parallel, delayed
 import regex as re
-from string import whitespace
 import time
 import torch
 import random
@@ -12,11 +11,7 @@ import shlex
 from pathlib import Path
 import shutil
 import subprocess
-from time import sleep
-from tkinter import E
-from Repair.LM.model import SpanLM
 from realm import utils
-from realm.analyze import java_syntax
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp import TextDocument, spec
 import json
@@ -56,13 +51,6 @@ def server_cmd(bug_id: str) -> List[str]:
     return shlex.split(f"/home/yuxiang/Developer/jdt-lsp/bin/jdtls \
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{bug_id}")
-
-
-dummy = torch.tensor([[0, 32099,   203,  7734,   368,   203,  7734,   368,   333,   353,
-                       358,  4543,   333,    18,   203,  7734,   368, 32098,  7734, 32097,
-                       203,  5411,   289,   203,   203,  5411, 32096,   203, 32095,   203,
-                       32094,   203, 32093,   203,  3639, 32092,   203,   565,   289,  1044,
-                       261,  6385,   478,     2,     1]], device='cuda:0')
 
 
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
@@ -164,8 +152,18 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 # text_file.move_cursor(text_file.cursor + indent)
 
                 do_analysis = True if idx < n_patch_groups else False
-                repairer = Repairer(
-                    prefix, suffix, do_analysis=do_analysis)
+                lm_context = gen.LMContext(
+                    gen.CODET5,
+                    gen.CODET5_TOKENIZER,
+                    gen.codet5_tokenize(prefix, suffix),
+                    gen.CODET5_INFERENCE_CONFIG,
+                )
+                lsp_context = gen.LspContext(
+                    text_file,
+                    analyzer,
+                )
+                # repairer = Repairer(
+                #     prefix, suffix, do_analysis=do_analysis)
                 # text_file.write()
                 # print(repairer.input_strings)
                 # exit()
@@ -174,8 +172,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 # exit()
                 start_time = time.time()
                 try:
-                    completion_overhead, _, output = repairer.repair(
-                        analyzer, text_file, max_new_tokens=70)
+                    completion_overhead, _, output = gen.repair(lm_context, lsp_context, do_analysis)
                 except TimeoutError:
                     print('Fatal timeout error')
                     with open('timeout-error', 'a') as f:
@@ -418,7 +415,7 @@ if __name__ == '__main__':
 
     assert os.getenv('JAVA8_HOME')
 
-    from realm.generation import Repairer
+    from realm import generation as gen
     torch.manual_seed(0)
     random.seed(0)
     result_dir = Path(f'results-{uuid.uuid4()}')
