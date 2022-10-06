@@ -25,19 +25,34 @@ class JdtLspAnalyzer:
 
     def stop(self):
         self.process.terminate()
+    
+    def copy(self) -> 'JdtLspAnalyzer':
+        return JdtLspAnalyzer(
+            self.server_cmd,
+            self.proj_path,
+            self.java_home,
+            self.verbose
+        )
 
     def __init__(self, server_cmd: List[str], proj_path: PathLike, java_home: str, verbose: bool = False) -> None:
+        self.server_cmd = server_cmd
+        self.proj_path = proj_path
+        self.java_home = java_home
+        self.verbose = verbose
+
         self.process = subprocess.Popen(
             server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, shell=False)
         assert self.process.stdin is not None and self.process.stdout is not None
         self.client = LSPClient(
-            self.process.stdin, self.process.stdout, verbose, 30)
-        self.client.start()
+            self.process.stdin, self.process.stdout, verbose, 2)
+
+    # def init(self):
+        # self.client.start()
 
         # self.active_text: Optional[TextDocument] = None
 
         # Initialize the server
-        path = Path(proj_path)
+        path = Path(self.proj_path)
         # with open('log1.json', 'w') as f:
         self.client.initialize({
             "processId": self.process.pid,

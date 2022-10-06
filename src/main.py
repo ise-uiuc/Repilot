@@ -52,6 +52,7 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{bug_id}")
 
+REPAIR_BATCH_SIZE = 3
 
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
@@ -62,8 +63,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     repo.git.execute(['git', 'clean', '-xfd'])
 
-    analyzer = JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
-        str, os.getenv('JAVA8_HOME')), verbose=False)
+    analyzers = [JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
+        str, os.getenv('JAVA8_HOME')), verbose=False) for _ in range(REPAIR_BATCH_SIZE)]
 
     patch_groups: List[List[TextFile]] = []
     time_no_lsp: List[float] = []
@@ -78,13 +79,15 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             # TODO: refactor textfile
             for buggy_file in bug.buggy_files:
                 text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
-                analyzer.change(text_file)
+                for analyzer in analyzers:
+                    analyzer.change(text_file)
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
         for buggy_file in bug.buggy_files:
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
             if idx == 0:
-                analyzer.open(text_file)
+                for analyzer in analyzers:
+                    analyzer.open(text_file)
             print(len(buggy_file.changes))
             print(buggy_file.path)
             print([(c.start, len(c.removed_lines))
@@ -150,18 +153,19 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 #     indent = 0
                 # prefix += ' ' * indent
                 # text_file.move_cursor(text_file.cursor + indent)
+                text_files = [text_file.copy() for _ in range(REPAIR_BATCH_SIZE - 1)] + [text_file]
 
                 do_analysis = True if idx < n_patch_groups else False
                 lm_context = gen.LMContext(
                     gen.CODET5,
                     gen.CODET5_TOKENIZER,
-                    gen.codet5_tokenize(prefix, suffix),
+                    gen.codet5_tokenize(prefix, suffix).repeat(REPAIR_BATCH_SIZE, 1),
                     gen.CODET5_INFERENCE_CONFIG,
                 )
-                lsp_context = gen.LspContext(
+                lsp_context_list = [gen.LspContext(
                     text_file,
-                    analyzer,
-                )
+                    analyzer
+                ) for text_file, analyzer in zip(text_files, analyzers)]
                 # repairer = Repairer(
                 #     prefix, suffix, do_analysis=do_analysis)
                 # text_file.write()
@@ -172,7 +176,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 # exit()
                 start_time = time.time()
                 try:
-                    completion_overhead, _, output = gen.repair(lm_context, lsp_context, do_analysis)
+                    completion_overhead, _, output = gen.repair(lm_context, lsp_context_list, do_analysis)
                 except TimeoutError:
                     print('Fatal timeout error')
                     with open('timeout-error', 'a') as f:
@@ -419,6 +423,8 @@ if __name__ == '__main__':
     torch.manual_seed(0)
     random.seed(0)
     result_dir = Path(f'results-{uuid.uuid4()}')
+    if os.getenv('DEBUG') is not None:
+        result_dir = Path('../results') / 'temp' / result_dir
     result_dir.mkdir(exist_ok=False, parents=True)
     print(f'Metadata will be saved in {result_dir}')
     for bug_id, bug in dataset.all_bugs().items():

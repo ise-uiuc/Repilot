@@ -1,6 +1,9 @@
 import itertools
+import pickle
 from typing import Callable, Iterable, Iterator, List, Tuple, TypeVar
 from unidiff.patch import Line
+from pathlib import Path
+import json
 
 T = TypeVar('T')
 
@@ -58,3 +61,12 @@ def chunked(n: int, data: Iterable[T]) -> Iterator[List[T]]:
                 return
     while len(result := list(take(n, data_iter))) > 0:
         yield result
+
+def load_and_cache_data(path: Path, default_data: T) -> T:
+    if path.exists():
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    else:
+        with open(path, 'wb') as f:
+            pickle.dump(default_data, f)
+        return default_data

@@ -66,7 +66,7 @@ def d_notify(method: str, _: Type[T]) -> Callable[['LSPClient', T], None]:
     return impl
 
 
-class LSPClient(Thread):
+class LSPClient:
     def __init__(self, stdin: IO[bytes], stdout: IO[bytes], verbose: bool, timeout: float):
         super().__init__()
         self.stdin = stdin
@@ -76,54 +76,42 @@ class LSPClient(Thread):
             spec.integer | str | None, 
             spec.ResponseMessage
         ] = {}
-        self.lock = Condition()
         self.timeout = timeout
-        self.stopped = False
-        self.read_lock = Lock()
-        self.write_lock = Lock()
     
-    def stop(self):
-        self.stopped = True
-    
-    def run(self) -> None:
-        while not self.stopped:
-            server_response = self.recv()
-            if 'method' in server_response and 'id' in server_response:
-                # print(server_response)
-                server_response = cast(spec.RequestMessage, server_response)
-                self.send(response(server_response['id'], None))
-            elif 'id' in server_response:
-                server_response = cast(spec.ResponseMessage, server_response)
-                id = server_response['id']
-                self.responses[id] = server_response
-                self.lock.acquire()
-                self.lock.notify()
-                self.lock.release()
-            # else:
-            #     assert False, server_response
+    # def run(self) -> None:
+    #     while not self.stopped:
+    #         server_response = self.recv()
+    #         if 'method' in server_response and 'id' in server_response:
+    #             # print(server_response)
+    #             server_response = cast(spec.RequestMessage, server_response)
+    #             self.send(response(server_response['id'], None))
+    #         elif 'id' in server_response:
+    #             server_response = cast(spec.ResponseMessage, server_response)
+    #             id = server_response['id']
+    #             self.responses[id] = server_response
+    #             self.lock.acquire()
+    #             self.lock.notify()
+    #             self.lock.release()
+    #         # else:
+    #         #     assert False, server_response
 
     def call(self, method: str, params: spec.array | spec.object) -> spec.ResponseMessage:
         message = request(method, params)
         id = message['id']
-        self.lock.acquire()
         self.send(message)
-        if not self.lock.wait(self.timeout):
-            self.lock.release()
-            raise TimeoutError
-        self.lock.release()
-        return self.responses.pop(id)
-        # while True:
-        #     server_response = self.recv()
-        #     # and server_response['method'] == 'client/registerCapability':
-        #     # print(server_response)
-        #     if 'method' in server_response and 'id' in server_response:
-        #         # print(server_response)
-        #         server_response = cast(spec.RequestMessage, server_response)
-        #         self.send(response(server_response['id'], None))
-        #     if 'id' in server_response:
-        #         server_response = cast(spec.ResponseMessage, server_response)
-        #         if server_response['id'] == id:
-        #             return server_response
+        # return self.responses.pop(id)
+        while True:
+            server_response = self.recv()
+            # and server_response['method'] == 'client/registerCapability':
+            # print(server_response)
+            if 'method' in server_response and 'id' in server_response:
+                # print(server_response)
+                server_response = cast(spec.RequestMessage, server_response)
+                self.send(response(server_response['id'], None))
+            if 'id' in server_response:
+                server_response = cast(spec.ResponseMessage, server_response)
+                if server_response['id'] == id:
+                    return server_response
 
     def notify(self, method: str, params: spec.array | spec.object):
         # if 'textDocument/didChange' == method:
@@ -138,30 +126,27 @@ class LSPClient(Thread):
         content = add_header(content)
         if self.verbose:
             print('SEND:', message)
-        with self.write_lock:
-            # print(content)
-            self.stdin.write(content.encode())
-            self.stdin.flush()
+        self.stdin.write(content.encode())
+        self.stdin.flush()
 
-    def try_recv(self, timeout: float) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
-        reader, _, _ = select([self.stdout], [], [], timeout)
+    def try_recv(self) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
+        reader, _, _ = select([self.stdout], [], [], self.timeout)
         if len(reader) == 0:
             raise TimeoutError
         return self.recv()
 
     def recv(self) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
-        with self.read_lock:
-            # read header
-            line = self.stdout.readline().decode()
-            assert line.endswith('\r\n'), repr(line)
-            assert line.startswith(HEADER) and line.endswith('\r\n'), line
+        # read header
+        line = self.stdout.readline().decode()
+        assert line.endswith('\r\n'), repr(line)
+        assert line.startswith(HEADER) and line.endswith('\r\n'), line
 
-            # get content length
-            content_len = int(line[len(HEADER):].strip())
-            line_breaks = self.stdout.readline().decode()
-            assert line_breaks == '\r\n', line_breaks
-            response = self.stdout.read(content_len).decode()
-            # if 'textDocument/publishDiagnostics' in response:
+        # get content length
+        content_len = int(line[len(HEADER):].strip())
+        line_breaks = self.stdout.readline().decode()
+        assert line_breaks == '\r\n', line_breaks
+        response = self.stdout.read(content_len).decode()
+        # if 'textDocument/publishDiagnostics' in response:
         if self.verbose:
             print(response)
         return json.loads(response)

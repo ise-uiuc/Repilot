@@ -121,6 +121,9 @@ class TextFile(MutableTextDocument):
     def write(self):
         with open(self.path, 'w') as f:
             f.write(self.content)
+    
+    def copy(self) -> 'TextFile':
+        return TextFile(self.path, self.content)
 
     @property
     def path(self) -> Path:

@@ -7,15 +7,15 @@ import inspect
 import typing
 import warnings
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Protocol, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Protocol, Tuple, Union, cast
 import regex
-import itertools
+from pathlib import Path
 import time
-
+from joblib import Parallel, delayed
 import torch
 import torch.distributed as dist
 from torch import nn
-
+import multiprocessing as mp
 from transformers import T5ForConditionalGeneration
 from transformers.generation_utils import GenerationMixin, GreedySearchOutput, SampleOutput, BeamSearchOutput, BeamSampleOutput, logger, SampleEncoderDecoderOutput, SampleDecoderOnlyOutput
 from transformers.generation_beam_constraints import Constraint, DisjunctiveConstraint, PhrasalConstraint
@@ -53,6 +53,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp.text import TextDocument, TextFile
+from realm import utils
 
 
 # class IncoderEOM(StoppingCriteria):
@@ -102,10 +103,26 @@ class LspContext(NamedTuple):
     text_file: TextFile
     analyzer: JdtLspAnalyzer
 
+    def copy(self) -> 'LspContext':
+        return LspContext(
+            self.text_file.copy(),
+            self.analyzer.copy()
+        )
+
+
+LspContextList = List[LspContext]
+
 
 CODET5 = T5ForConditionalGeneration.from_pretrained(MODEL).to(DEVICE)
 CODET5_TOKENIZER: PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL)
 CODET5_INFERENCE_CONFIG = LMInferenceConfig(0.8, 50, 70, 2)
+CODET5_TOKEN_MAP: Dict[int, str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), {
+    int(id): CODET5_TOKENIZER.decode(
+        id,
+        skip_special_tokens=False,
+        clean_up_tokenization_spaces=False
+    ) for id in range(CODET5.config.vocab_size)
+})
 
 
 def codet5_context(prefix: str, suffix: str) -> str:
@@ -119,7 +136,7 @@ def codet5_tokenize(prefix: str, suffix: str) -> torch.Tensor:
 
 def repair(
     lm_context: LMContext,
-    lsp_context: LspContext,
+    lsp_context: LspContextList,
     do_analysis: bool,
 ) -> Generation:
     return generate(
@@ -135,13 +152,122 @@ def repair(
     )
 
 
+def feasible(
+    analyzer: JdtLspAnalyzer,
+    uri: str,
+    token: str,
+    pos: spec.Position
+) -> bool:
+    """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
+    if regex.match('^([a-zA-Z_][a-zA-Z\\d_]*)$', token) is None:
+        warning(
+            f'Cannot recognize {token} as an identifier, probabily unicode.')
+    if token in JAVA_KEYWORDS:
+        return True
+    # start_time = time.time()
+    completion_result = analyzer.client.textDocument_completion({
+        'textDocument': {
+            'uri': uri
+        },
+        'position': pos,
+    })
+    # completion_overhead.append(time.time() - start_time)
+    completions: List[str] = [
+        item['textEdit']['newText']  # type: ignore # noqa
+        if 'textEdit' in item
+        else item['insertText']  # type: ignore # noqa
+        for item in completion_result['result']['items']  # type: ignore # noqa
+    ]
+    if any(filter(
+        lambda completion: completion.startswith(token), # type: ignore # noqa
+        completions
+    )):
+        print('Accepted:', token)#, token, completions)
+        # if 'lastFraction' in completions:
+        #     breakpoint()
+        # print("Yes!")
+        # print(completions)
+        return True
+    else:
+        print('Denied', token)#, token, completions)
+        return False
+
+
+def is_special_token(token: str) -> bool:
+    return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
+
+# Get the exact identifier token position
+
+
+def get_id_token(generated_tokens: List[str]) -> str:
+    def get():
+        for token in reversed(generated_tokens):
+            for c in reversed(token):
+                if c.isdigit() or c.isalpha() or c == '_':
+                    yield c
+                else:
+                    return
+    result = ''.join(reversed(list(get())))
+
+    if len(result) > 0 and not result[0].isdigit():
+        return result
+    else:
+        raise IDTokenError
+
+
+def feasible_token_ids(
+    queue: mp.Queue,
+    generated_tokens: List[str],
+    lsp_context: LspContext,
+    token_map: Dict[int, str],
+    considered_token_ids: List[int],
+    top_k: int,
+):
+    # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
+    # NOTE: do not do it now. Just evaluate on both
+    # if idx == 0 and random.random() < 0.1:
+    #     exists_satsified_token = True
+    #     new_index = idx
+    #     break
+    analyzer = lsp_context.analyzer
+    text_file = lsp_context.text_file
+    satisfied_token_ids: List[int] = []
+    for token_id in considered_token_ids:
+        if len(satisfied_token_ids) == top_k:
+            break
+        token = token_map[token_id]
+        token_rstrip = token.rstrip()
+        rspace_len = len(token) - len(token_rstrip)
+        try:
+            id_token = get_id_token(generated_tokens + [token_rstrip])
+            text_file.add(token)
+            analyzer.change(text_file)
+            analyzer.client.try_recv()
+            # No exception afterwards
+            pos = text_file.get_position(
+                text_file.cursor - rspace_len)
+            if feasible(analyzer, text_file.path.as_uri(), id_token, pos):
+                satisfied_token_ids.append(token_id)
+            text_file.delete(len(token))
+            analyzer.change(text_file)
+        except IDTokenError:
+            satisfied_token_ids.append(token_id)
+    queue.put(satisfied_token_ids)
+    # Zeroing out unsatisfied tokens
+    # return next_probabilities.masked_fill(torch.zeros(
+    #     next_probabilities.shape.numel(),
+    #     dtype=torch.bool
+    # ).index_fill(0, torch.tensor(satisfied_token_ids), True), 0.)
+
 # Modified from GenerationMixin.generate
+
+
 @typing.no_type_check
 @torch.no_grad()
 def generate(
     model: GenerationMixin,
     lm_context: LMContext,
-    lsp_context: LspContext,
+    lsp_context: LspContextList,
     config_do_analysis: bool,
     inputs: Optional[torch.Tensor] = None,
     max_length: Optional[int] = None,
@@ -370,63 +496,7 @@ def generate(
                 - [`~generation_utils.SampleEncoderDecoderOutput`],
                 - [`~generation_utils.BeamSearchEncoderDecoderOutput`],
                 - [`~generation_utils.BeamSampleEncoderDecoderOutput`]
-
-    Examples:
-
-    Greedy Decoding:
-
-    ```python
-    >>> from transformers import AutoTokenizer, AutoModelForCausalLM
-
-    >>> tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    >>> model = AutoModelForCausalLM.from_pretrained("gpt2")
-
-    >>> prompt = "Today I believe we can finally"
-    >>> input_ids = tokenizer(prompt, return_tensors="pt").input_ids
-
-    >>> # generate up to 30 tokens
-    >>> outputs = model.generate(input_ids, do_sample=False, max_length=30)
-    >>> tokenizer.batch_decode(outputs, skip_special_tokens=True)
-    ['Today I believe we can finally get to the point where we can make a difference in the lives of the people of the United States of America.\n']
-    ```
-
-    Multinomial Sampling:
-
-    ```python
-    >>> from transformers import AutoTokenizer, AutoModelForCausalLM
-    >>> import torch
-
-    >>> tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    >>> model = AutoModelForCausalLM.from_pretrained("gpt2")
-
-    >>> prompt = "Today I believe we can finally"
-    >>> input_ids = tokenizer(prompt, return_tensors="pt").input_ids
-
-    >>> # sample up to 30 tokens
-    >>> torch.manual_seed(0)  # doctest: +IGNORE_RESULT
-    >>> outputs = model.generate(input_ids, do_sample=True, max_length=30)
-    >>> tokenizer.batch_decode(outputs, skip_special_tokens=True)
-    ['Today I believe we can finally get rid of discrimination," said Rep. Mark Pocan (D-Wis.).\n\n"Just look at the']
-    ```
-
-    Beam-search decoding:
-
-    ```python
-    >>> from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-
-    >>> tokenizer = AutoTokenizer.from_pretrained("Helsinki-NLP/opus-mt-en-de")
-    >>> model = AutoModelForSeq2SeqLM.from_pretrained("Helsinki-NLP/opus-mt-en-de")
-
-    >>> sentence = "Paris is one of the densest populated areas in Europe."
-    >>> input_ids = tokenizer(sentence, return_tensors="pt").input_ids
-
-    >>> outputs = model.generate(input_ids)
-    >>> tokenizer.batch_decode(outputs, skip_special_tokens=True)
-    ['Paris ist eines der dichtesten besiedelten Gebiete Europas.']
-    ```"""
-    text_file = lsp_context.text_file
-    analyzer = lsp_context.analyzer
-
+    """
     # 1. Set generation parameters if not already defined
     bos_token_id = bos_token_id if bos_token_id is not None else model.config.bos_token_id
     num_beams = num_beams if num_beams is not None else model.config.num_beams
@@ -471,6 +541,7 @@ def generate(
     inputs_tensor, model_input_name, model_kwargs = model._prepare_model_inputs(
         inputs, bos_token_id, model_kwargs)
     batch_size = inputs_tensor.shape[0]
+    assert batch_size == len(lsp_context)
 
     # 3. Define other model kwargs
     model_kwargs["output_attentions"] = output_attentions
@@ -592,9 +663,8 @@ def generate(
     # 12. run sample
     return sample(
         model,
-        analyzer,
-        text_file,
         input_ids,
+        lsp_context_list=lsp_context,
         end_id=lm_context.inference_config.end_id,
         tokenizer=lm_context.tokenizer,
         top_k=top_k,
@@ -615,9 +685,8 @@ def generate(
 @typing.no_type_check
 def sample(
     model: GenerationMixin,
-    analyzer: JdtLspAnalyzer,
-    text_file: TextFile,
     input_ids: torch.LongTensor,
+    lsp_context_list: LspContextList,
     top_k: int,
     config_do_analysis: bool,
     tokenizer: PreTrainedTokenizer,
@@ -675,65 +744,7 @@ def sample(
         model_kwargs:
             Additional model specific kwargs will be forwarded to the `forward` function of the model. If model is
             an encoder-decoder model the kwargs should include `encoder_outputs`.
-
-    Return:
-        [`~generation_utils.SampleDecoderOnlyOutput`], [`~generation_utils.SampleEncoderDecoderOutput`] or
-        `torch.LongTensor`: A `torch.LongTensor` containing the generated tokens (default behaviour) or a
-        [`~generation_utils.SampleDecoderOnlyOutput`] if `model.config.is_encoder_decoder=False` and
-        `return_dict_in_generate=True` or a [`~generation_utils.SampleEncoderDecoderOutput`] if
-        `model.config.is_encoder_decoder=True`.
-
-    Examples:
-
-    ```python
-    >>> from transformers import (
-    ...     AutoTokenizer,
-    ...     AutoModelForCausalLM,
-    ...     LogitsProcessorList,
-    ...     MinLengthLogitsProcessor,
-    ...     TopKLogitsWarper,
-    ...     TemperatureLogitsWarper,
-    ...     StoppingCriteriaList,
-    ...     MaxLengthCriteria,
-    ... )
-    >>> import torch
-
-    >>> tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    >>> model = AutoModelForCausalLM.from_pretrained("gpt2")
-
-    >>> # set pad_token_id to eos_token_id because GPT2 does not have a EOS token
-    >>> model.config.pad_token_id = model.config.eos_token_id
-
-    >>> input_prompt = "Today is a beautiful day, and"
-    >>> input_ids = tokenizer(input_prompt, return_tensors="pt").input_ids
-
-    >>> # instantiate logits processors
-    >>> logits_processor = LogitsProcessorList(
-    ...     [
-    ...         MinLengthLogitsProcessor(15, eos_token_id=model.config.eos_token_id),
-    ...     ]
-    ... )
-    >>> # instantiate logits processors
-    >>> logits_warper = LogitsProcessorList(
-    ...     [
-    ...         TopKLogitsWarper(50),
-    ...         TemperatureLogitsWarper(0.7),
-    ...     ]
-    ... )
-
-    >>> stopping_criteria = StoppingCriteriaList([MaxLengthCriteria(max_length=20)])
-
-    >>> torch.manual_seed(0)  # doctest: +IGNORE_RESULT
-    >>> outputs = model.sample(
-    ...     input_ids,
-    ...     logits_processor=logits_processor,
-    ...     logits_warper=logits_warper,
-    ...     stopping_criteria=stopping_criteria,
-    ... )
-
-    >>> tokenizer.batch_decode(outputs, skip_special_tokens=True)
-    ['Today is a beautiful day, and a wonderful day.\n\nI was lucky enough to meet the']
-    ```"""
+    """
 
     # init values
     logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
@@ -776,7 +787,6 @@ def sample(
         )
 
     # keep track of which sequences are already finished
-    unfinished_sequences = input_ids.new(input_ids.shape[0]).fill_(1)
     cur_len = input_ids.shape[-1]
 
     this_peer_finished = False  # used by synced_gpus only
@@ -795,6 +805,7 @@ def sample(
         do_analysis = config_do_analysis and do_analysis
         # do_analysis = False
         if synced_gpus:
+            assert False
             # Under synced_gpus the `forward` call must continue until all gpus complete their sequence.
             # The following logic allows an early break if all peers finished generating their sequence
             this_peer_finished_flag = torch.tensor(
@@ -848,9 +859,9 @@ def sample(
                 )
 
         # sample
-        probs = nn.functional.softmax(next_token_scores, dim=-1)
+        # probs = nn.functional.softmax(next_token_scores, dim=-1)
         # batch_size * TOP_K
-        all_next_token_ids = torch.topk(probs, k=top_k, dim=-1).indices
+        # all_next_token_ids = torch.topk(probs, k=top_k, dim=-1).indices
         # all_next_token_ids = torch.multinomial(
         #     probs, num_samples=TOP_K).squeeze(1).view(TOP_K, 1)
         # all_next_token_ids = torch.topk(next_token_scores, k=6, dim=-1).indices.view(6, 1)
@@ -874,198 +885,150 @@ def sample(
         # for next_token_ids in all_next_token_ids:
         #     assert next_token_ids.shape == torch.Size([1]), next_token_ids.shape
         # Don't use `convert_ids_to_tokens`, which would give weird results
-        tokens = [{
-            id.item(): token
-            for (id, token) in
-            zip(
-                ids,
-                (tokenizer.decode(
-                    id,
-                    skip_special_tokens=False,
-                    clean_up_tokenization_spaces=False
-                ) for id in ids)
-            )} for ids in all_next_token_ids
-        ]
+        # TODO: memorize decode
+        # tokens = [{
+        #     id.item(): token
+        #     for (id, token) in
+        #     zip(
+        #         ids,
+        #         (tokenizer.decode(
+        #             id,
+        #             skip_special_tokens=False,
+        #             clean_up_tokenization_spaces=False
+        #         ) for id in ids)
+        #     )} for ids in all_next_token_ids
+        # ]
         # breakpoint()
         # TODO: support parallel processing
-        if len(tokens) != 1:
-            raise NotImplementedError
-        if len(all_next_token_ids) != 1:
-            raise NotImplementedError
-        if len(probs) != 1:
-            raise NotImplementedError
-        probs = probs[0]
-        all_next_token_ids = all_next_token_ids[0]
-        tokens = tokens[0]
+        # if len(tokens) != 1:
+        #     raise NotImplementedError
+        # if len(all_next_token_ids) != 1:
+        #     raise NotImplementedError
+        # if len(probs) != 1:
+        #     raise NotImplementedError
+        # probs = probs[0]
+        # all_next_token_ids = all_next_token_ids[0]
+        # tokens = tokens[0]
         # tokens = self.tokenizer.batch_decode(
         # all_next_token_ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)
-        assert len(tokens) == top_k
+        # assert len(tokens) == top_k
 
-        def satisfy(analyzer: JdtLspAnalyzer, token: str, pos: spec.Position) -> bool:
-            if regex.match('^([a-zA-Z_][a-zA-Z\\d_]*)$', token) is None:
-                warning(
-                    f'Cannot recognize {token} as an identifier, probabily unicode.')
-            if token in JAVA_KEYWORDS:
-                return True
-            start_time = time.time()
-            completion_result = analyzer.client.textDocument_completion({
-                'textDocument': {
-                    'uri': text_file.path.as_uri()
-                },
-                'position': pos,
-            })
-            completion_overhead.append(time.time() - start_time)
-            completions = [
-                item['textEdit']['newText']
-                if 'textEdit' in item
-                else item['insertText']
-                for item in completion_result['result']['items']
-            ]
-            if any(filter(
-                lambda completion: completion.startswith(token),
-                completions
-            )):
-                print('Accepted:', token, completions)
-                # if 'lastFraction' in completions:
-                #     breakpoint()
-                # print("Yes!")
-                # print(completions)
-                return True
-            else:
-                print('Denied', token, completions)
-                return False
-
-        def is_special_token(token: str) -> bool:
-            return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
-
-        # Not Disable comment for now
-        # all_next_token_ids, tokens = zip(
-        #     *filter(lambda x: x[1].strip() not in ['//', '/*', '/**'], zip(all_next_token_ids, tokens)))
-
-        # Get the exact identifier token position
-        def get_id_token_and_rspace_len(generated_tokens: List[str]) -> Tuple[str, int]:
-            def get():
-                for token in reversed(generated_tokens):
-                    for c in reversed(token):
-                        if c.isdigit() or c.isalpha() or c == '_':
-                            yield c
-                        else:
-                            return
-            result = ''.join(reversed(list(get())))
-
-            if len(result) > 0 and not result[0].isdigit():
-                return result
-            else:
-                raise IDTokenError
-
-        exists_satisfied_token = False
-        old_content = text_file.content
         if do_analysis:
-            for token_id in all_next_token_ids:
-                token = tokens[token_id.item()]
-                # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
-                # NOTE: do not do it now. Just evaluate on both
-                # if idx == 0 and random.random() < 0.1:
-                #     exists_satsified_token = True
-                #     new_index = idx
-                #     break
-                try:
-                    token_rstrip = token.rstrip()
-                    rspace_len = len(token) - len(token_rstrip)
-                    id_token = get_id_token_and_rspace_len(
-                        generated_tokens + [token_rstrip])
-                    text_file.add(token)
-                    analyzer.change(text_file)
-                    # No exception afterwards
-                    pos = text_file.get_position(
-                        text_file.cursor - rspace_len)
-                    if satisfy(analyzer, id_token, pos):
-                        exists_satisfied_token = True
-                    else:
-                        # zero out the token's probability
-                        probs[token_id] = 0.
-                    text_file.delete(len(token))
-                    analyzer.change(text_file)
-                except IDTokenError:
-                    exists_satisfied_token = True
+            considered_next_token_ids_batch = torch.topk(
+                next_token_scores, k=2*top_k, dim=-1).indices
+            assert len(lsp_context_list) == len(considered_next_token_ids_batch), (len(
+                lsp_context_list), len(considered_next_token_ids_batch))
+            queue = mp.Queue()
+            processes = [mp.Process(target=feasible_token_ids, args=(
+                queue,
+                generated_tokens,
+                lsp_context,
+                CODET5_TOKEN_MAP,
+                considered_next_token_ids.tolist(),
+                top_k,
+            )) for considered_next_token_ids, lsp_context in zip(
+                considered_next_token_ids_batch,
+                lsp_context_list
+            )]
+            for p in processes:
+                p.start()
+            for p in processes:
+                p.join()
 
-        assert old_content == text_file.content
+            feasible_token_results: List[List[int]] = []
+            while not queue.empty():
+                feasible_token_results.append(queue.get())
+            feasible_next_token_ids = torch.LongTensor(feasible_token_results).to(DEVICE)
+            # rewrite probabilities
+            mask = torch.ones(
+                next_token_scores.shape,
+                dtype=torch.bool
+            ).to(DEVICE)
+            mask.scatter_(1, feasible_next_token_ids, False)
+            next_token_scores.masked_fill_(mask, -float("Inf"))
 
-        if not exists_satisfied_token and do_analysis:
-            # Now all top k tokens are zeroed out
-            # Default to the token with the highest probability
-            # But if LSP finds a completion, use that.
-            next_token_ids = all_next_token_ids[0].view(1)
-            next_token = tokens[next_token_ids.item()]
+        # TODO
+        # if not exists_satisfied_token and do_analysis:
+        #     # Now all top k tokens are zeroed out
+        #     # Default to the token with the highest probability
+        #     # But if LSP finds a completion, use that.
+        #     next_token_ids = all_next_token_ids[0].view(1)
+        #     next_token = tokens[next_token_ids.item()]
 
-            # Here we know in the above loop all tokens fail to pass the check,
-            # so they are all identifiers (type, var, etc.)
-            # So it is safe to call language server (but cannot prove w/o AST)
-            # TODO: refactor the logic
-            space_before = False
-            if next_token.startswith(' '):
-                text_file.add(' ')
-                space_before = True
-            pos = text_file.get_cursor_position()
-            start_time = time.time()
-            completion_result = analyzer.client.textDocument_completion({
-                'textDocument': {
-                    'uri': text_file.path.as_uri()
-                },
-                'position': pos,
-            })
-            completion_overhead.append(time.time() - start_time)
+        #     # Here we know in the above loop all tokens fail to pass the check,
+        #     # so they are all identifiers (type, var, etc.)
+        #     # So it is safe to call language server (but cannot prove w/o AST)
+        #     # TODO: refactor the logic
+        #     space_before = False
+        #     if next_token.startswith(' '):
+        #         text_file.add(' ')
+        #         space_before = True
+        #     pos = text_file.get_cursor_position()
+        #     start_time = time.time()
+        #     completion_result = analyzer.client.textDocument_completion({
+        #         'textDocument': {
+        #             'uri': text_file.path.as_uri()
+        #         },
+        #         'position': pos,
+        #     })
+        #     completion_overhead.append(time.time() - start_time)
 
-            # TODO: opt
-            completions = [
-                item['textEdit']['newText']
-                if 'textEdit' in item
-                else item['insertText']
-                for item in completion_result['result']['items']
-            ]
-            if not space_before:
-                try:
-                    id_token = get_id_token_and_rspace_len(
-                        generated_tokens)
-                    completions = []
-                    for item in completion_result['result']['items']:
-                        if 'textEdit' in item:
-                            result = item['textEdit']
-                            insert = result['insert']
-                            replace = result['replace']
+        #     # TODO: opt
+        #     completions = [
+        #         item['textEdit']['newText']
+        #         if 'textEdit' in item
+        #         else item['insertText']
+        #         for item in completion_result['result']['items']
+        #     ]
+        #     if not space_before:
+        #         try:
+        #             id_token = get_id_token_and_rspace_len(
+        #                 generated_tokens)
+        #             completions = []
+        #             for item in completion_result['result']['items']:
+        #                 if 'textEdit' in item:
+        #                     result = item['textEdit']
+        #                     insert = result['insert']
+        #                     replace = result['replace']
 
-                            # because we do not invoke it in the middle of a word
-                            assert replace['end'] == pos
-                            assert insert == replace
-                            assert replace['end'] == pos, result
-                            assert replace['end']['line'] == replace['start']['line']
+        #                     # because we do not invoke it in the middle of a word
+        #                     assert replace['end'] == pos
+        #                     assert insert == replace
+        #                     assert replace['end'] == pos, result
+        #                     assert replace['end']['line'] == replace['start']['line']
 
-                            start_index = replace['end']['character'] - \
-                                replace['start']['character']
-                            if result['newText'][:start_index] == id_token:
-                                completions.append(
-                                    result['newText'][start_index:])
-                        else:
-                            assert 'insertText' in item
-                            completions.append(item['insertText'])
-                except IDTokenError:
-                    pass
+        #                     start_index = replace['end']['character'] - \
+        #                         replace['start']['character']
+        #                     if result['newText'][:start_index] == id_token:
+        #                         completions.append(
+        #                             result['newText'][start_index:])
+        #                 else:
+        #                     assert 'insertText' in item
+        #                     completions.append(item['insertText'])
+        #         except IDTokenError:
+        #             pass
 
-            completions = (
-                (c if '${' not in c else c[:c.index('${')]) for c in completions)
-            completions = list(filter(lambda c: len(c) > 0, completions))
-            if len(completions) > 0:
-                # breakpoint()
-                next_token = completions[0]
-                next_token_ids = self.tokenizer.encode(
-                    next_token, return_tensors='pt', add_special_tokens=False).to(DEVICE)[0]
-                # if len(next_token_ids) > 1:
-                #     breakpoint()
-        else:
-            # Either 1) not using LSP or 2) there is/are matched tokens
-            next_token_ids = torch.multinomial(
-                probs, num_samples=1).view(1)
-            next_token = tokens[next_token_ids.item()]
+        #     completions = (
+        #         (c if '${' not in c else c[:c.index('${')]) for c in completions)
+        #     completions = list(filter(lambda c: len(c) > 0, completions))
+        #     if len(completions) > 0:
+        #         # breakpoint()
+        #         next_token = completions[0]
+        #         next_token_ids = self.tokenizer.encode(
+        #             next_token, return_tensors='pt', add_special_tokens=False).to(DEVICE)[0]
+        #         # if len(next_token_ids) > 1:
+        #         #     breakpoint()
+        # else:
+        #     # Either 1) not using LSP or 2) there is/are matched tokens
+        #     next_token_ids = torch.multinomial(
+        #         probs, num_samples=1).view(1)
+        #     next_token = tokens[next_token_ids.item()]
+
+        probs = nn.functional.softmax(next_token_scores, dim=-1)
+        next_token_ids = torch.multinomial(
+            probs, num_samples=1)
+        breakpoint()
+        next_token = tokens[next_token_ids.item()]
 
         if next_token.strip().startswith('//'):
             context['inside_line_comment'] = True
