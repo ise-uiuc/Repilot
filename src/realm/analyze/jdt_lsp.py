@@ -39,16 +39,17 @@ class JdtLspAnalyzer:
         self.proj_path = proj_path
         self.java_home = java_home
         self.verbose = verbose
-
         self.process = subprocess.Popen(
-            server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, shell=False)
+            self.server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, shell=False)
         assert self.process.stdin is not None and self.process.stdout is not None
+    
+    def init_client(self):
         self.client = LSPClient(
-            self.process.stdin, self.process.stdout, verbose, 2)
+            self.process.stdin, self.process.stdout, self.verbose, 30)
+        self.client.start()
 
-    # def init(self):
-        # self.client.start()
 
+    def init(self):
         # self.active_text: Optional[TextDocument] = None
 
         # Initialize the server
@@ -492,7 +493,7 @@ class JdtLspAnalyzer:
                             "runtimes": [
                                 {
                                     "name": "JavaSE-1.8",
-                                    "path": java_home,
+                                    "path": self.java_home,
                                     "default": True,
                                 },
                             ]

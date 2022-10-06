@@ -231,6 +231,7 @@ def feasible_token_ids(
     #     break
     analyzer = lsp_context.analyzer
     text_file = lsp_context.text_file
+    analyzer.init_client()
     satisfied_token_ids: List[int] = []
     for token_id in considered_token_ids:
         if len(satisfied_token_ids) == top_k:
@@ -242,7 +243,7 @@ def feasible_token_ids(
             id_token = get_id_token(generated_tokens + [token_rstrip])
             text_file.add(token)
             analyzer.change(text_file)
-            analyzer.client.try_recv()
+            # analyzer.client.try_recv()
             # No exception afterwards
             pos = text_file.get_position(
                 text_file.cursor - rspace_len)
@@ -253,6 +254,7 @@ def feasible_token_ids(
         except IDTokenError:
             satisfied_token_ids.append(token_id)
     queue.put(satisfied_token_ids)
+    analyzer.client.stop()
     # Zeroing out unsatisfied tokens
     # return next_probabilities.masked_fill(torch.zeros(
     #     next_probabilities.shape.numel(),

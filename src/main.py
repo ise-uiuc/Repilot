@@ -1,4 +1,5 @@
 import difflib
+import multiprocessing as mp
 from enum import Enum
 import uuid
 from joblib import Parallel, delayed
@@ -54,6 +55,21 @@ def server_cmd(bug_id: str) -> List[str]:
 
 REPAIR_BATCH_SIZE = 3
 
+def init_analyzer(analyzer: JdtLspAnalyzer):
+    analyzer.init_client()
+    analyzer.init()
+    analyzer.client.stop()
+
+def analyzer_open_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
+    analyzer.init_client()
+    analyzer.open(text_file)
+    analyzer.client.stop()
+
+def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
+    analyzer.init_client()
+    analyzer.change(text_file)
+    analyzer.client.stop()
+
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
     repo = git.Repo(bug.proj_path)
@@ -65,6 +81,12 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
     analyzers = [JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
         str, os.getenv('JAVA8_HOME')), verbose=False) for _ in range(REPAIR_BATCH_SIZE)]
+    
+    processes = [mp.Process(target=init_analyzer, args=(analyzer,)) for analyzer in analyzers]
+    for p in processes:
+        p.start()
+    for p in processes:
+        p.join()
 
     patch_groups: List[List[TextFile]] = []
     time_no_lsp: List[float] = []
@@ -79,15 +101,21 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             # TODO: refactor textfile
             for buggy_file in bug.buggy_files:
                 text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
-                for analyzer in analyzers:
-                    analyzer.change(text_file)
+                processes = [mp.Process(target=analyzer_change_file, args=(analyzer, text_file)) for analyzer in analyzers]
+                for p in processes:
+                    p.start()
+                for p in processes:
+                    p.join()
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
         for buggy_file in bug.buggy_files:
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
             if idx == 0:
-                for analyzer in analyzers:
-                    analyzer.open(text_file)
+                processes = [mp.Process(target=analyzer_open_file, args=(analyzer, text_file)) for analyzer in analyzers]
+                for p in processes:
+                    p.start()
+                for p in processes:
+                    p.join()
             print(len(buggy_file.changes))
             print(buggy_file.path)
             print([(c.start, len(c.removed_lines))
