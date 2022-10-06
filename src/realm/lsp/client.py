@@ -1,6 +1,7 @@
 from select import select
 import json
 from threading import Condition, Lock, Thread
+from types import NoneType
 from typing import IO, Callable, Dict, Optional, Tuple, TypeVar, Type, cast
 from typing import ParamSpec
 from itertools import count
@@ -167,6 +168,8 @@ class LSPClient(Thread):
         return json.loads(response)
 
     initialize = d_call('initialize', spec.InitializeParams)
+    shutdown = d_call('shutdown', NoneType)
+    exit = d_notify('exit', NoneType)
     initialized = d_notify('initialized', spec.InitializedParams)
     workspace_didChangeConfiguration = d_notify(
         'textDocument/didChangeConfiguration', dict)

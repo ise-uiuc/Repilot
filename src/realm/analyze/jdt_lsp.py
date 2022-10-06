@@ -40,7 +40,7 @@ class JdtLspAnalyzer:
         self.java_home = java_home
         self.verbose = verbose
         self.process = subprocess.Popen(
-            self.server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, shell=False)
+            self.server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
         assert self.process.stdin is not None and self.process.stdout is not None
     
     def init_client(self):

@@ -192,6 +192,10 @@ def feasible(
         print('Denied', token)#, token, completions)
         return False
 
+def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
+    analyzer.init_client()
+    analyzer.change(text_file)
+    analyzer.client.stop()
 
 def is_special_token(token: str) -> bool:
     return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
@@ -220,6 +224,7 @@ def feasible_token_ids(
     generated_tokens: List[str],
     lsp_context: LspContext,
     token_map: Dict[int, str],
+    # Should be ranked (higher probability first)
     considered_token_ids: List[int],
     top_k: int,
 ):
@@ -231,7 +236,10 @@ def feasible_token_ids(
     #     break
     analyzer = lsp_context.analyzer
     text_file = lsp_context.text_file
-    analyzer.init_client()
+    # analyzer.init_client()
+    queue.put(considered_token_ids[:top_k])
+    # analyzer.client.stop()
+    return
     satisfied_token_ids: List[int] = []
     for token_id in considered_token_ids:
         if len(satisfied_token_ids) == top_k:
@@ -253,6 +261,12 @@ def feasible_token_ids(
             analyzer.change(text_file)
         except IDTokenError:
             satisfied_token_ids.append(token_id)
+    length = len(satisfied_token_ids)
+    # TODO: completion
+    if length == 0:
+        satisfied_token_ids = considered_token_ids[:top_k]
+    elif length != top_k:
+        satisfied_token_ids.extend(satisfied_token_ids[0] for _ in range(top_k - length))
     queue.put(satisfied_token_ids)
     analyzer.client.stop()
     # Zeroing out unsatisfied tokens
@@ -789,6 +803,7 @@ def sample(
         )
 
     # keep track of which sequences are already finished
+    unfinished_sequences = input_ids.new(input_ids.shape[0]).fill_(1)
     cur_len = input_ids.shape[-1]
 
     this_peer_finished = False  # used by synced_gpus only
@@ -797,13 +812,15 @@ def sample(
     generated_tokens: List[str] = []
     # Context variable controling when to do analysis
     # TODO(future): use AST for more accurate analysis (e.g., inside string literal, etc.)
-    context = {
+    batch_size = len(input_ids)
+    context = {idx: {
         'inside_line_comment': False,
         'inside_block_comment': False,
-    }
+    } for idx in range(batch_size)}
     # auto-regressive generation
     while True:
-        do_analysis = not context['inside_line_comment'] and not context['inside_block_comment']
+        do_analysis = True
+        # not context['inside_line_comment'] and not context['inside_block_comment']
         do_analysis = config_do_analysis and do_analysis
         # do_analysis = False
         if synced_gpus:
@@ -915,9 +932,11 @@ def sample(
         # all_next_token_ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)
         # assert len(tokens) == top_k
 
+        probs = nn.functional.softmax(next_token_scores, dim=-1)
+
         if do_analysis:
             considered_next_token_ids_batch = torch.topk(
-                next_token_scores, k=2*top_k, dim=-1).indices
+                probs, k=2*top_k, dim=-1).indices
             assert len(lsp_context_list) == len(considered_next_token_ids_batch), (len(
                 lsp_context_list), len(considered_next_token_ids_batch))
             queue = mp.Queue()
@@ -943,11 +962,11 @@ def sample(
             feasible_next_token_ids = torch.LongTensor(feasible_token_results).to(DEVICE)
             # rewrite probabilities
             mask = torch.ones(
-                next_token_scores.shape,
+                probs.shape,
                 dtype=torch.bool
             ).to(DEVICE)
             mask.scatter_(1, feasible_next_token_ids, False)
-            next_token_scores.masked_fill_(mask, -float("Inf"))
+            probs.masked_fill_(mask, 0.)
 
         # TODO
         # if not exists_satisfied_token and do_analysis:
@@ -1026,55 +1045,76 @@ def sample(
         #         probs, num_samples=1).view(1)
         #     next_token = tokens[next_token_ids.item()]
 
-        probs = nn.functional.softmax(next_token_scores, dim=-1)
-        next_token_ids = torch.multinomial(
-            probs, num_samples=1)
-        breakpoint()
-        next_token = tokens[next_token_ids.item()]
+        try:
+            next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
+        except RuntimeError:
+            # TODO: fix
+            probs = nn.functional.softmax(next_token_scores, dim=-1)
+            next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
+        
+        for batch, (next_token_id, text_file) in enumerate(zip(next_token_ids, map(lambda ctx: ctx.text_file, lsp_context_list))):
+            next_token = CODET5_TOKEN_MAP[next_token_id.item()]
+            if next_token.strip().startswith('//'):
+                context[batch]['inside_line_comment'] = True
+            elif next_token.endswith('\n'):
+                # breakpoint()
+                context[batch]['inside_line_comment'] = False
+            elif next_token.strip().startswith('/*'):
+                context[batch]['inside_block_comment'] = True
+            elif next_token.endswith('*/'):
+                # breakpoint()
+                context[batch]['inside_block_comment'] = False
 
-        if next_token.strip().startswith('//'):
-            context['inside_line_comment'] = True
-        elif next_token.endswith('\n'):
-            # breakpoint()
-            context['inside_line_comment'] = False
-        elif next_token.strip().startswith('/*'):
-            context['inside_block_comment'] = True
-        elif next_token.endswith('*/'):
-            # breakpoint()
-            context['inside_block_comment'] = False
-
-        # print(input_ids.shape)
-        input_ids = torch.cat(
-            [input_ids, next_token_ids.view(1, -1)], dim=-1)
-        # print(repr(next_token), end=' ')
-        if not is_special_token(next_token):
-            text_file.add(next_token)
-            if do_analysis:
-                analyzer.change(text_file)
-            generated_ids.extend(next_token_ids)
-            generated_tokens.append(next_token)
-        # print(input_ids.shape, 'new')
-        model_kwargs = model._update_model_kwargs_for_generation(
-            outputs, model_kwargs, is_encoder_decoder=model.config.is_encoder_decoder
-        )
-        # print(model_kwargs['past'][0][0].shape)
-        cur_len = cur_len + 1
-
-        # if eos_token was found in one sentence, set sentence to finished
-        # if eos_token_id is not None:
-        #     unfinished_sequences = unfinished_sequences.mul(
-        #         (next_token_ids != eos_token_id).long())
+            # print(repr(next_token), end=' ')
+            if not is_special_token(next_token):
+                text_file.add(next_token)
+                # generated_ids.extend(next_token_ids)
+                # generated_tokens.append(next_token)
+        if do_analysis:
+            processes = [mp.Process(target=analyzer_change_file, args=(ctx.analyzer, ctx.text_file)) for ctx in lsp_context_list]
+            for p in processes:
+                print("G")
+                print(p)
+                p.start()
+                p.join()
+            exit()
+            for p in processes:
+                p.join()
+                p.terminate()
 
         # stop when each sentence is finished, or if we exceed the maximum length
         # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
         # Mask ids are 32099, 32098, 32097...
-        if next_token_ids[-1] == 32098 or next_token_ids[-1] == end_id or max_length == len(input_ids[0]) or stopping_criteria(input_ids, scores):
-            # assert input_ids[0, -1] == self.EOM_ID
-            # if unfinished_sequences.max() == 0 or max_length == len(input_ids) or stopping_criteria(input_ids, scores):
+                    # finished sentences should have their next token be a padding token
+        if eos_token_id is not None:
+            if pad_token_id is None:
+                raise ValueError("If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
+            next_token_ids = next_token_ids * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
+
+        # update generated ids, model inputs, and length for next step
+        input_ids = torch.cat([input_ids, next_token_ids[:, None]], dim=-1)
+        model_kwargs = model._update_model_kwargs_for_generation(
+            outputs, model_kwargs, is_encoder_decoder=model.config.is_encoder_decoder
+        )
+        cur_len = cur_len + 1
+
+        # if eos_token was found in one sentence, set sentence to finished
+        if eos_token_id is not None:
+            unfinished_sequences = unfinished_sequences.mul((next_token_ids != eos_token_id).long())
+
+        # stop when each sentence is finished, or if we exceed the maximum length
+        if unfinished_sequences.max() == 0 or stopping_criteria(input_ids, scores):
             if not synced_gpus:
                 break
             else:
                 this_peer_finished = True
+        # if next_token_ids[-1] == 32098 or next_token_ids[-1] == end_id or max_length == len(input_ids[0]) or stopping_criteria(input_ids, scores):
+        #     # assert input_ids[0, -1] == self.EOM_ID
+        #     # if unfinished_sequences.max() == 0 or max_length == len(input_ids) or stopping_criteria(input_ids, scores):
+        #     if not synced_gpus:
+        #         break
+        #     else:
+        #         this_peer_finished = True
 
     if return_dict_in_generate:
         raise NotImplementedError

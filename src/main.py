@@ -51,9 +51,9 @@ model = None
 def server_cmd(bug_id: str) -> List[str]:
     return shlex.split(f"/home/yuxiang/Developer/jdt-lsp/bin/jdtls \
         -configuration /home/yuxiang/.cache/jdtls \
-        -data .lsp_data/{bug_id}")
+        -data .lsp_data/{uuid.uuid4()}")
 
-REPAIR_BATCH_SIZE = 3
+REPAIR_BATCH_SIZE = 10
 
 def init_analyzer(analyzer: JdtLspAnalyzer):
     analyzer.init_client()
@@ -68,6 +68,12 @@ def analyzer_open_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
 def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
     analyzer.init_client()
     analyzer.change(text_file)
+    analyzer.client.stop()
+
+def terminate_analyzer(analyzer: JdtLspAnalyzer):
+    analyzer.init_client()
+    analyzer.client.shutdown()
+    analyzer.client.exit()
     analyzer.client.stop()
 
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
@@ -87,6 +93,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         p.start()
     for p in processes:
         p.join()
+        p.terminate()
 
     patch_groups: List[List[TextFile]] = []
     time_no_lsp: List[float] = []
@@ -106,6 +113,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     p.start()
                 for p in processes:
                     p.join()
+                    p.terminate()
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
         for buggy_file in bug.buggy_files:
@@ -116,6 +124,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     p.start()
                 for p in processes:
                     p.join()
+                    p.terminate()
             print(len(buggy_file.changes))
             print(buggy_file.path)
             print([(c.start, len(c.removed_lines))
@@ -260,8 +269,13 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
     # TODO: still buggy (because when analyzer.stop() the process terminates,
     # but the client is still in the while loop)
-    analyzer.client.stop()
-    analyzer.stop()
+    processes = [mp.Process(target=terminate_analyzer, args=(analyzer,)) for analyzer in analyzers]
+    for p in processes:
+        p.start()
+    for p, analyzer in zip(processes, analyzers):
+        p.join()
+        p.terminate()
+        analyzer.client.terminate()
     return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
