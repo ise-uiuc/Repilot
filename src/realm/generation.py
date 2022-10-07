@@ -187,14 +187,14 @@ def feasible(
         lambda completion: completion.startswith(token), # type: ignore # noqa
         completions
     )):
-        # print('Accepted:', token)#, token, completions)
+        print('Accepted:', token)#, token, completions)
         # if 'lastFraction' in completions:
         #     breakpoint()
         # print("Yes!")
         # print(completions)
         return True
     else:
-        # print('Denied', token)#, token, completions)
+        print('Denied', token)#, token, completions)
         return False
 
 def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
@@ -946,8 +946,8 @@ def sample(
         probs = nn.functional.softmax(next_token_scores, dim=-1)
 
         if do_analysis:
-            considered_next_token_ids_batch = torch.topk(
-                probs, k=2*top_k, dim=-1).indices
+            considered_next_token_ids_probs_batch, considered_next_token_ids_batch = torch.topk(
+                probs, k=2*top_k, dim=-1)
             assert len(lsp_context_list) == len(considered_next_token_ids_batch), (len(
                 lsp_context_list), len(considered_next_token_ids_batch))
 
@@ -958,16 +958,23 @@ def sample(
                 print("HUGE HIT")
                 feasible_next_token_ids = torch.LongTensor(COMPLETE_MEMOIZED_BATCH[complete_memoized_bytes]).to(DEVICE)
             else:
+                processes = [mp.Process(target=analyzer_change_file, args=(ctx.analyzer, ctx.text_file)) for ctx in lsp_context_list]
+                for p in processes:
+                    p.start()
+                for p in processes:
+                    p.join()
                 queues: List[mp.Queue | List[int]] = []
                 processes = []
                 proc_state_bytes: List[bytes | None] = []
                 input_ids_bytes: List[bytes] = []
-                for idx, (considered_next_token_ids, lsp_context, input_ids_one_batch) in enumerate(zip(
+                for idx, (considered_next_token_ids, considered_probs, lsp_context, input_ids_one_batch) in enumerate(zip(
                     considered_next_token_ids_list,
+                    considered_next_token_ids_probs_batch.tolist(),
                     lsp_context_list,
                     input_id_list
                 )):
                     input_ids_bytes.append(pickle.dumps(input_ids_one_batch))
+                    considered_next_token_ids = [c for c, p in zip(considered_next_token_ids, considered_probs) if p > 0.]
                     state_bytes = pickle.dumps((
                         input_ids_one_batch,
                         set(considered_next_token_ids),
@@ -984,7 +991,7 @@ def sample(
                         queues.append(queue)
                         if PARTIAL_MEMOIZED.get(input_ids_bytes[-1]) is not None:
                             print("SMALL HIT")
-                        #     breakpoint()
+                            breakpoint()
                         processes.append(mp.Process(target=get_feasible_token_ids, args=(
                             queue,
                             PARTIAL_MEMOIZED.get(input_ids_bytes[-1]),
@@ -1115,6 +1122,7 @@ def sample(
             next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
         except RuntimeError:
             # TODO: fix
+            print("RUNTIME ERROR")
             probs = nn.functional.softmax(next_token_scores, dim=-1)
             next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
         
@@ -1138,12 +1146,6 @@ def sample(
                 context[batch]['generated_tokens'].append(next_token)
             elif next_token_ids[-1].item() in [32098, 2]:
                 context[batch]['finished'] = True
-        if do_analysis:
-            processes = [mp.Process(target=analyzer_change_file, args=(ctx.analyzer, ctx.text_file)) for ctx in lsp_context_list]
-            for p in processes:
-                p.start()
-            for p in processes:
-                p.join()
                 # print(ctx.analyzer.process.stdout.readline())
             # exit()
         # stop when each sentence is finished, or if we exceed the maximum length
@@ -1182,7 +1184,7 @@ def sample(
         #     else:
         #         this_peer_finished = True
     print([value['generated_tokens'] for value in context])
-    breakpoint()
+    # breakpoint()
 
     if return_dict_in_generate:
         raise NotImplementedError

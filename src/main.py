@@ -72,8 +72,8 @@ def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
 
 def terminate_analyzer(analyzer: JdtLspAnalyzer):
     analyzer.init_client()
-    analyzer.client.shutdown()
-    analyzer.client.exit()
+    analyzer.client.shutdown(None)
+    analyzer.client.exit(None)
     analyzer.client.stop()
 
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
@@ -230,6 +230,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
                 print('Success')
                 print(''.join(output))
+                print([f'{t:.2f}' for t in time_lsp])
             # text_file.write()
             text_files.append(text_file)
         patch_groups.append(text_files)
@@ -472,7 +473,7 @@ if __name__ == '__main__':
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
-        if not bug_id.startswith('Chart'):
+        if not bug_id.startswith('Chart-9'):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
