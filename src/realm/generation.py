@@ -806,14 +806,17 @@ def sample(
 
     this_peer_finished = False  # used by synced_gpus only
     completion_overhead: List[float] = []
-    generated_ids: List[int] = []
-    generated_tokens: List[str] = []
+    # generated_ids: List[int] = []
+    # generated_tokens: List[str] = []
     # Context variable controling when to do analysis
     # TODO(future): use AST for more accurate analysis (e.g., inside string literal, etc.)
     batch_size = len(input_ids)
     context = {idx: {
         'inside_line_comment': False,
         'inside_block_comment': False,
+        'generated_ids': [],
+        'generated_tokens': [],
+        'finished': False,
     } for idx in range(batch_size)}
     # auto-regressive generation
     while True:
@@ -940,19 +943,20 @@ def sample(
             queue = mp.Queue()
             processes = [mp.Process(target=feasible_token_ids, args=(
                 queue,
-                generated_tokens,
+                context[idx]['generated_tokens'],
                 lsp_context,
                 CODET5_TOKEN_MAP,
                 considered_next_token_ids.tolist(),
                 top_k,
-            )) for considered_next_token_ids, lsp_context in zip(
+            )) for idx, (considered_next_token_ids, lsp_context) in enumerate(zip(
                 considered_next_token_ids_batch,
                 lsp_context_list
-            )]
+            ))]
             for p in processes:
                 p.start()
-            for p in zip(processes, lsp_context_list):
+            for p in processes:
                 p.join()
+                p.terminate()
                 # if p.exitcode != 0: 
                 #     print(ctx.analyzer.process.stdout.readline())
             # exit()
@@ -1067,15 +1071,17 @@ def sample(
                 context[batch]['inside_block_comment'] = False
 
             # print(repr(next_token), end=' ')
-            if not is_special_token(next_token):
+            if not is_special_token(next_token) and not context[batch]['finished']:
                 text_file.add(next_token)
-                # generated_ids.extend(next_token_ids)
-                # generated_tokens.append(next_token)
+                context[batch]['generated_ids'].extend(next_token_ids)
+                context[batch]['generated_tokens'].append(next_token)
+            elif next_token_ids[-1].item() in [32098, 2]:
+                context[batch]['finished'] = True
         if do_analysis:
             processes = [mp.Process(target=analyzer_change_file, args=(ctx.analyzer, ctx.text_file)) for ctx in lsp_context_list]
             for p in processes:
                 p.start()
-            for p, ctx in zip(processes, lsp_context_list):
+            for p in processes:
                 p.join()
                 # print(ctx.analyzer.process.stdout.readline())
             # exit()
@@ -1112,6 +1118,8 @@ def sample(
         #         break
         #     else:
         #         this_peer_finished = True
+    print([context[idx]['generated_tokens'] for idx in context])
+    exit()
 
     if return_dict_in_generate:
         raise NotImplementedError
@@ -1133,4 +1141,5 @@ def sample(
                 hidden_states=decoder_hidden_states,
             )
     else:
-        return completion_overhead, generated_ids, generated_tokens
+        return completion_overhead, [], ['']
+        # return completion_overhead, generated_ids, generated_tokens

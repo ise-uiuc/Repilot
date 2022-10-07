@@ -53,7 +53,7 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{uuid.uuid4()}")
 
-REPAIR_BATCH_SIZE = 3
+REPAIR_BATCH_SIZE = 10
 
 def init_analyzer(analyzer: JdtLspAnalyzer):
     analyzer.init_client()
@@ -190,7 +190,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 #     indent = 0
                 # prefix += ' ' * indent
                 # text_file.move_cursor(text_file.cursor + indent)
-                text_files = [text_file.copy() for _ in range(REPAIR_BATCH_SIZE - 1)] + [text_file]
+                text_file_batch = [text_file.copy() for _ in range(REPAIR_BATCH_SIZE - 1)] + [text_file]
 
                 do_analysis = True if idx < n_patch_groups else False
                 lm_context = gen.LMContext(
@@ -202,7 +202,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 lsp_context_list = [gen.LspContext(
                     text_file,
                     analyzer
-                ) for text_file, analyzer in zip(text_files, analyzers)]
+                ) for text_file, analyzer in zip(text_file_batch, analyzers)]
                 # repairer = Repairer(
                 #     prefix, suffix, do_analysis=do_analysis)
                 # text_file.write()
