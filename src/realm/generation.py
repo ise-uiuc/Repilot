@@ -236,10 +236,8 @@ def feasible_token_ids(
     #     break
     analyzer = lsp_context.analyzer
     text_file = lsp_context.text_file
-    # analyzer.init_client()
-    queue.put(considered_token_ids[:top_k])
+    analyzer.init_client()
     # analyzer.client.stop()
-    return
     satisfied_token_ids: List[int] = []
     for token_id in considered_token_ids:
         if len(satisfied_token_ids) == top_k:
@@ -953,8 +951,11 @@ def sample(
             )]
             for p in processes:
                 p.start()
-            for p in processes:
+            for p in zip(processes, lsp_context_list):
                 p.join()
+                # if p.exitcode != 0: 
+                #     print(ctx.analyzer.process.stdout.readline())
+            # exit()
 
             feasible_token_results: List[List[int]] = []
             while not queue.empty():
@@ -1073,15 +1074,11 @@ def sample(
         if do_analysis:
             processes = [mp.Process(target=analyzer_change_file, args=(ctx.analyzer, ctx.text_file)) for ctx in lsp_context_list]
             for p in processes:
-                print("G")
-                print(p)
                 p.start()
+            for p, ctx in zip(processes, lsp_context_list):
                 p.join()
-            exit()
-            for p in processes:
-                p.join()
-                p.terminate()
-
+                # print(ctx.analyzer.process.stdout.readline())
+            # exit()
         # stop when each sentence is finished, or if we exceed the maximum length
         # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
         # Mask ids are 32099, 32098, 32097...

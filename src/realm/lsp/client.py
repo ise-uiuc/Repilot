@@ -153,9 +153,31 @@ class LSPClient(Thread):
     def recv(self) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
         with self.read_lock:
             # read header
-            line = self.stdout.readline().decode()
-            assert line.endswith('\r\n'), repr(line)
-            assert line.startswith(HEADER) and line.endswith('\r\n'), line
+            # Tolerance to Error
+            # A temporary solution to the weird behavior due to fork & pipe
+            # cat = subprocess.Popen(['cat'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            # print(cat)
+            # # print(cat.communicate(b'hello\n'))
+            # cat.stdin.write(b"hello99999999999\n")
+            # cat.stdin.flush()
+
+            # def f(cat):
+            #     print(cat.stdout.read(5))
+
+            # p0 = mp.Process(target=f, args=(cat,))
+            # p0.start()
+            # p0.join()
+
+            # # Cannot read. How to fix this??
+            # print(cat.stdout.read(5))
+            while True:
+                line = self.stdout.readline().decode()
+                # assert line.endswith('\r\n'), repr(line)
+                # assert line.startswith(HEADER) and line.endswith('\r\n'), line
+                if line.endswith('\r\n'):
+                    if (idx := line.find(HEADER)) != -1:
+                        line = line[idx:]
+                        break
 
             # get content length
             content_len = int(line[len(HEADER):].strip())
