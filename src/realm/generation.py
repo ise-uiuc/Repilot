@@ -1,5 +1,6 @@
 """Copied and rewritted from transformers.generation_utils"""
 from logging import warning
+import pickle
 import random
 from datasets import d4j
 from realm.lsp import spec
@@ -75,6 +76,9 @@ JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
                  'class', 'finally', 'long', 'strictfp', 'volatile',
                  'const' 'float', 'native', 'super', 'while']
 
+PARTIAL_MEMOIZED: Dict[bytes, List[bool]] = {}
+COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
+COMPLETE_MEMOIZED_BATCH: Dict[bytes, List[List[int]]] = {}
 
 class IDTokenError(Exception):
     pass
@@ -116,13 +120,14 @@ LspContextList = List[LspContext]
 CODET5 = T5ForConditionalGeneration.from_pretrained(MODEL).to(DEVICE)
 CODET5_TOKENIZER: PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL)
 CODET5_INFERENCE_CONFIG = LMInferenceConfig(0.8, 50, 70, 2)
-CODET5_TOKEN_MAP: Dict[int, str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), {
-    int(id): CODET5_TOKENIZER.decode(
+CODET5_VOC_SIZE: int = CODET5.config.vocab_size
+CODET5_TOKEN_MAP: List[str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), [
+    CODET5_TOKENIZER.decode(
         id,
         skip_special_tokens=False,
         clean_up_tokenization_spaces=False
-    ) for id in range(CODET5.config.vocab_size)
-})
+    ) for id in range(CODET5_VOC_SIZE)
+])
 
 
 def codet5_context(prefix: str, suffix: str) -> str:
@@ -182,14 +187,14 @@ def feasible(
         lambda completion: completion.startswith(token), # type: ignore # noqa
         completions
     )):
-        print('Accepted:', token)#, token, completions)
+        # print('Accepted:', token)#, token, completions)
         # if 'lastFraction' in completions:
         #     breakpoint()
         # print("Yes!")
         # print(completions)
         return True
     else:
-        print('Denied', token)#, token, completions)
+        # print('Denied', token)#, token, completions)
         return False
 
 def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
@@ -219,8 +224,9 @@ def get_id_token(generated_tokens: List[str]) -> str:
         raise IDTokenError
 
 
-def feasible_token_ids(
+def get_feasible_token_ids(
     queue: mp.Queue,
+    memoized_result: Optional[List[bool]],
     generated_tokens: List[str],
     lsp_context: LspContext,
     token_map: Dict[int, str],
@@ -228,6 +234,7 @@ def feasible_token_ids(
     considered_token_ids: List[int],
     top_k: int,
 ):
+    print("RUNNING feasibility check")
     # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
     # NOTE: do not do it now. Just evaluate on both
     # if idx == 0 and random.random() < 0.1:
@@ -253,20 +260,23 @@ def feasible_token_ids(
             # No exception afterwards
             pos = text_file.get_position(
                 text_file.cursor - rspace_len)
-            if feasible(analyzer, text_file.path.as_uri(), id_token, pos):
+            
+            if (memoized_result is not None and memoized_result[token_id]
+            ) or feasible(analyzer, text_file.path.as_uri(), id_token, pos):
                 satisfied_token_ids.append(token_id)
             text_file.delete(len(token))
             analyzer.change(text_file)
         except IDTokenError:
             satisfied_token_ids.append(token_id)
     length = len(satisfied_token_ids)
-    # TODO: completion
+    # TODO: move this logic outer this function
     if length == 0:
         satisfied_token_ids = considered_token_ids[:top_k]
     elif length != top_k:
         satisfied_token_ids.extend(satisfied_token_ids[0] for _ in range(top_k - length))
     queue.put(satisfied_token_ids)
     analyzer.client.stop()
+    print("DONE feasibility check")
     # Zeroing out unsatisfied tokens
     # return next_probabilities.masked_fill(torch.zeros(
     #     next_probabilities.shape.numel(),
@@ -811,13 +821,13 @@ def sample(
     # Context variable controling when to do analysis
     # TODO(future): use AST for more accurate analysis (e.g., inside string literal, etc.)
     batch_size = len(input_ids)
-    context = {idx: {
+    context = [{
         'inside_line_comment': False,
         'inside_block_comment': False,
         'generated_ids': [],
         'generated_tokens': [],
         'finished': False,
-    } for idx in range(batch_size)}
+    } for _ in range(batch_size)]
     # auto-regressive generation
     while True:
         do_analysis = True
@@ -940,31 +950,82 @@ def sample(
                 probs, k=2*top_k, dim=-1).indices
             assert len(lsp_context_list) == len(considered_next_token_ids_batch), (len(
                 lsp_context_list), len(considered_next_token_ids_batch))
-            queue = mp.Queue()
-            processes = [mp.Process(target=feasible_token_ids, args=(
-                queue,
-                context[idx]['generated_tokens'],
-                lsp_context,
-                CODET5_TOKEN_MAP,
-                considered_next_token_ids.tolist(),
-                top_k,
-            )) for idx, (considered_next_token_ids, lsp_context) in enumerate(zip(
-                considered_next_token_ids_batch,
-                lsp_context_list
-            ))]
-            for p in processes:
-                p.start()
-            for p in processes:
-                p.join()
-                p.terminate()
-                # if p.exitcode != 0: 
-                #     print(ctx.analyzer.process.stdout.readline())
-            # exit()
 
-            feasible_token_results: List[List[int]] = []
-            while not queue.empty():
-                feasible_token_results.append(queue.get())
-            feasible_next_token_ids = torch.LongTensor(feasible_token_results).to(DEVICE)
+            input_id_list = input_ids.tolist()
+            considered_next_token_ids_list = considered_next_token_ids_batch.tolist()
+            complete_memoized_bytes = pickle.dumps((input_id_list, considered_next_token_ids_list))
+            if complete_memoized_bytes in COMPLETE_MEMOIZED_BATCH:
+                print("HUGE HIT")
+                feasible_next_token_ids = torch.LongTensor(COMPLETE_MEMOIZED_BATCH[complete_memoized_bytes]).to(DEVICE)
+            else:
+                queues: List[mp.Queue | List[int]] = []
+                processes = []
+                proc_state_bytes: List[bytes | None] = []
+                input_ids_bytes: List[bytes] = []
+                for idx, (considered_next_token_ids, lsp_context, input_ids_one_batch) in enumerate(zip(
+                    considered_next_token_ids_list,
+                    lsp_context_list,
+                    input_id_list
+                )):
+                    input_ids_bytes.append(pickle.dumps(input_ids_one_batch))
+                    state_bytes = pickle.dumps((
+                        input_ids_one_batch,
+                        set(considered_next_token_ids),
+                    ))
+                    if state_bytes in COMPLETE_MEMOIZED:
+                        print("Big HIT")
+                        # breakpoint()
+                        queues.append(COMPLETE_MEMOIZED[state_bytes])
+                        processes.append(None)
+                        proc_state_bytes.append(None)
+                    else:
+                        proc_state_bytes.append(state_bytes)
+                        queue = mp.Queue()
+                        queues.append(queue)
+                        if PARTIAL_MEMOIZED.get(input_ids_bytes[-1]) is not None:
+                            print("SMALL HIT")
+                        #     breakpoint()
+                        processes.append(mp.Process(target=get_feasible_token_ids, args=(
+                            queue,
+                            PARTIAL_MEMOIZED.get(input_ids_bytes[-1]),
+                            context[idx]['generated_tokens'],
+                            lsp_context,
+                            CODET5_TOKEN_MAP,
+                            considered_next_token_ids,
+                            top_k,
+                        )))
+                for p in processes:
+                    if p is not None:
+                        p.start()
+                for p in processes:
+                    if p is not None:
+                        p.join()
+                        p.terminate()
+                    # if p.exitcode != 0: 
+                    #     print(ctx.analyzer.process.stdout.readline())
+                # exit()
+
+                feasible_token_results: List[List[int]] = []
+                input_id_iter = iter(input_ids_bytes)
+                for state_bytes, queue in zip(proc_state_bytes, queues):
+                    if isinstance(queue, list):
+                        feasible_token_ids = queue
+                        assert state_bytes is None
+                    else:
+                        feasible_token_ids = queue.get()
+                        assert state_bytes is not None
+                        COMPLETE_MEMOIZED[state_bytes] = feasible_token_ids
+                        queue.close()
+                    next_input_ids_bytes = next(input_id_iter)
+                    assert type(feasible_token_ids) == list
+                    assert type(next_input_ids_bytes) == bytes
+                    if next_input_ids_bytes not in PARTIAL_MEMOIZED:
+                        PARTIAL_MEMOIZED[next_input_ids_bytes] = [False] * CODET5_VOC_SIZE
+                    for idx in feasible_token_ids:
+                        PARTIAL_MEMOIZED[next_input_ids_bytes][idx] = True
+                    feasible_token_results.append(feasible_token_ids)
+                COMPLETE_MEMOIZED_BATCH[complete_memoized_bytes] = feasible_token_results
+                feasible_next_token_ids = torch.LongTensor(feasible_token_results).to(DEVICE)
             # rewrite probabilities
             mask = torch.ones(
                 probs.shape,
@@ -1104,6 +1165,8 @@ def sample(
         # if eos_token was found in one sentence, set sentence to finished
         if eos_token_id is not None:
             unfinished_sequences = unfinished_sequences.mul((next_token_ids != eos_token_id).long())
+            # TODO: opt
+            unfinished_sequences = unfinished_sequences.mul((next_token_ids != 32098).long())
 
         # stop when each sentence is finished, or if we exceed the maximum length
         if unfinished_sequences.max() == 0 or stopping_criteria(input_ids, scores):
@@ -1118,8 +1181,8 @@ def sample(
         #         break
         #     else:
         #         this_peer_finished = True
-    print([context[idx]['generated_tokens'] for idx in context])
-    exit()
+    print([value['generated_tokens'] for value in context])
+    breakpoint()
 
     if return_dict_in_generate:
         raise NotImplementedError

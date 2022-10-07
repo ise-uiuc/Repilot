@@ -53,7 +53,7 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{uuid.uuid4()}")
 
-REPAIR_BATCH_SIZE = 10
+REPAIR_BATCH_SIZE = 1
 
 def init_analyzer(analyzer: JdtLspAnalyzer):
     analyzer.init_client()
