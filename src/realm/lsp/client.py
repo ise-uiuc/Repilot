@@ -5,6 +5,7 @@ from types import NoneType
 from typing import IO, Callable, Dict, Optional, Tuple, TypeVar, Type, cast
 from typing import ParamSpec
 from itertools import count
+import uuid
 from . import spec
 
 # TODO: support Content-Type
@@ -23,7 +24,8 @@ def request_getter(init_id: int):
             'jsonrpc': '2.0',
             'method': method,
             'params': params,
-            'id': next(request_id_gen)
+            # Temp solution for multiprocessing (in multiple processes, next(id) doesn't work)
+            'id': next(request_id_gen) + int(str(uuid.uuid4().int)[:6])
         }
     return request
 
@@ -74,58 +76,57 @@ class LSPClient(Thread):
         self.stdout = stdout
         self.verbose = verbose
         self.responses: Dict[
-            spec.integer | str | None, 
+            spec.integer | str | None,
             spec.ResponseMessage
         ] = {}
-        self.lock = Condition()
+        self.requests: Dict[
+            spec.integer | str | None,
+            Condition
+        ] = {}
         self.timeout = timeout
         self.stopped = False
         self.read_lock = Lock()
         self.write_lock = Lock()
-    
+
     def stop(self):
         self.stopped = True
-    
+
     def run(self) -> None:
         while not self.stopped:
-            print("TRY RECEIVING, stuck?")
             server_response = self.recv()
-            print("NOT STOPPED")
             if 'method' in server_response and 'id' in server_response:
                 # print(server_response)
                 server_response = cast(spec.RequestMessage, server_response)
-                print("SENDING")
                 self.send(response(server_response['id'], None))
-                print("DONE SENDING")
             elif 'id' in server_response:
-                print("FETCHING RESULT")
                 server_response = cast(spec.ResponseMessage, server_response)
                 id = server_response['id']
                 self.responses[id] = server_response
-                self.lock.acquire()
-                self.lock.notify()
-                self.lock.release()
-                print("DONE FETCHING RESULT")
-            print("ELSE")
-        print("STOPPED")
+                if id in self.requests:
+                    condition = self.requests[id]
+                    condition.acquire()
+                    condition.notify()
+                    condition.release()
             # else:
             #     assert False, server_response
 
     def call(self, method: str, params: spec.array | spec.object) -> spec.ResponseMessage:
         message = request(method, params)
         id = message['id']
-        self.lock.acquire()
+        condition = Condition()
+        self.requests[id] = condition
+        condition.acquire()
         self.send(message)
-        if self.shutdown:
+        if self.stopped:
             return {
                 'jsonrpc': '2.0',
                 'id': id,
                 'result': None,
             }
-        if not self.lock.wait(self.timeout):
-            self.lock.release()
+        if not condition.wait(self.timeout):
+            condition.release()
             raise TimeoutError
-        self.lock.release()
+        condition.release()
         return self.responses.pop(id)
         # while True:
         #     server_response = self.recv()
@@ -165,7 +166,6 @@ class LSPClient(Thread):
         return self.recv()
 
     def recv(self) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
-        print("START RECEIVING")
         with self.read_lock:
             # read header
             # Tolerance to Error
@@ -186,14 +186,12 @@ class LSPClient(Thread):
             # # Cannot read. How to fix this??
             # print(cat.stdout.read(5))
             while True:
-                print("Di")
                 line = self.stdout.readline().decode()
-                print("Da")
                 # assert line.endswith('\r\n'), repr(line)
                 # assert line.startswith(HEADER) and line.endswith('\r\n'), line
                 if not line:
                     return cast(spec.ResponseMessage, {
-                        'json_rpc': '2.0',
+                        'jsonrpc': '2.0',
                         'result': None,
                         'id': None,
                     })
@@ -210,7 +208,6 @@ class LSPClient(Thread):
             # if 'textDocument/publishDiagnostics' in response:
         if self.verbose:
             print(response)
-        print("DONE RECEIVING")
         return json.loads(response)
 
     initialize = d_call('initialize', spec.InitializeParams)

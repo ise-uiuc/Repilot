@@ -12,7 +12,7 @@ import shlex
 from pathlib import Path
 import shutil
 import subprocess
-from realm import utils
+from realm import generation, utils
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp import TextDocument, client, spec
 import json
@@ -59,20 +59,22 @@ def init_analyzer(analyzer: JdtLspAnalyzer):
     analyzer.init_client()
     analyzer.init()
     analyzer.client.stop()
-    analyzer.client.send(client.request('textDocument/completion', {}))
+    analyzer.client.send(client.request('nothing', {}))
 
 def analyzer_open_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
     analyzer.init_client()
     analyzer.open(text_file)
     analyzer.client.stop()
-    analyzer.client.send(client.request('textDocument/completion', {}))
+    # analyzer.client.send(client.request('textDocument/completion', {}))
+    analyzer.client.send(client.request('nothing', {}))
 
 def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
     analyzer.init_client()
     analyzer.change(text_file)
     analyzer.client.stop()
+    analyzer.client.send(client.request('nothing', {}))
     # Must send another message to prevent getting stuck at recv()
-    analyzer.client.send(client.request('textDocument/completion', {}))
+    # analyzer.client.send(client.request('textDocument/completion', {}))
 
 def terminate_analyzer(analyzer: JdtLspAnalyzer):
     analyzer.init_client()
@@ -108,6 +110,12 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     time_lsp: List[float] = []
     base_dir = result_dir / proj / id_str
     base_dir.mkdir(exist_ok=False, parents=True)
+
+    # Clear memoization TODO: generated all changes first for each bug / or refine memoization
+    generation.PARTIAL_MEMOIZED.clear()
+    generation.COMPLETE_MEMOIZED.clear()
+    generation.COMPLETE_MEMOIZED_BATCH.clear()
+
     for idx in range(2 * n_patch_groups):
         print('Repair:', idx)
         if idx != 0:
@@ -123,6 +131,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     p.terminate()
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
+
         for buggy_file in bug.buggy_files:
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
             if idx == 0:
@@ -206,6 +215,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     gen.codet5_tokenize(prefix, suffix).repeat(REPAIR_BATCH_SIZE, 1),
                     gen.CODET5_INFERENCE_CONFIG,
                 )
+
                 lsp_context_list = [gen.LspContext(
                     text_file,
                     analyzer

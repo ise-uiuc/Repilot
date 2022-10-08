@@ -177,12 +177,18 @@ def feasible(
         'position': pos,
     })
     # completion_overhead.append(time.time() - start_time)
-    completions: List[str] = [
-        item['textEdit']['newText']  # type: ignore # noqa
-        if 'textEdit' in item
-        else item['insertText']  # type: ignore # noqa
-        for item in completion_result['result']['items']  # type: ignore # noqa
-    ]
+    if 'result' in completion_result:
+        completions: List[str] = [
+            item['textEdit']['newText']  # type: ignore # noqa
+            if 'textEdit' in item
+            else item['insertText']  # type: ignore # noqa
+            for item in completion_result['result']['items']  # type: ignore # noqa
+        ]
+    else:
+        print(uri)
+        print(completion_result['error'])
+        print(completion_result['error']['data'])
+        raise RuntimeError
     if any(filter(
         lambda completion: completion.startswith(token), # type: ignore # noqa
         completions
@@ -199,12 +205,10 @@ def feasible(
 
 def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
     analyzer.init_client()
-    print("Start changing file")
     analyzer.change(text_file)
-    print("Done changing file")
     analyzer.client.stop()
-    analyzer.client.send(client.request('textDocument/completion', {}))
-    print("Done stop")
+    analyzer.client.send(client.request('nothing', {}))
+    # analyzer.client.send(client.request('textDocument/completion', {}))
 
 def is_special_token(token: str) -> bool:
     return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
@@ -280,6 +284,7 @@ def get_feasible_token_ids(
         satisfied_token_ids.extend(satisfied_token_ids[0] for _ in range(top_k - length))
     queue.put(satisfied_token_ids)
     analyzer.client.stop()
+    analyzer.client.send(client.request('nothing', {}))
     print("DONE feasibility check")
     # Zeroing out unsatisfied tokens
     # return next_probabilities.masked_fill(torch.zeros(
@@ -975,12 +980,11 @@ def sample(
                 processes = []
                 proc_state_bytes: List[bytes | None] = []
                 input_ids_bytes: List[bytes] = []
-                for idx, (considered_next_token_ids, considered_probs, lsp_context, input_ids_one_batch, process) in enumerate(zip(
+                for idx, (considered_next_token_ids, considered_probs, lsp_context, input_ids_one_batch) in enumerate(zip(
                     considered_next_token_ids_list,
                     considered_next_token_ids_probs_batch.tolist(),
                     lsp_context_list,
                     input_id_list,
-                    processes
                 )):
                     input_ids_bytes.append(pickle.dumps(input_ids_one_batch))
                     considered_next_token_ids = [c for c, p in zip(considered_next_token_ids, considered_probs)]
