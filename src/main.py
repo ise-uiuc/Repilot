@@ -76,8 +76,11 @@ def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
 
 def terminate_analyzer(analyzer: JdtLspAnalyzer):
     analyzer.init_client()
+    print("READY to stop")
     analyzer.client.stop()
+    print("READY to shutdown")
     analyzer.client.shutdown(None)
+    print("READY to exit")
     analyzer.client.exit(None)
 
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
@@ -278,6 +281,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     for p in processes:
         p.start()
     for p, analyzer in zip(processes, analyzers):
+        analyzer.process.terminate()
         p.join()
         p.terminate()
     return patch_groups

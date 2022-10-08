@@ -191,6 +191,12 @@ class LSPClient(Thread):
                 print("Da")
                 # assert line.endswith('\r\n'), repr(line)
                 # assert line.startswith(HEADER) and line.endswith('\r\n'), line
+                if not line:
+                    return cast(spec.ResponseMessage, {
+                        'json_rpc': '2.0',
+                        'result': None,
+                        'id': None,
+                    })
                 if line.endswith('\r\n'):
                     if (idx := line.find(HEADER)) != -1:
                         line = line[idx:]
