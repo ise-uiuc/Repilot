@@ -14,7 +14,7 @@ import shutil
 import subprocess
 from realm import utils
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
-from realm.lsp import TextDocument, spec
+from realm.lsp import TextDocument, client, spec
 import json
 from typing import Generator, List, Set, Tuple, cast
 from init import data
@@ -53,28 +53,32 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{uuid.uuid4()}")
 
-REPAIR_BATCH_SIZE = 1
+REPAIR_BATCH_SIZE = 10
 
 def init_analyzer(analyzer: JdtLspAnalyzer):
     analyzer.init_client()
     analyzer.init()
     analyzer.client.stop()
+    analyzer.client.send(client.request('textDocument/completion', {}))
 
 def analyzer_open_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
     analyzer.init_client()
     analyzer.open(text_file)
     analyzer.client.stop()
+    analyzer.client.send(client.request('textDocument/completion', {}))
 
 def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
     analyzer.init_client()
     analyzer.change(text_file)
     analyzer.client.stop()
+    # Must send another message to prevent getting stuck at recv()
+    analyzer.client.send(client.request('textDocument/completion', {}))
 
 def terminate_analyzer(analyzer: JdtLspAnalyzer):
     analyzer.init_client()
+    analyzer.client.stop()
     analyzer.client.shutdown(None)
     analyzer.client.exit(None)
-    analyzer.client.stop()
 
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
@@ -276,7 +280,6 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     for p, analyzer in zip(processes, analyzers):
         p.join()
         p.terminate()
-        analyzer.client.terminate()
     return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
@@ -473,7 +476,7 @@ if __name__ == '__main__':
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
-        if not bug_id.startswith('Chart-9'):
+        if not bug_id in ['Chart-9', 'Closure-1', 'Math-1']:
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
@@ -483,7 +486,7 @@ if __name__ == '__main__':
         # if bug_id != 'Mockito-1':
         #     continue
         print(bug_id)
-        patch_groups = repair_proj(result_dir, bug_id, bug, 300)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 10)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):

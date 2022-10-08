@@ -88,18 +88,26 @@ class LSPClient(Thread):
     
     def run(self) -> None:
         while not self.stopped:
+            print("TRY RECEIVING, stuck?")
             server_response = self.recv()
+            print("NOT STOPPED")
             if 'method' in server_response and 'id' in server_response:
                 # print(server_response)
                 server_response = cast(spec.RequestMessage, server_response)
+                print("SENDING")
                 self.send(response(server_response['id'], None))
+                print("DONE SENDING")
             elif 'id' in server_response:
+                print("FETCHING RESULT")
                 server_response = cast(spec.ResponseMessage, server_response)
                 id = server_response['id']
                 self.responses[id] = server_response
                 self.lock.acquire()
                 self.lock.notify()
                 self.lock.release()
+                print("DONE FETCHING RESULT")
+            print("ELSE")
+        print("STOPPED")
             # else:
             #     assert False, server_response
 
@@ -108,6 +116,12 @@ class LSPClient(Thread):
         id = message['id']
         self.lock.acquire()
         self.send(message)
+        if self.shutdown:
+            return {
+                'jsonrpc': '2.0',
+                'id': id,
+                'result': None,
+            }
         if not self.lock.wait(self.timeout):
             self.lock.release()
             raise TimeoutError
@@ -151,6 +165,7 @@ class LSPClient(Thread):
         return self.recv()
 
     def recv(self) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
+        print("START RECEIVING")
         with self.read_lock:
             # read header
             # Tolerance to Error
@@ -171,7 +186,9 @@ class LSPClient(Thread):
             # # Cannot read. How to fix this??
             # print(cat.stdout.read(5))
             while True:
+                print("Di")
                 line = self.stdout.readline().decode()
+                print("Da")
                 # assert line.endswith('\r\n'), repr(line)
                 # assert line.startswith(HEADER) and line.endswith('\r\n'), line
                 if line.endswith('\r\n'):
@@ -187,6 +204,7 @@ class LSPClient(Thread):
             # if 'textDocument/publishDiagnostics' in response:
         if self.verbose:
             print(response)
+        print("DONE RECEIVING")
         return json.loads(response)
 
     initialize = d_call('initialize', spec.InitializeParams)

@@ -3,7 +3,7 @@ from logging import warning
 import pickle
 import random
 from datasets import d4j
-from realm.lsp import spec
+from realm.lsp import client, spec
 import inspect
 import typing
 import warnings
@@ -199,8 +199,12 @@ def feasible(
 
 def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
     analyzer.init_client()
+    print("Start changing file")
     analyzer.change(text_file)
+    print("Done changing file")
     analyzer.client.stop()
+    analyzer.client.send(client.request('textDocument/completion', {}))
+    print("Done stop")
 
 def is_special_token(token: str) -> bool:
     return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
@@ -959,22 +963,27 @@ def sample(
                 feasible_next_token_ids = torch.LongTensor(COMPLETE_MEMOIZED_BATCH[complete_memoized_bytes]).to(DEVICE)
             else:
                 processes = [mp.Process(target=analyzer_change_file, args=(ctx.analyzer, ctx.text_file)) for ctx in lsp_context_list]
+                # for p in processes:
                 for p in processes:
+                    print(f"Start {p}")
                     p.start()
-                for p in processes:
+                    assert p.pid is not None, p
+                    print(f"TRY joinging {p.pid}")
                     p.join()
+                    print(f"DONE joinging {p.pid}")
                 queues: List[mp.Queue | List[int]] = []
                 processes = []
                 proc_state_bytes: List[bytes | None] = []
                 input_ids_bytes: List[bytes] = []
-                for idx, (considered_next_token_ids, considered_probs, lsp_context, input_ids_one_batch) in enumerate(zip(
+                for idx, (considered_next_token_ids, considered_probs, lsp_context, input_ids_one_batch, process) in enumerate(zip(
                     considered_next_token_ids_list,
                     considered_next_token_ids_probs_batch.tolist(),
                     lsp_context_list,
-                    input_id_list
+                    input_id_list,
+                    processes
                 )):
                     input_ids_bytes.append(pickle.dumps(input_ids_one_batch))
-                    considered_next_token_ids = [c for c, p in zip(considered_next_token_ids, considered_probs) if p > 0.]
+                    considered_next_token_ids = [c for c, p in zip(considered_next_token_ids, considered_probs)]
                     state_bytes = pickle.dumps((
                         input_ids_one_batch,
                         set(considered_next_token_ids),
@@ -991,7 +1000,7 @@ def sample(
                         queues.append(queue)
                         if PARTIAL_MEMOIZED.get(input_ids_bytes[-1]) is not None:
                             print("SMALL HIT")
-                            breakpoint()
+                            # breakpoint()
                         processes.append(mp.Process(target=get_feasible_token_ids, args=(
                             queue,
                             PARTIAL_MEMOIZED.get(input_ids_bytes[-1]),
@@ -1126,28 +1135,30 @@ def sample(
             probs = nn.functional.softmax(next_token_scores, dim=-1)
             next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
         
-        for batch, (next_token_id, text_file) in enumerate(zip(next_token_ids, map(lambda ctx: ctx.text_file, lsp_context_list))):
-            next_token = CODET5_TOKEN_MAP[next_token_id.item()]
-            if next_token.strip().startswith('//'):
-                context[batch]['inside_line_comment'] = True
-            elif next_token.endswith('\n'):
-                # breakpoint()
-                context[batch]['inside_line_comment'] = False
-            elif next_token.strip().startswith('/*'):
-                context[batch]['inside_block_comment'] = True
-            elif next_token.endswith('*/'):
-                # breakpoint()
-                context[batch]['inside_block_comment'] = False
+        if do_analysis:
+            for batch, (next_token_id, text_file) in enumerate(zip(next_token_ids, map(lambda ctx: ctx.text_file, lsp_context_list))):
+                pass
+                next_token = CODET5_TOKEN_MAP[next_token_id.item()]
+                if next_token.strip().startswith('//'):
+                    context[batch]['inside_line_comment'] = True
+                elif next_token.endswith('\n'):
+                    # breakpoint()
+                    context[batch]['inside_line_comment'] = False
+                elif next_token.strip().startswith('/*'):
+                    context[batch]['inside_block_comment'] = True
+                elif next_token.endswith('*/'):
+                    # breakpoint()
+                    context[batch]['inside_block_comment'] = False
 
-            # print(repr(next_token), end=' ')
-            if not is_special_token(next_token) and not context[batch]['finished']:
-                text_file.add(next_token)
-                context[batch]['generated_ids'].extend(next_token_ids)
-                context[batch]['generated_tokens'].append(next_token)
-            elif next_token_ids[-1].item() in [32098, 2]:
-                context[batch]['finished'] = True
-                # print(ctx.analyzer.process.stdout.readline())
-            # exit()
+                # print(repr(next_token), end=' ')
+                if not is_special_token(next_token) and not context[batch]['finished']:
+                    text_file.add(next_token)
+                    context[batch]['generated_ids'].extend(next_token_ids)
+                    context[batch]['generated_tokens'].append(next_token)
+                elif next_token_ids[-1].item() in [32098, 2]:
+                    context[batch]['finished'] = True
+                    # print(ctx.analyzer.process.stdout.readline())
+                # exit()
         # stop when each sentence is finished, or if we exceed the maximum length
         # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
         # Mask ids are 32099, 32098, 32097...
