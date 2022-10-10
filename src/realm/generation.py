@@ -8,7 +8,7 @@ import inspect
 import typing
 import warnings
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Protocol, Tuple, Union, cast
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Protocol, Set, Tuple, Union, cast
 import regex
 from pathlib import Path
 import time
@@ -55,7 +55,7 @@ from tokenizers import AddedToken
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp.text import TextDocument, TextFile
 from realm import utils
-
+from functools import partial
 
 # class IncoderEOM(StoppingCriteria):
 #     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
@@ -162,13 +162,12 @@ def feasible(
     token: str,
     pos: spec.Position,
     completion_overhead: List[float],
-) -> bool:
+) -> Optional[Set[str]]:
     """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
     if regex.match('^([a-zA-Z_][a-zA-Z\\d_]*)$', token) is None:
         warning(
             f'Cannot recognize {token} as an identifier, probabily unicode.')
-    if token in JAVA_KEYWORDS:
-        return True
+    assert token not in JAVA_KEYWORDS
     start_time = time.time()
     completion_result = analyzer.client.textDocument_completion({
         'textDocument': {
@@ -189,21 +188,20 @@ def feasible(
     #     print(completion_result['error'])
     #     print(completion_result['error']['data'])
     #     raise RuntimeError
-    if any(filter(
+    filtered_completions = set(filter(
         lambda completion: completion.startswith(token), # type: ignore # noqa
         completions
-    )):
+    ))
+    if len(filtered_completions) > 0:
         print('Accepted:', token)#, token, completions)
         # if 'lastFraction' in completions:
         #     breakpoint()
         # print("Yes!")
         # print(completions)
-        return True
+        return filtered_completions
     else:
         print('Denied', token)#, token, completions)
-        if token == 'null':
-            breakpoint()
-        return False
+        return None
 
 def is_special_token(token: str) -> bool:
     return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
@@ -221,7 +219,7 @@ def get_id_token(generated_tokens: List[str]) -> str:
                     return
     result = ''.join(reversed(list(get())))
 
-    if len(result) > 0 and not result[0].isdigit():
+    if len(result) > 0 and not result[0].isdigit() and result not in JAVA_KEYWORDS:
         return result
     else:
         raise IDTokenError
@@ -247,6 +245,8 @@ def get_feasible_token_ids(
     text_file = lsp_context.text_file
     # analyzer.client.stop()
     result: List[int] = []
+    denied: List[str] = []
+    all_feasible_tokens: Dict[str, Set[str]] = {}
     for token_id in considered_token_ids:
         if len(result) == top_k:
             break
@@ -255,26 +255,43 @@ def get_feasible_token_ids(
         rspace_len = len(token) - len(token_rstrip)
         try:
             id_token = get_id_token(generated_tokens + [token_rstrip])
-            text_file.add(token)
-            analyzer.change(text_file)
-            # analyzer.client.try_recv()
-            # No exception afterwards
-            pos = text_file.get_position(
-                text_file.cursor - rspace_len)
-            
-            if (memoized_result is not None and memoized_result[token_id]
-            ) or feasible(analyzer, text_file.path.as_uri(), id_token, pos, completion_overhead):
+            if memoized_result is not None and memoized_result[token_id]:
                 result.append(token_id)
-            text_file.delete(len(token))
-            analyzer.change(text_file)
+            # Opt: reduce analysis times
+            # TODO: make string search faster
+            elif any(filter(partial(str.startswith, id_token), denied)):
+                # breakpoint()
+                pass
+            elif any(filter(
+                lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
+                all_feasible_tokens.items()
+            )):
+                # breakpoint()
+                pass
+            else:
+                # No exception afterwards
+                text_file.add(token)
+                analyzer.change(text_file)
+                pos = text_file.get_position(
+                    text_file.cursor - rspace_len)
+                
+                if (filtered_completions := feasible(
+                    analyzer,
+                    text_file.path.as_uri(),
+                    id_token,
+                    pos,
+                    completion_overhead
+                )) is not None:
+                    result.append(token_id)
+                    all_feasible_tokens[id_token] = filtered_completions
+                else:
+                    denied.append(id_token)
+                text_file.delete(len(token))
+                analyzer.change(text_file)
         except IDTokenError:
             result.append(token_id)
-    length = len(result)
-    # TODO: move this logic outer this function
-    if length == 0:
-        result = considered_token_ids[:top_k]
-    elif length != top_k:
-        result.extend(result[0] for _ in range(top_k - length))
+        except:
+            breakpoint()
     return result
 
 
@@ -469,6 +486,15 @@ def generate(
         renormalize_logits=renormalize_logits,
     )
 
+    # 10. prepare logits warper
+    logits_warper = model._get_logits_warper(
+        top_k=top_k,
+        top_p=top_p,
+        typical_p=typical_p,
+        temperature=temperature,
+        num_beams=num_beams,
+        renormalize_logits=renormalize_logits,
+    )
     # 11. expand input_ids with `num_return_sequences` additional sequences per batch
     input_ids, model_kwargs = model._expand_inputs_for_generation(
         input_ids,
@@ -485,6 +511,7 @@ def generate(
         end_id=lm_context.inference_config.end_id,
         top_k=top_k,
         logits_processor=logits_processor,
+        logits_warper=logits_warper,
         stopping_criteria=stopping_criteria,
         pad_token_id=pad_token_id,
         eos_token_id=eos_token_id,
@@ -502,6 +529,7 @@ def sample(
     top_k: int,
     end_id: int,
     logits_processor: Optional[LogitsProcessorList] = None,
+    logits_warper: Optional[LogitsProcessorList] = None,
     stopping_criteria: Optional[StoppingCriteriaList] = None,
     max_length: Optional[int] = None,
     pad_token_id: Optional[int] = None,
@@ -512,6 +540,7 @@ def sample(
     **model_kwargs,
 ) -> Generation:
     # init values
+    logits_warper = logits_warper if logits_warper is not None else LogitsProcessorList()
     logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
     stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
     pad_token_id = pad_token_id if pad_token_id is not None else model.config.pad_token_id
@@ -550,27 +579,34 @@ def sample(
         # -1 because decoder's self-attention produces n outputs given n inputs
         next_token_logits = outputs.logits[:, -1, :]
         next_token_scores = logits_processor(input_ids, next_token_logits)
+        # next_token_scores = logits_warper(input_ids, next_token_scores)
+        assert len(next_token_scores) == 1
 
-        probs = nn.functional.softmax(next_token_scores, dim=-1)
-        assert len(probs) == 1
-        probs = probs[0]
+        if gen_context.inside_line_comment or gen_context.inside_block_comment:
+            # Modified from GenerationMixin.get_logits_warper
+            # if temperature is not None and temperature != 1.0:
+            #     warpers.append(TemperatureLogitsWarper(temperature))
+            warpers = LogitsProcessorList()
+            warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+            next_token_scores = warpers(input_ids, next_token_scores)
+            assert len(next_token_scores) == 1
+            scores = next_token_scores[0]
+        else:
+            scores = next_token_scores[0]
+            considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
+            assert len(considered_next_token_ids.shape) == 1
+            considered_next_token_ids = considered_next_token_ids[
+                scores[considered_next_token_ids] > -float('inf')]
 
-        # TODO: justify this
-        _, considered_next_token_ids = torch.topk(
-            probs, k=2*top_k, dim=-1)
+            assert len(input_ids) == 1
+            input_ids_list = input_ids[0].tolist()
 
-        assert len(input_ids) == 1
-
-        input_ids_list = input_ids[0].tolist()
-        considered_next_token_ids_list = considered_next_token_ids.tolist()
-
-        state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
-
-        if not gen_context.inside_line_comment and not gen_context.inside_block_comment:
+            considered_next_token_ids_list = considered_next_token_ids.tolist()
+            state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
             if state_bytes in COMPLETE_MEMOIZED:
                 print("HUGE HIT")
                 # breakpoint()
-                feasible_next_token_ids = torch.LongTensor(COMPLETE_MEMOIZED[state_bytes]).to(DEVICE)
+                feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
             else:
                 lsp_context.analyzer.change(lsp_context.text_file)
                 input_ids_bytes = pickle.dumps(input_ids_list)
@@ -579,7 +615,7 @@ def sample(
                 if partial_memoized_result is not None:
                     print("SMALL HIT")
                     # breakpoint()
-                feasible_next_token_ids_list = get_feasible_token_ids(
+                feasible_next_token_ids = get_feasible_token_ids(
                     partial_memoized_result,
                     gen_context.generated_tokens,
                     lsp_context,
@@ -587,20 +623,24 @@ def sample(
                     top_k,
                     completion_overhead,
                 )
-                COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids_list
+                assert len(feasible_next_token_ids) <= top_k
+                COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
                 if partial_memoized_result is None:
                     PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
-                for idx in feasible_next_token_ids_list:
+                for idx in feasible_next_token_ids:
                     PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
-                feasible_next_token_ids = torch.LongTensor(feasible_next_token_ids_list).to(DEVICE)
 
-            # rewrite probabilities
-            mask = torch.ones(
-                probs.shape,
-                dtype=torch.bool
-            ).to(DEVICE)
-            mask.index_fill_(0, feasible_next_token_ids, False)
-            probs.masked_fill_(mask, 0.)
+            if len(feasible_next_token_ids) != 0:
+                # rewrite scores
+                mask = torch.ones(
+                    scores.shape,
+                    dtype=torch.bool
+                ).to(DEVICE)
+                mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(DEVICE), False)
+                scores.masked_fill_(mask, -float('inf'))
+
+        probs = nn.functional.softmax(scores, dim=-1)
+        assert len(probs.shape) == 1
 
         # shape: (1)
         next_token_id = torch.multinomial(probs, num_samples=1)
