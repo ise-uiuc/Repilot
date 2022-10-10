@@ -51,7 +51,7 @@ from transformers.pytorch_utils import torch_int_div
 from transformers.utils import ModelOutput, logging
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
+from tokenizers import AddedToken
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp.text import TextDocument, TextFile
 from realm import utils
@@ -78,7 +78,6 @@ JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
 
 PARTIAL_MEMOIZED: Dict[bytes, List[bool]] = {}
 COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
-COMPLETE_MEMOIZED_BATCH: Dict[bytes, List[List[int]]] = {}
 
 class IDTokenError(Exception):
     pass
@@ -86,6 +85,12 @@ class IDTokenError(Exception):
 
 Generation = Tuple[List[float], List[int], List[str]]
 
+@dataclass
+class GenerationContext:
+    inside_line_comment: bool
+    inside_block_comment: bool
+    generated_tokens: List[str]
+    generated_ids: List[int]
 
 class LMInferenceConfig(NamedTuple):
     temperature: float
@@ -114,9 +119,6 @@ class LspContext(NamedTuple):
         )
 
 
-LspContextList = List[LspContext]
-
-
 CODET5 = T5ForConditionalGeneration.from_pretrained(MODEL).to(DEVICE)
 CODET5_TOKENIZER: PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL)
 CODET5_INFERENCE_CONFIG = LMInferenceConfig(0.8, 50, 70, 2)
@@ -133,7 +135,6 @@ CODET5_TOKEN_MAP: List[str] = utils.load_and_cache_data(Path('codet5_token_map.p
 def codet5_context(prefix: str, suffix: str) -> str:
     return prefix + "<extra_id_0>" + suffix
 
-
 def codet5_tokenize(prefix: str, suffix: str) -> torch.Tensor:
     context = codet5_context(prefix, suffix)
     return CODET5_TOKENIZER.encode(context, return_tensors='pt').to(DEVICE)
@@ -141,8 +142,7 @@ def codet5_tokenize(prefix: str, suffix: str) -> torch.Tensor:
 
 def repair(
     lm_context: LMContext,
-    lsp_context: LspContextList,
-    do_analysis: bool,
+    lsp_context: LspContext,
 ) -> Generation:
     return generate(
         inputs=lm_context.input_token_ids,
@@ -153,7 +153,6 @@ def repair(
         max_new_tokens=lm_context.inference_config.max_new_tokens,
         top_k=lm_context.inference_config.top_k,
         temperature=lm_context.inference_config.temperature,
-        config_do_analysis=do_analysis,
     )
 
 
@@ -161,7 +160,8 @@ def feasible(
     analyzer: JdtLspAnalyzer,
     uri: str,
     token: str,
-    pos: spec.Position
+    pos: spec.Position,
+    completion_overhead: List[float],
 ) -> bool:
     """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
     if regex.match('^([a-zA-Z_][a-zA-Z\\d_]*)$', token) is None:
@@ -169,26 +169,26 @@ def feasible(
             f'Cannot recognize {token} as an identifier, probabily unicode.')
     if token in JAVA_KEYWORDS:
         return True
-    # start_time = time.time()
+    start_time = time.time()
     completion_result = analyzer.client.textDocument_completion({
         'textDocument': {
             'uri': uri
         },
         'position': pos,
     })
-    # completion_overhead.append(time.time() - start_time)
-    if 'result' in completion_result:
-        completions: List[str] = [
-            item['textEdit']['newText']  # type: ignore # noqa
-            if 'textEdit' in item
-            else item['insertText']  # type: ignore # noqa
-            for item in completion_result['result']['items']  # type: ignore # noqa
-        ]
-    else:
-        print(uri)
-        print(completion_result['error'])
-        print(completion_result['error']['data'])
-        raise RuntimeError
+    completion_overhead.append(time.time() - start_time)
+    # if 'result' in completion_result:
+    completions: List[str] = [
+        item['textEdit']['newText']  # type: ignore # noqa
+        if 'textEdit' in item
+        else item['insertText']  # type: ignore # noqa
+        for item in completion_result['result']['items']  # type: ignore # noqa
+    ]
+    # else:
+    #     print(uri)
+    #     print(completion_result['error'])
+    #     print(completion_result['error']['data'])
+    #     raise RuntimeError
     if any(filter(
         lambda completion: completion.startswith(token), # type: ignore # noqa
         completions
@@ -201,14 +201,9 @@ def feasible(
         return True
     else:
         print('Denied', token)#, token, completions)
+        if token == 'null':
+            breakpoint()
         return False
-
-def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
-    analyzer.init_client()
-    analyzer.change(text_file)
-    analyzer.client.stop()
-    analyzer.client.send(client.request('nothing', {}))
-    # analyzer.client.send(client.request('textDocument/completion', {}))
 
 def is_special_token(token: str) -> bool:
     return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
@@ -233,14 +228,13 @@ def get_id_token(generated_tokens: List[str]) -> str:
 
 
 def get_feasible_token_ids(
-    queue: mp.Queue,
     memoized_result: Optional[List[bool]],
     generated_tokens: List[str],
     lsp_context: LspContext,
-    token_map: Dict[int, str],
     # Should be ranked (higher probability first)
     considered_token_ids: List[int],
     top_k: int,
+    completion_overhead: List[float]
 ):
     print("RUNNING feasibility check")
     # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
@@ -251,13 +245,12 @@ def get_feasible_token_ids(
     #     break
     analyzer = lsp_context.analyzer
     text_file = lsp_context.text_file
-    analyzer.init_client()
     # analyzer.client.stop()
-    satisfied_token_ids: List[int] = []
+    result: List[int] = []
     for token_id in considered_token_ids:
-        if len(satisfied_token_ids) == top_k:
+        if len(result) == top_k:
             break
-        token = token_map[token_id]
+        token = CODET5_TOKEN_MAP[token_id]
         token_rstrip = token.rstrip()
         rspace_len = len(token) - len(token_rstrip)
         try:
@@ -270,29 +263,19 @@ def get_feasible_token_ids(
                 text_file.cursor - rspace_len)
             
             if (memoized_result is not None and memoized_result[token_id]
-            ) or feasible(analyzer, text_file.path.as_uri(), id_token, pos):
-                satisfied_token_ids.append(token_id)
+            ) or feasible(analyzer, text_file.path.as_uri(), id_token, pos, completion_overhead):
+                result.append(token_id)
             text_file.delete(len(token))
             analyzer.change(text_file)
         except IDTokenError:
-            satisfied_token_ids.append(token_id)
-    length = len(satisfied_token_ids)
+            result.append(token_id)
+    length = len(result)
     # TODO: move this logic outer this function
     if length == 0:
-        satisfied_token_ids = considered_token_ids[:top_k]
+        result = considered_token_ids[:top_k]
     elif length != top_k:
-        satisfied_token_ids.extend(satisfied_token_ids[0] for _ in range(top_k - length))
-    queue.put(satisfied_token_ids)
-    analyzer.client.stop()
-    analyzer.client.send(client.request('nothing', {}))
-    print("DONE feasibility check")
-    # Zeroing out unsatisfied tokens
-    # return next_probabilities.masked_fill(torch.zeros(
-    #     next_probabilities.shape.numel(),
-    #     dtype=torch.bool
-    # ).index_fill(0, torch.tensor(satisfied_token_ids), True), 0.)
-
-# Modified from GenerationMixin.generate
+        result.extend(result[0] for _ in range(top_k - length))
+    return result
 
 
 @typing.no_type_check
@@ -300,8 +283,7 @@ def get_feasible_token_ids(
 def generate(
     model: GenerationMixin,
     lm_context: LMContext,
-    lsp_context: LspContextList,
-    config_do_analysis: bool,
+    lsp_context: LspContext,
     inputs: Optional[torch.Tensor] = None,
     max_length: Optional[int] = None,
     min_length: Optional[int] = None,
@@ -348,188 +330,6 @@ def generate(
     exponential_decay_length_penalty: Optional[Tuple[Union[int, float]]] = None,
     **model_kwargs,
 ) -> Generation:
-    # Union[GreedySearchOutput, SampleOutput, BeamSearchOutput, BeamSampleOutput, torch.LongTensor]:
-    r"""
-
-    Generates sequences of token ids for models with a language modeling head. The method supports the following
-    generation methods for text-decoder, text-to-text, speech-to-text, and vision-to-text models:
-
-        - *greedy decoding* by calling [`~generation_utils.GenerationMixin.greedy_search`] if `num_beams=1` and
-            `do_sample=False`.
-        - *multinomial sampling* by calling [`~generation_utils.GenerationMixin.sample`] if `num_beams=1` and
-            `do_sample=True`.
-        - *beam-search decoding* by calling [`~generation_utils.GenerationMixin.beam_search`] if `num_beams>1` and
-            `do_sample=False`.
-        - *beam-search multinomial sampling* by calling [`~generation_utils.GenerationMixin.beam_sample`] if
-            `num_beams>1` and `do_sample=True`.
-        - *diverse beam-search decoding* by calling [`~generation_utils.GenerationMixin.group_beam_search`], if
-            `num_beams>1` and `num_beam_groups>1`.
-        - *constrained beam-search decoding* by calling
-            [`~generation_utils.GenerationMixin.constrained_beam_search`], if `constraints!=None` or
-            `force_words_ids!=None`.
-
-    <Tip warning={true}>
-
-    Apart from `inputs`, all the arguments below will default to the value of the attribute of the same name as
-    defined in the model's config (`config.json`) which in turn defaults to the
-    [`~modeling_utils.PretrainedConfig`] of the model.
-
-    </Tip>
-
-    Most of these parameters are explained in more detail in [this blog
-    post](https://huggingface.co/blog/how-to-generate).
-
-    Parameters:
-        inputs (`torch.Tensor` of varying shape depending on the modality, *optional*):
-            The sequence used as a prompt for the generation or as model inputs to the encoder. If `None` the
-            method initializes it with `bos_token_id` and a batch size of 1. For decoder-only models `inputs`
-            should of in the format of `input_ids`. For encoder-decoder models *inputs* can represent any of
-            `input_ids`, `input_values`, `input_features`, or `pixel_values`.
-        max_length (`int`, *optional*, defaults to `model.config.max_length`):
-            The maximum length the generated tokens can have. Corresponds to the length of the input prompt +
-            `max_new_tokens`. In general, prefer the use of `max_new_tokens`, which ignores the number of tokens in
-            the prompt.
-        max_new_tokens (`int`, *optional*):
-            The maximum numbers of tokens to generate, ignoring the number of tokens in the prompt.
-        min_length (`int`, *optional*, defaults to 10):
-            The minimum length of the sequence to be generated.
-        do_sample (`bool`, *optional*, defaults to `False`):
-            Whether or not to use sampling ; use greedy decoding otherwise.
-        early_stopping (`bool`, *optional*, defaults to `False`):
-            Whether to stop the beam search when at least `num_beams` sentences are finished per batch or not.
-        num_beams (`int`, *optional*, defaults to 1):
-            Number of beams for beam search. 1 means no beam search.
-        temperature (`float`, *optional*, defaults to 1.0):
-            The value used to module the next token probabilities.
-        top_k (`int`, *optional*, defaults to 50):
-            The number of highest probability vocabulary tokens to keep for top-k-filtering.
-        top_p (`float`, *optional*, defaults to 1.0):
-            If set to float < 1, only the most probable tokens with probabilities that add up to `top_p` or higher
-            are kept for generation.
-        typical_p (`float`, *optional*, defaults to 1.0):
-            The amount of probability mass from the original distribution to be considered in typical decoding. If
-            set to 1.0 it takes no effect. See [this paper](https://arxiv.org/pdf/2202.00666.pdf) for more details.
-        repetition_penalty (`float`, *optional*, defaults to 1.0):
-            The parameter for repetition penalty. 1.0 means no penalty. See [this
-            paper](https://arxiv.org/pdf/1909.05858.pdf) for more details.
-        pad_token_id (`int`, *optional*):
-            The id of the *padding* token.
-        bos_token_id (`int`, *optional*):
-            The id of the *beginning-of-sequence* token.
-        eos_token_id (`int`, *optional*):
-            The id of the *end-of-sequence* token.
-        length_penalty (`float`, *optional*, defaults to 1.0):
-                Exponential penalty to the length. 1.0 means that the beam score is penalized by the sequence length.
-                0.0 means no penalty. Set to values < 0.0 in order to encourage the model to generate longer
-                sequences, to a value > 0.0 in order to encourage the model to produce shorter sequences.
-        no_repeat_ngram_size (`int`, *optional*, defaults to 0):
-            If set to int > 0, all ngrams of that size can only occur once.
-        encoder_no_repeat_ngram_size (`int`, *optional*, defaults to 0):
-            If set to int > 0, all ngrams of that size that occur in the `encoder_input_ids` cannot occur in the
-            `decoder_input_ids`.
-        bad_words_ids(`List[List[int]]`, *optional*):
-            List of token ids that are not allowed to be generated. In order to get the token ids of the words that
-            should not appear in the generated text, use `tokenizer(bad_words, add_prefix_space=True,
-            add_special_tokens=False).input_ids`.
-        force_words_ids(`List[List[int]]` or `List[List[List[int]]]`, *optional*):
-            List of token ids that must be generated. If given a `List[List[int]]`, this is treated as a simple
-            list of words that must be included, the opposite to `bad_words_ids`. If given `List[List[List[int]]]`,
-            this triggers a [disjunctive constraint](https://github.com/huggingface/transformers/issues/14081),
-            where one can allow different forms of each word.
-        num_return_sequences(`int`, *optional*, defaults to 1):
-            The number of independently computed returned sequences for each element in the batch.
-        max_time(`float`, *optional*):
-            The maximum amount of time you allow the computation to run for in seconds. generation will still
-            finish the current pass after allocated time has been passed.
-        attention_mask (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on padding token indices. Mask values are in `[0, 1]`, 1 for tokens
-            that are not masked, and 0 for masked tokens. If not provided, will default to a tensor the same shape
-            as `input_ids` that masks the pad token. [What are attention masks?](../glossary#attention-mask)
-        decoder_start_token_id (`int`, *optional*):
-            If an encoder-decoder model starts decoding with a different token than *bos*, the id of that token.
-        use_cache: (`bool`, *optional*, defaults to `True`):
-            Whether or not the model should use the past last key/values attentions (if applicable to the model) to
-            speed up decoding.
-        num_beam_groups (`int`, *optional*, defaults to 1):
-            Number of groups to divide `num_beams` into in order to ensure diversity among different groups of
-            beams. [this paper](https://arxiv.org/pdf/1610.02424.pdf) for more details.
-        diversity_penalty (`float`, *optional*, defaults to 0.0):
-            This value is subtracted from a beam's score if it generates a token same as any beam from other group
-            at a particular time. Note that `diversity_penalty` is only effective if `group beam search` is
-            enabled.
-        prefix_allowed_tokens_fn (`Callable[[int, torch.Tensor], List[int]]`, *optional*):
-            If provided, this function constraints the beam search to allowed tokens only at each step. If not
-            provided no constraint is applied. This function takes 2 arguments: the batch ID `batch_id` and
-            `input_ids`. It has to return a list with the allowed tokens for the next generation step conditioned
-            on the batch ID `batch_id` and the previously generated tokens `inputs_ids`. This argument is useful
-            for constrained generation conditioned on the prefix, as described in [Autoregressive Entity
-            Retrieval](https://arxiv.org/abs/2010.00904).
-        logits_processor (`LogitsProcessorList`, *optional*):
-                Custom logits processors that complement the default logits processors built from arguments and a
-                model's config. If a logit processor is passed that is already created with the arguments or a model's
-                config an error is thrown. This feature is intended for advanced users.
-        renormalize_logits: (`bool`, *optional*, defaults to `False`):
-            Whether to renormalize the logits after applying all the logits processors or warpers (including the
-            custom ones). It's highly recommended to set this flag to `True` as the search algorithms suppose the
-            score logits are normalized but some logit processors or warpers break the normalization.
-        stopping_criteria (`StoppingCriteriaList`, *optional*):
-                Custom stopping criteria that complement the default stopping criteria built from arguments and a
-                model's config. If a stopping criteria is passed that is already created with the arguments or a
-                model's config an error is thrown. This feature is intended for advanced users.
-        constraints (`List[Constraint]`, *optional*):
-                Custom constraints that can be added to the generation to ensure that the output will contain the use
-                of certain tokens as defined by `Constraint` objects, in the most sensible way possible.
-        output_attentions (`bool`, *optional*, defaults to `False`):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under
-            returned tensors for more details.
-        output_hidden_states (`bool`, *optional*, defaults to `False`):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors
-            for more details.
-        output_scores (`bool`, *optional*, defaults to `False`):
-            Whether or not to return the prediction scores. See `scores` under returned tensors for more details.
-        return_dict_in_generate (`bool`, *optional*, defaults to `False`):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-        forced_bos_token_id (`int`, *optional*):
-            The id of the token to force as the first generated token after the `decoder_start_token_id`. Useful
-            for multilingual models like [mBART](../model_doc/mbart) where the first generated token needs to be
-            the target language token.
-        forced_eos_token_id (`int`, *optional*):
-            The id of the token to force as the last generated token when `max_length` is reached.
-        remove_invalid_values (`bool`, *optional*):
-            Whether to remove possible *nan* and *inf* outputs of the model to prevent the generation method to
-            crash. Note that using `remove_invalid_values` can slow down generation.
-        synced_gpus (`bool`, *optional*, defaults to `False`):
-            Whether to continue running the while loop until max_length (needed for ZeRO stage 3)
-        exponential_decay_length_penalty (`tuple(int, float)`, *optional*):
-            This Tuple adds an exponentially increasing length penalty, after a certain amount of tokens have been
-            generated. The tuple shall consist of: `(start_index, decay_factor)` where `start_index` indicates
-            where penalty starts and `decay_factor` represents the factor of exponential decay
-
-        model_kwargs:
-            Additional model specific kwargs will be forwarded to the `forward` function of the model. If the model
-            is an encoder-decoder model, encoder specific kwargs should not be prefixed and decoder specific kwargs
-            should be prefixed with *decoder_*.
-
-    Return:
-        [`~utils.ModelOutput`] or `torch.LongTensor`: A [`~utils.ModelOutput`] (if `return_dict_in_generate=True`
-        or when `config.return_dict_in_generate=True`) or a `torch.FloatTensor`.
-
-            If the model is *not* an encoder-decoder model (`model.config.is_encoder_decoder=False`), the possible
-            [`~utils.ModelOutput`] types are:
-
-                - [`~generation_utils.GreedySearchDecoderOnlyOutput`],
-                - [`~generation_utils.SampleDecoderOnlyOutput`],
-                - [`~generation_utils.BeamSearchDecoderOnlyOutput`],
-                - [`~generation_utils.BeamSampleDecoderOnlyOutput`]
-
-            If the model is an encoder-decoder model (`model.config.is_encoder_decoder=True`), the possible
-            [`~utils.ModelOutput`] types are:
-
-                - [`~generation_utils.GreedySearchEncoderDecoderOutput`],
-                - [`~generation_utils.SampleEncoderDecoderOutput`],
-                - [`~generation_utils.BeamSearchEncoderDecoderOutput`],
-                - [`~generation_utils.BeamSampleEncoderDecoderOutput`]
-    """
     # 1. Set generation parameters if not already defined
     bos_token_id = bos_token_id if bos_token_id is not None else model.config.bos_token_id
     num_beams = num_beams if num_beams is not None else model.config.num_beams
@@ -574,7 +374,7 @@ def generate(
     inputs_tensor, model_input_name, model_kwargs = model._prepare_model_inputs(
         inputs, bos_token_id, model_kwargs)
     batch_size = inputs_tensor.shape[0]
-    assert batch_size == len(lsp_context)
+    assert batch_size == 1
 
     # 3. Define other model kwargs
     model_kwargs["output_attentions"] = output_attentions
@@ -669,22 +469,6 @@ def generate(
         renormalize_logits=renormalize_logits,
     )
 
-    # Prepare criteria
-    # 8. prepare stopping criteria
-    stopping_criteria = model._get_stopping_criteria(
-        max_length=max_length, max_time=max_time, stopping_criteria=stopping_criteria
-    )
-
-    # 10. prepare logits warper
-    logits_warper = model._get_logits_warper(
-        top_k=top_k,
-        top_p=top_p,
-        typical_p=typical_p,
-        temperature=temperature,
-        num_beams=num_beams,
-        renormalize_logits=renormalize_logits,
-    )
-
     # 11. expand input_ids with `num_return_sequences` additional sequences per batch
     input_ids, model_kwargs = model._expand_inputs_for_generation(
         input_ids,
@@ -697,19 +481,14 @@ def generate(
     return sample(
         model,
         input_ids,
-        lsp_context_list=lsp_context,
+        lsp_context=lsp_context,
         end_id=lm_context.inference_config.end_id,
-        tokenizer=lm_context.tokenizer,
         top_k=top_k,
-        config_do_analysis=config_do_analysis,
         logits_processor=logits_processor,
-        logits_warper=logits_warper,
         stopping_criteria=stopping_criteria,
         pad_token_id=pad_token_id,
         eos_token_id=eos_token_id,
         output_scores=output_scores,
-        return_dict_in_generate=return_dict_in_generate,
-        synced_gpus=synced_gpus,
         max_length=max_length,
         **model_kwargs,
     )
@@ -719,79 +498,22 @@ def generate(
 def sample(
     model: GenerationMixin,
     input_ids: torch.LongTensor,
-    lsp_context_list: LspContextList,
+    lsp_context: LspContext,
     top_k: int,
-    config_do_analysis: bool,
-    tokenizer: PreTrainedTokenizer,
     end_id: int,
     logits_processor: Optional[LogitsProcessorList] = None,
     stopping_criteria: Optional[StoppingCriteriaList] = None,
-    logits_warper: Optional[LogitsProcessorList] = None,
     max_length: Optional[int] = None,
     pad_token_id: Optional[int] = None,
     eos_token_id: Optional[int] = None,
     output_attentions: Optional[bool] = None,
     output_hidden_states: Optional[bool] = None,
     output_scores: Optional[bool] = None,
-    return_dict_in_generate: Optional[bool] = None,
-    synced_gpus: Optional[bool] = False,
     **model_kwargs,
 ) -> Generation:
-    # Union[SampleOutput, torch.LongTensor]:
-    r"""
-    Generates sequences of token ids for models with a language modeling head using **multinomial sampling** and
-    can be used for text-decoder, text-to-text, speech-to-text, and vision-to-text models.
-
-    Parameters:
-        input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
-            The sequence used as a prompt for the generation.
-        logits_processor (`LogitsProcessorList`, *optional*):
-            An instance of [`LogitsProcessorList`]. List of instances of class derived from [`LogitsProcessor`]
-            used to modify the prediction scores of the language modeling head applied at each generation step.
-        stopping_criteria (`StoppingCriteriaList`, *optional*):
-            An instance of [`StoppingCriteriaList`]. List of instances of class derived from [`StoppingCriteria`]
-            used to tell if the generation loop should stop.
-        logits_warper (`LogitsProcessorList`, *optional*):
-            An instance of [`LogitsProcessorList`]. List of instances of class derived from [`LogitsWarper`] used
-            to warp the prediction score distribution of the language modeling head applied before multinomial
-            sampling at each generation step.
-        max_length (`int`, *optional*, defaults to 20):
-            **DEPRECATED**. Use `logits_processor` or `stopping_criteria` directly to cap the number of generated
-            tokens. The maximum length of the sequence to be generated.
-        pad_token_id (`int`, *optional*):
-            The id of the *padding* token.
-        eos_token_id (`int`, *optional*):
-            The id of the *end-of-sequence* token.
-        output_attentions (`bool`, *optional*, defaults to `False`):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under
-            returned tensors for more details.
-        output_hidden_states (`bool`, *optional*, defaults to `False`):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors
-            for more details.
-        output_scores (`bool`, *optional*, defaults to `False`):
-            Whether or not to return the prediction scores. See `scores` under returned tensors for more details.
-        return_dict_in_generate (`bool`, *optional*, defaults to `False`):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-        synced_gpus (`bool`, *optional*, defaults to `False`):
-            Whether to continue running the while loop until max_length (needed for ZeRO stage 3)
-        model_kwargs:
-            Additional model specific kwargs will be forwarded to the `forward` function of the model. If model is
-            an encoder-decoder model the kwargs should include `encoder_outputs`.
-    """
-
     # init values
     logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
     stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
-    if max_length is not None:
-        warnings.warn(
-            "`max_length` is deprecated in this function, use"
-            " `stopping_criteria=StoppingCriteriaList(MaxLengthCriteria(max_length=max_length))` instead.",
-            UserWarning,
-        )
-        # Remove this max_length limitation
-        # stopping_criteria = validate_stopping_criteria(
-        #     stopping_criteria, max_length)
-    logits_warper = logits_warper if logits_warper is not None else LogitsProcessorList()
     pad_token_id = pad_token_id if pad_token_id is not None else model.config.pad_token_id
     eos_token_id = eos_token_id if eos_token_id is not None else model.config.eos_token_id
     output_scores = output_scores if output_scores is not None else model.config.output_scores
@@ -799,62 +521,20 @@ def sample(
     output_hidden_states = (
         output_hidden_states if output_hidden_states is not None else model.config.output_hidden_states
     )
-    return_dict_in_generate = (
-        return_dict_in_generate if return_dict_in_generate is not None else model.config.return_dict_in_generate
-    )
 
-    # init attention / hidden states / scores tuples
-    scores = () if (return_dict_in_generate and output_scores) else None
-    decoder_attentions = () if (return_dict_in_generate and output_attentions) else None
-    cross_attentions = () if (return_dict_in_generate and output_attentions) else None
-    decoder_hidden_states = () if (
-        return_dict_in_generate and output_hidden_states) else None
-
-    # if model is an encoder-decoder, retrieve encoder attention weights and hidden states
-    if return_dict_in_generate and model.config.is_encoder_decoder:
-        encoder_attentions = model_kwargs["encoder_outputs"].get(
-            "attentions") if output_attentions else None
-        encoder_hidden_states = (
-            model_kwargs["encoder_outputs"].get(
-                "hidden_states") if output_hidden_states else None
-        )
-
-    # keep track of which sequences are already finished
-    unfinished_sequences = input_ids.new(input_ids.shape[0]).fill_(1)
-    cur_len = input_ids.shape[-1]
-
-    this_peer_finished = False  # used by synced_gpus only
     completion_overhead: List[float] = []
-    # generated_ids: List[int] = []
-    # generated_tokens: List[str] = []
+
     # Context variable controling when to do analysis
     # TODO(future): use AST for more accurate analysis (e.g., inside string literal, etc.)
-    batch_size = len(input_ids)
-    context = [{
-        'inside_line_comment': False,
-        'inside_block_comment': False,
-        'generated_ids': [],
-        'generated_tokens': [],
-        'finished': False,
-    } for _ in range(batch_size)]
+    gen_context = GenerationContext(
+        inside_line_comment=False,
+        inside_block_comment=False,
+        generated_tokens=[],
+        generated_ids=[],
+    )
+
     # auto-regressive generation
     while True:
-        do_analysis = True
-        # not context['inside_line_comment'] and not context['inside_block_comment']
-        do_analysis = config_do_analysis and do_analysis
-        # do_analysis = False
-        if synced_gpus:
-            assert False
-            # Under synced_gpus the `forward` call must continue until all gpus complete their sequence.
-            # The following logic allows an early break if all peers finished generating their sequence
-            this_peer_finished_flag = torch.tensor(
-                0.0 if this_peer_finished else 1.0).to(input_ids.device)
-            # send 0.0 if we finished, 1.0 otherwise
-            dist.all_reduce(this_peer_finished_flag, op=dist.ReduceOp.SUM)
-            # did all peers finish? the reduced sum will be 0.0 then
-            if this_peer_finished_flag.item() == 0.0:
-                break
-
         # prepare model inputs
         model_inputs = model.prepare_inputs_for_generation(
             input_ids, **model_kwargs)
@@ -867,359 +547,97 @@ def sample(
             output_hidden_states=output_hidden_states,
         )
 
-        if synced_gpus and this_peer_finished:
-            cur_len = cur_len + 1
-            continue  # don't waste resources running the code we don't need
-
         # -1 because decoder's self-attention produces n outputs given n inputs
         next_token_logits = outputs.logits[:, -1, :]
-
-        # pre-process distribution
         next_token_scores = logits_processor(input_ids, next_token_logits)
-        next_token_scores = logits_warper(input_ids, next_token_scores)
-
-        # Store scores, attentions and hidden_states when required
-        if return_dict_in_generate:
-            if output_scores:
-                scores += (next_token_scores,)
-            if output_attentions:
-                decoder_attentions += (
-                    (outputs.decoder_attentions,) if model.config.is_encoder_decoder else (
-                        outputs.attentions,)
-                )
-                if model.config.is_encoder_decoder:
-                    cross_attentions += (outputs.cross_attentions,)
-
-            if output_hidden_states:
-                decoder_hidden_states += (
-                    (outputs.decoder_hidden_states,)
-                    if model.config.is_encoder_decoder
-                    else (outputs.hidden_states,)
-                )
-
-        # sample
-        # probs = nn.functional.softmax(next_token_scores, dim=-1)
-        # batch_size * TOP_K
-        # all_next_token_ids = torch.topk(probs, k=top_k, dim=-1).indices
-        # all_next_token_ids = torch.multinomial(
-        #     probs, num_samples=TOP_K).squeeze(1).view(TOP_K, 1)
-        # all_next_token_ids = torch.topk(next_token_scores, k=6, dim=-1).indices.view(6, 1)
-        # exit()
-
-        # finished sentences should have their next token be a padding token
-        # print(next_token_ids)
-        # if eos_token_id is not None:
-        #     if pad_token_id is None:
-        #         raise ValueError(
-        #             "If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
-        #     # print(pad_token_id)
-        #     # print(unfinished_sequences)
-        #     for idx, _ in enumerate(all_next_token_ids):
-        #         all_next_token_ids[idx] = all_next_token_ids[idx] * unfinished_sequences + \
-        #             pad_token_id * (1 - unfinished_sequences)
-        #     # print(next_token_ids)
-        #     # exit()
-
-        # update generated ids, model inputs, and length for next step
-        # for next_token_ids in all_next_token_ids:
-        #     assert next_token_ids.shape == torch.Size([1]), next_token_ids.shape
-        # Don't use `convert_ids_to_tokens`, which would give weird results
-        # TODO: memorize decode
-        # tokens = [{
-        #     id.item(): token
-        #     for (id, token) in
-        #     zip(
-        #         ids,
-        #         (tokenizer.decode(
-        #             id,
-        #             skip_special_tokens=False,
-        #             clean_up_tokenization_spaces=False
-        #         ) for id in ids)
-        #     )} for ids in all_next_token_ids
-        # ]
-        # breakpoint()
-        # TODO: support parallel processing
-        # if len(tokens) != 1:
-        #     raise NotImplementedError
-        # if len(all_next_token_ids) != 1:
-        #     raise NotImplementedError
-        # if len(probs) != 1:
-        #     raise NotImplementedError
-        # probs = probs[0]
-        # all_next_token_ids = all_next_token_ids[0]
-        # tokens = tokens[0]
-        # tokens = self.tokenizer.batch_decode(
-        # all_next_token_ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)
-        # assert len(tokens) == top_k
 
         probs = nn.functional.softmax(next_token_scores, dim=-1)
+        assert len(probs) == 1
+        probs = probs[0]
 
-        if do_analysis:
-            considered_next_token_ids_probs_batch, considered_next_token_ids_batch = torch.topk(
-                probs, k=2*top_k, dim=-1)
-            assert len(lsp_context_list) == len(considered_next_token_ids_batch), (len(
-                lsp_context_list), len(considered_next_token_ids_batch))
+        # TODO: justify this
+        _, considered_next_token_ids = torch.topk(
+            probs, k=2*top_k, dim=-1)
 
-            input_id_list = input_ids.tolist()
-            considered_next_token_ids_list = considered_next_token_ids_batch.tolist()
-            complete_memoized_bytes = pickle.dumps((input_id_list, considered_next_token_ids_list))
-            if complete_memoized_bytes in COMPLETE_MEMOIZED_BATCH:
+        assert len(input_ids) == 1
+
+        input_ids_list = input_ids[0].tolist()
+        considered_next_token_ids_list = considered_next_token_ids.tolist()
+
+        state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
+
+        if not gen_context.inside_line_comment and not gen_context.inside_block_comment:
+            if state_bytes in COMPLETE_MEMOIZED:
                 print("HUGE HIT")
-                feasible_next_token_ids = torch.LongTensor(COMPLETE_MEMOIZED_BATCH[complete_memoized_bytes]).to(DEVICE)
+                # breakpoint()
+                feasible_next_token_ids = torch.LongTensor(COMPLETE_MEMOIZED[state_bytes]).to(DEVICE)
             else:
-                processes = [mp.Process(target=analyzer_change_file, args=(ctx.analyzer, ctx.text_file)) for ctx in lsp_context_list]
-                # for p in processes:
-                for p in processes:
-                    print(f"Start {p}")
-                    p.start()
-                    assert p.pid is not None, p
-                    print(f"TRY joinging {p.pid}")
-                    p.join()
-                    print(f"DONE joinging {p.pid}")
-                queues: List[mp.Queue | List[int]] = []
-                processes = []
-                proc_state_bytes: List[bytes | None] = []
-                input_ids_bytes: List[bytes] = []
-                for idx, (considered_next_token_ids, considered_probs, lsp_context, input_ids_one_batch) in enumerate(zip(
+                lsp_context.analyzer.change(lsp_context.text_file)
+                input_ids_bytes = pickle.dumps(input_ids_list)
+                # TODO: delete this
+                partial_memoized_result = PARTIAL_MEMOIZED.get(input_ids_bytes)
+                if partial_memoized_result is not None:
+                    print("SMALL HIT")
+                    # breakpoint()
+                feasible_next_token_ids_list = get_feasible_token_ids(
+                    partial_memoized_result,
+                    gen_context.generated_tokens,
+                    lsp_context,
                     considered_next_token_ids_list,
-                    considered_next_token_ids_probs_batch.tolist(),
-                    lsp_context_list,
-                    input_id_list,
-                )):
-                    input_ids_bytes.append(pickle.dumps(input_ids_one_batch))
-                    considered_next_token_ids = [c for c, p in zip(considered_next_token_ids, considered_probs)]
-                    state_bytes = pickle.dumps((
-                        input_ids_one_batch,
-                        set(considered_next_token_ids),
-                    ))
-                    if state_bytes in COMPLETE_MEMOIZED:
-                        print("Big HIT")
-                        # breakpoint()
-                        queues.append(COMPLETE_MEMOIZED[state_bytes])
-                        processes.append(None)
-                        proc_state_bytes.append(None)
-                    else:
-                        proc_state_bytes.append(state_bytes)
-                        queue = mp.Queue()
-                        queues.append(queue)
-                        if PARTIAL_MEMOIZED.get(input_ids_bytes[-1]) is not None:
-                            print("SMALL HIT")
-                            # breakpoint()
-                        processes.append(mp.Process(target=get_feasible_token_ids, args=(
-                            queue,
-                            PARTIAL_MEMOIZED.get(input_ids_bytes[-1]),
-                            context[idx]['generated_tokens'],
-                            lsp_context,
-                            CODET5_TOKEN_MAP,
-                            considered_next_token_ids,
-                            top_k,
-                        )))
-                for p in processes:
-                    if p is not None:
-                        p.start()
-                for p in processes:
-                    if p is not None:
-                        p.join()
-                        p.terminate()
-                    # if p.exitcode != 0: 
-                    #     print(ctx.analyzer.process.stdout.readline())
-                # exit()
+                    top_k,
+                    completion_overhead,
+                )
+                COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids_list
+                if partial_memoized_result is None:
+                    PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
+                for idx in feasible_next_token_ids_list:
+                    PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
+                feasible_next_token_ids = torch.LongTensor(feasible_next_token_ids_list).to(DEVICE)
 
-                feasible_token_results: List[List[int]] = []
-                input_id_iter = iter(input_ids_bytes)
-                for state_bytes, queue in zip(proc_state_bytes, queues):
-                    if isinstance(queue, list):
-                        feasible_token_ids = queue
-                        assert state_bytes is None
-                    else:
-                        feasible_token_ids = queue.get()
-                        assert state_bytes is not None
-                        COMPLETE_MEMOIZED[state_bytes] = feasible_token_ids
-                        queue.close()
-                    next_input_ids_bytes = next(input_id_iter)
-                    assert type(feasible_token_ids) == list
-                    assert type(next_input_ids_bytes) == bytes
-                    if next_input_ids_bytes not in PARTIAL_MEMOIZED:
-                        PARTIAL_MEMOIZED[next_input_ids_bytes] = [False] * CODET5_VOC_SIZE
-                    for idx in feasible_token_ids:
-                        PARTIAL_MEMOIZED[next_input_ids_bytes][idx] = True
-                    feasible_token_results.append(feasible_token_ids)
-                COMPLETE_MEMOIZED_BATCH[complete_memoized_bytes] = feasible_token_results
-                feasible_next_token_ids = torch.LongTensor(feasible_token_results).to(DEVICE)
             # rewrite probabilities
             mask = torch.ones(
                 probs.shape,
                 dtype=torch.bool
             ).to(DEVICE)
-            mask.scatter_(1, feasible_next_token_ids, False)
+            mask.index_fill_(0, feasible_next_token_ids, False)
             probs.masked_fill_(mask, 0.)
 
-        # TODO
-        # if not exists_satisfied_token and do_analysis:
-        #     # Now all top k tokens are zeroed out
-        #     # Default to the token with the highest probability
-        #     # But if LSP finds a completion, use that.
-        #     next_token_ids = all_next_token_ids[0].view(1)
-        #     next_token = tokens[next_token_ids.item()]
-
-        #     # Here we know in the above loop all tokens fail to pass the check,
-        #     # so they are all identifiers (type, var, etc.)
-        #     # So it is safe to call language server (but cannot prove w/o AST)
-        #     # TODO: refactor the logic
-        #     space_before = False
-        #     if next_token.startswith(' '):
-        #         text_file.add(' ')
-        #         space_before = True
-        #     pos = text_file.get_cursor_position()
-        #     start_time = time.time()
-        #     completion_result = analyzer.client.textDocument_completion({
-        #         'textDocument': {
-        #             'uri': text_file.path.as_uri()
-        #         },
-        #         'position': pos,
-        #     })
-        #     completion_overhead.append(time.time() - start_time)
-
-        #     # TODO: opt
-        #     completions = [
-        #         item['textEdit']['newText']
-        #         if 'textEdit' in item
-        #         else item['insertText']
-        #         for item in completion_result['result']['items']
-        #     ]
-        #     if not space_before:
-        #         try:
-        #             id_token = get_id_token_and_rspace_len(
-        #                 generated_tokens)
-        #             completions = []
-        #             for item in completion_result['result']['items']:
-        #                 if 'textEdit' in item:
-        #                     result = item['textEdit']
-        #                     insert = result['insert']
-        #                     replace = result['replace']
-
-        #                     # because we do not invoke it in the middle of a word
-        #                     assert replace['end'] == pos
-        #                     assert insert == replace
-        #                     assert replace['end'] == pos, result
-        #                     assert replace['end']['line'] == replace['start']['line']
-
-        #                     start_index = replace['end']['character'] - \
-        #                         replace['start']['character']
-        #                     if result['newText'][:start_index] == id_token:
-        #                         completions.append(
-        #                             result['newText'][start_index:])
-        #                 else:
-        #                     assert 'insertText' in item
-        #                     completions.append(item['insertText'])
-        #         except IDTokenError:
-        #             pass
-
-        #     completions = (
-        #         (c if '${' not in c else c[:c.index('${')]) for c in completions)
-        #     completions = list(filter(lambda c: len(c) > 0, completions))
-        #     if len(completions) > 0:
-        #         # breakpoint()
-        #         next_token = completions[0]
-        #         next_token_ids = self.tokenizer.encode(
-        #             next_token, return_tensors='pt', add_special_tokens=False).to(DEVICE)[0]
-        #         # if len(next_token_ids) > 1:
-        #         #     breakpoint()
-        # else:
-        #     # Either 1) not using LSP or 2) there is/are matched tokens
-        #     next_token_ids = torch.multinomial(
-        #         probs, num_samples=1).view(1)
-        #     next_token = tokens[next_token_ids.item()]
-
-        try:
-            next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
-        except RuntimeError:
-            # TODO: fix
-            print("RUNTIME ERROR")
-            probs = nn.functional.softmax(next_token_scores, dim=-1)
-            next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
+        # shape: (1)
+        next_token_id = torch.multinomial(probs, num_samples=1)
+        next_token_id_item = next_token_id.item()
+        # except RuntimeError:
+        #     # TODO: fix
+        #     print("RUNTIME ERROR")
+        #     probs = nn.functional.softmax(next_token_scores, dim=-1)
+        #     next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
         
-        if do_analysis:
-            for batch, (next_token_id, text_file) in enumerate(zip(next_token_ids, map(lambda ctx: ctx.text_file, lsp_context_list))):
-                pass
-                next_token = CODET5_TOKEN_MAP[next_token_id.item()]
-                if next_token.strip().startswith('//'):
-                    context[batch]['inside_line_comment'] = True
-                elif next_token.endswith('\n'):
-                    # breakpoint()
-                    context[batch]['inside_line_comment'] = False
-                elif next_token.strip().startswith('/*'):
-                    context[batch]['inside_block_comment'] = True
-                elif next_token.endswith('*/'):
-                    # breakpoint()
-                    context[batch]['inside_block_comment'] = False
+        next_token = CODET5_TOKEN_MAP[next_token_id]
+        if next_token.strip().startswith('//'):
+            gen_context.inside_line_comment = True
+        elif next_token.endswith('\n'):
+            # breakpoint()
+            gen_context.inside_line_comment = False
+        elif next_token.strip().startswith('/*'):
+            gen_context.inside_block_comment = True
+        elif next_token.endswith('*/'):
+            # breakpoint()
+            gen_context.inside_block_comment = False
 
-                # print(repr(next_token), end=' ')
-                if not is_special_token(next_token) and not context[batch]['finished']:
-                    text_file.add(next_token)
-                    context[batch]['generated_ids'].extend(next_token_ids)
-                    context[batch]['generated_tokens'].append(next_token)
-                elif next_token_ids[-1].item() in [32098, 2]:
-                    context[batch]['finished'] = True
-                    # print(ctx.analyzer.process.stdout.readline())
-                # exit()
-        # stop when each sentence is finished, or if we exceed the maximum length
-        # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
-        # Mask ids are 32099, 32098, 32097...
-                    # finished sentences should have their next token be a padding token
-        if eos_token_id is not None:
-            if pad_token_id is None:
-                raise ValueError("If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
-            next_token_ids = next_token_ids * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
+        if not is_special_token(next_token):
+            lsp_context.text_file.add(next_token)
+            gen_context.generated_ids.append(next_token_id)
+            gen_context.generated_tokens.append(next_token)
+
 
         # update generated ids, model inputs, and length for next step
-        input_ids = torch.cat([input_ids, next_token_ids[:, None]], dim=-1)
+        input_ids = torch.cat([input_ids, next_token_id[:, None]], dim=-1)
         model_kwargs = model._update_model_kwargs_for_generation(
             outputs, model_kwargs, is_encoder_decoder=model.config.is_encoder_decoder
         )
-        cur_len = cur_len + 1
-
-        # if eos_token was found in one sentence, set sentence to finished
-        if eos_token_id is not None:
-            unfinished_sequences = unfinished_sequences.mul((next_token_ids != eos_token_id).long())
-            # TODO: opt
-            unfinished_sequences = unfinished_sequences.mul((next_token_ids != 32098).long())
 
         # stop when each sentence is finished, or if we exceed the maximum length
-        if unfinished_sequences.max() == 0 or stopping_criteria(input_ids, scores):
-            if not synced_gpus:
-                break
-            else:
-                this_peer_finished = True
-        # if next_token_ids[-1] == 32098 or next_token_ids[-1] == end_id or max_length == len(input_ids[0]) or stopping_criteria(input_ids, scores):
-        #     # assert input_ids[0, -1] == self.EOM_ID
-        #     # if unfinished_sequences.max() == 0 or max_length == len(input_ids) or stopping_criteria(input_ids, scores):
-        #     if not synced_gpus:
-        #         break
-        #     else:
-        #         this_peer_finished = True
-    print([value['generated_tokens'] for value in context])
-    # breakpoint()
-
-    if return_dict_in_generate:
-        raise NotImplementedError
-        if model.config.is_encoder_decoder:
-            return SampleEncoderDecoderOutput(
-                sequences=input_ids,
-                scores=scores,
-                encoder_attentions=encoder_attentions,
-                encoder_hidden_states=encoder_hidden_states,
-                decoder_attentions=decoder_attentions,
-                cross_attentions=cross_attentions,
-                decoder_hidden_states=decoder_hidden_states,
-            )
-        else:
-            return SampleDecoderOnlyOutput(
-                sequences=input_ids,
-                scores=scores,
-                attentions=decoder_attentions,
-                hidden_states=decoder_hidden_states,
-            )
-    else:
-        return completion_overhead, [], ['']
-        # return completion_overhead, generated_ids, generated_tokens
+        # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
+        # Mask ids are 32099, 32098, 32097...
+        if next_token_id_item == 32098 or next_token_id_item == end_id or len(input_ids[0]) == max_length:
+            break
+    return completion_overhead, gen_context.generated_ids, gen_context.generated_tokens

@@ -53,38 +53,6 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{uuid.uuid4()}")
 
-REPAIR_BATCH_SIZE = 10
-
-def init_analyzer(analyzer: JdtLspAnalyzer):
-    analyzer.init_client()
-    analyzer.init()
-    analyzer.client.stop()
-    analyzer.client.send(client.request('nothing', {}))
-
-def analyzer_open_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
-    analyzer.init_client()
-    analyzer.open(text_file)
-    analyzer.client.stop()
-    # analyzer.client.send(client.request('textDocument/completion', {}))
-    analyzer.client.send(client.request('nothing', {}))
-
-def analyzer_change_file(analyzer: JdtLspAnalyzer, text_file: TextFile):
-    analyzer.init_client()
-    analyzer.change(text_file)
-    analyzer.client.stop()
-    analyzer.client.send(client.request('nothing', {}))
-    # Must send another message to prevent getting stuck at recv()
-    # analyzer.client.send(client.request('textDocument/completion', {}))
-
-def terminate_analyzer(analyzer: JdtLspAnalyzer):
-    analyzer.init_client()
-    print("READY to stop")
-    analyzer.client.stop()
-    print("READY to shutdown")
-    analyzer.client.shutdown(None)
-    print("READY to exit")
-    analyzer.client.exit(None)
-
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
     repo = git.Repo(bug.proj_path)
@@ -94,53 +62,41 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     repo.git.execute(['git', 'clean', '-xfd'])
 
-    analyzers = [JdtLspAnalyzer(server_cmd(bug_id), bug.proj_path, cast(
-        str, os.getenv('JAVA8_HOME')), verbose=False) for _ in range(REPAIR_BATCH_SIZE)]
+    analyzer = JdtLspAnalyzer(
+        server_cmd(bug_id),
+        bug.proj_path,
+        cast(str, os.getenv('JAVA8_HOME')),
+        verbose=False
+    )
     
-    processes = [mp.Process(target=init_analyzer, args=(analyzer,)) for analyzer in analyzers]
-    for p in processes:
-        p.start()
-    for p in processes:
-        p.join()
-        p.terminate()
+    analyzer.init_client()
+    analyzer.init()
 
     patch_groups: List[List[TextFile]] = []
-    time_no_lsp: List[float] = []
     time_completion: List[float] = []
-    time_lsp: List[float] = []
+    times: List[float] = []
     base_dir = result_dir / proj / id_str
     base_dir.mkdir(exist_ok=False, parents=True)
 
     # Clear memoization TODO: generated all changes first for each bug / or refine memoization
     generation.PARTIAL_MEMOIZED.clear()
     generation.COMPLETE_MEMOIZED.clear()
-    generation.COMPLETE_MEMOIZED_BATCH.clear()
 
-    for idx in range(2 * n_patch_groups):
+    for idx in range(n_patch_groups):
         print('Repair:', idx)
         if idx != 0:
             repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
             # TODO: refactor textfile
             for buggy_file in bug.buggy_files:
                 text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
-                processes = [mp.Process(target=analyzer_change_file, args=(analyzer, text_file)) for analyzer in analyzers]
-                for p in processes:
-                    p.start()
-                for p in processes:
-                    p.join()
-                    p.terminate()
+                analyzer.change(text_file)
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
 
         for buggy_file in bug.buggy_files:
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
             if idx == 0:
-                processes = [mp.Process(target=analyzer_open_file, args=(analyzer, text_file)) for analyzer in analyzers]
-                for p in processes:
-                    p.start()
-                for p in processes:
-                    p.join()
-                    p.terminate()
+                analyzer.open(text_file)
             print(len(buggy_file.changes))
             print(buggy_file.path)
             print([(c.start, len(c.removed_lines))
@@ -154,32 +110,12 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
                 start_index = text_file.form_index(start, 0)
                 end_index = text_file.form_index(end, 0)
-
-                def comment(line: str) -> str:
-                    stripped = line.lstrip()
-                    index = len(line) - len(stripped)
-                    return line[:index] + '// ' + stripped
-
-                insertion = ''.join(comment(line)
-                                    for line in change.removed_lines)
-                if not insertion.endswith('\n'):
-                    insertion += '\n'
-                # Disable buggy line encoding for now
-                insertion = ''
-                # if not insertion.endswith('\n'):
-                #     print('Warining:', insertion)
-                #     insertion += '\n'
-                # print(text_file.get_position(text_file.cursor))
-                # text_file.write()
-                # exit()
-
-                # prefix
-                # removed_lines
-                # suffix
+                
+                # TODO: justify 25
                 prefix_start = text_file.form_index(
                     max(0, start_pos['line'] - 25), 0)
                 suffix_end = text_file.form_index(end_pos['line'] + 25, 0)
-                prefix = text_file.content[prefix_start:start_index] + insertion
+                prefix = text_file.content[prefix_start:start_index]
                 suffix = '\n' + text_file.content[end_index:suffix_end]
 
                 # prefix(\n)
@@ -187,50 +123,34 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 # <cursor:infill>
                 # (\n)suffix
                 text_file.change([cast(spec.EntireDocumentChange, {
-                    'text': insertion + '\n',
+                    'text': '\n',
                     'range': {
                         'start': start_pos,
                         'end': end_pos
                     }
                 })])
 
-                text_file.move_cursor(start_index + len(insertion))
+                text_file.move_cursor(start_index)
                 # start_cursor = text_file.cursor
                 assert prefix.endswith('\n')
                 assert text_file.content[text_file.cursor - 1] == '\n'
                 assert text_file.content[text_file.cursor] == '\n'
 
-                # if len(change.removed_lines) > 0:
-                #     indent = len(change.removed_lines[0]) - len(change.removed_lines[0].lstrip())
-                # else:
-                #     indent = 0
-                # prefix += ' ' * indent
-                # text_file.move_cursor(text_file.cursor + indent)
-                text_file_batch = [text_file.copy() for _ in range(REPAIR_BATCH_SIZE - 1)] + [text_file]
-
-                do_analysis = True if idx < n_patch_groups else False
                 lm_context = gen.LMContext(
                     gen.CODET5,
                     gen.CODET5_TOKENIZER,
-                    gen.codet5_tokenize(prefix, suffix).repeat(REPAIR_BATCH_SIZE, 1),
+                    gen.codet5_tokenize(prefix, suffix),
                     gen.CODET5_INFERENCE_CONFIG,
                 )
 
-                lsp_context_list = [gen.LspContext(
+                lsp_context = gen.LspContext(
                     text_file,
                     analyzer
-                ) for text_file, analyzer in zip(text_file_batch, analyzers)]
-                # repairer = Repairer(
-                #     prefix, suffix, do_analysis=do_analysis)
-                # text_file.write()
-                # print(repairer.input_strings)
-                # exit()
-                # print(repairer.tokenizer.batch_decode(dummy))
-                # print(repairer.tokenizer.batch_decode(repairer.model.generate(repairer.input_tokens, decoder_input_ids=dummy, max_length=50), skip_special_tokens=True)[0])
-                # exit()
+                )
+
                 start_time = time.time()
                 try:
-                    completion_overhead, _, output = gen.repair(lm_context, lsp_context_list, do_analysis)
+                    completion_overhead, _, output = gen.repair(lm_context, lsp_context)
                 except TimeoutError:
                     print('Fatal timeout error')
                     with open('timeout-error', 'a') as f:
@@ -238,16 +158,14 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     output = ['']
                     completion_overhead = []
                 end_time = time.time()
-                if do_analysis:
-                    time_lsp.append(end_time - start_time)
-                else:
-                    time_no_lsp.append(end_time - start_time)
+                times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
                 # This is always True
                 # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
                 print('Success')
                 print(''.join(output))
-                print([f'{t:.2f}' for t in time_lsp])
+                breakpoint()
+                print([f'{t:.2f}' for t in times])
             # text_file.write()
             text_files.append(text_file)
         patch_groups.append(text_files)
@@ -281,19 +199,15 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     with open(base_dir / 'time.json', 'w') as f:
         json.dump({
             'completion': time_completion,
-            'with_lsp': time_lsp,
-            'no_lsp': time_no_lsp,
+            'times': times,
         }, f, indent=2)
 
     # TODO: still buggy (because when analyzer.stop() the process terminates,
     # but the client is still in the while loop)
-    processes = [mp.Process(target=terminate_analyzer, args=(analyzer,)) for analyzer in analyzers]
-    for p in processes:
-        p.start()
-    for p, analyzer in zip(processes, analyzers):
-        analyzer.process.terminate()
-        p.join()
-        p.terminate()
+    analyzer.client.stop()
+    analyzer.client.shutdown(None)
+    analyzer.client.exit(None)
+    analyzer.process.terminate()
     return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
@@ -490,7 +404,7 @@ if __name__ == '__main__':
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
-        if not bug_id in ['Chart-9', 'Closure-1', 'Math-1']:
+        if not bug_id in ['Chart-1']:
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
@@ -500,7 +414,7 @@ if __name__ == '__main__':
         # if bug_id != 'Mockito-1':
         #     continue
         print(bug_id)
-        patch_groups = repair_proj(result_dir, bug_id, bug, 10)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 100)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):
