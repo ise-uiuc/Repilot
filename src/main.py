@@ -164,7 +164,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
                 print('Success')
                 print(''.join(output))
-                breakpoint()
+                # breakpoint()
                 print([f'{t:.2f}' for t in times])
             # text_file.write()
             text_files.append(text_file)
@@ -404,7 +404,7 @@ if __name__ == '__main__':
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
-        if not bug_id in ['Chart-1', 'Math-1']:
+        if not bug_id in ['Math-1']:
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
@@ -414,7 +414,7 @@ if __name__ == '__main__':
         # if bug_id != 'Mockito-1':
         #     continue
         print(bug_id)
-        patch_groups = repair_proj(result_dir, bug_id, bug, 100)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 10)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):

@@ -8,7 +8,7 @@ import inspect
 import typing
 import warnings
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Protocol, Set, Tuple, Union, cast
+from typing import Any, Callable, Dict, Iterable, Iterator, List, NamedTuple, Optional, Protocol, Set, Tuple, Union, cast
 import regex
 from pathlib import Path
 import time
@@ -56,6 +56,7 @@ from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp.text import TextDocument, TextFile
 from realm import utils
 from functools import partial
+from pygtrie import Trie
 
 # class IncoderEOM(StoppingCriteria):
 #     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
@@ -162,7 +163,7 @@ def feasible(
     token: str,
     pos: spec.Position,
     completion_overhead: List[float],
-) -> Optional[Set[str]]:
+) -> Optional[Dict[str, None]]:
     """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
     if regex.match('^([a-zA-Z_][a-zA-Z\\d_]*)$', token) is None:
         warning(
@@ -177,21 +178,18 @@ def feasible(
     })
     completion_overhead.append(time.time() - start_time)
     # if 'result' in completion_result:
-    completions: List[str] = [
+    completions: Iterator[str] = (
         item['textEdit']['newText']  # type: ignore # noqa
         if 'textEdit' in item
         else item['insertText']  # type: ignore # noqa
         for item in completion_result['result']['items']  # type: ignore # noqa
-    ]
+    )
+    filtered_completions: Dict[str, None] = {c: None for c in completions}
     # else:
     #     print(uri)
     #     print(completion_result['error'])
     #     print(completion_result['error']['data'])
     #     raise RuntimeError
-    filtered_completions = set(filter(
-        lambda completion: completion.startswith(token), # type: ignore # noqa
-        completions
-    ))
     if len(filtered_completions) > 0:
         print('Accepted:', token)#, token, completions)
         # if 'lastFraction' in completions:
@@ -245,8 +243,8 @@ def get_feasible_token_ids(
     text_file = lsp_context.text_file
     # analyzer.client.stop()
     result: List[int] = []
-    denied: List[str] = []
-    all_feasible_tokens: Dict[str, Set[str]] = {}
+    denied = Trie()
+    all_feasible_tokens = Trie()
     for token_id in considered_token_ids:
         if len(result) == top_k:
             break
@@ -257,24 +255,35 @@ def get_feasible_token_ids(
             id_token = get_id_token(generated_tokens + [token_rstrip])
             if memoized_result is not None and memoized_result[token_id]:
                 result.append(token_id)
-            # Opt: reduce analysis times
+            # Opt: reduce analysis times (assuming id_token = some st
+            # - if s is denied, st is denied (find s in `denied` using trie)
+            # - if c is all possible completions for s, st should be a prefix of one completion in c
+            #   (find s in `all_feasible_tokens` using trie; find st in c using trie)
             # TODO: make string search faster
-            elif any(filter(partial(str.startswith, id_token), denied)):
+            elif next(denied.prefixes(id_token), None) is not None:
+            # any(filter(partial(str.startswith, id_token), denied)):
                 # breakpoint()
                 pass
-            elif any(filter(
-                lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
-                all_feasible_tokens.items()
-            )):
-                # breakpoint()
-                pass
+            elif (kv := next(all_feasible_tokens.prefixes(id_token), None)) is not None:
+                if (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE:
+                    denied[id_token] = None
+                else:
+                    # Feasible
+                    result.append(token_id)
+                # else:
+
+                # (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE):
+            # any(filter(
+            #     lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
+            #     all_feasible_tokens.items()
+            # )):
             else:
                 # No exception afterwards
                 text_file.add(token)
                 analyzer.change(text_file)
                 pos = text_file.get_position(
                     text_file.cursor - rspace_len)
-                
+ 
                 if (filtered_completions := feasible(
                     analyzer,
                     text_file.path.as_uri(),
@@ -283,15 +292,15 @@ def get_feasible_token_ids(
                     completion_overhead
                 )) is not None:
                     result.append(token_id)
-                    all_feasible_tokens[id_token] = filtered_completions
+                    # if id_token == 'numerator':
+                    #     breakpoint()
+                    all_feasible_tokens[id_token] = Trie(filtered_completions)
                 else:
-                    denied.append(id_token)
+                    denied[id_token] = None
                 text_file.delete(len(token))
                 analyzer.change(text_file)
         except IDTokenError:
             result.append(token_id)
-        except:
-            breakpoint()
     return result
 
 
