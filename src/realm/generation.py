@@ -245,6 +245,7 @@ def get_feasible_token_ids(
     result: List[int] = []
     denied = Trie()
     all_feasible_tokens = Trie()
+    all_possible_completions = Trie()
     for token_id in considered_token_ids:
         if len(result) == top_k:
             break
@@ -259,19 +260,19 @@ def get_feasible_token_ids(
             # - if s is denied, st is denied (find s in `denied` using trie)
             # - if c is all possible completions for s, st should be a prefix of one completion in c
             #   (find s in `all_feasible_tokens` using trie; find st in c using trie)
+            # - if id_token is one of the possible completion, then it is feasible!
             # TODO: make string search faster
             elif next(denied.prefixes(id_token), None) is not None:
             # any(filter(partial(str.startswith, id_token), denied)):
                 # breakpoint()
                 pass
-            elif (kv := next(all_feasible_tokens.prefixes(id_token), None)) is not None:
-                if (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE:
-                    denied[id_token] = None
-                else:
-                    # Feasible
-                    result.append(token_id)
+            elif (x := all_possible_completions.has_node(id_token)) == Trie.HAS_SUBTRIE or x == Trie.HAS_VALUE:
+                result.append(token_id)
+            elif next(all_feasible_tokens.prefixes(id_token), None) is not None:
+                # Assertion!
+                # assert (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE
+                denied[id_token] = None
                 # else:
-
                 # (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE):
             # any(filter(
             #     lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
@@ -294,7 +295,9 @@ def get_feasible_token_ids(
                     result.append(token_id)
                     # if id_token == 'numerator':
                     #     breakpoint()
-                    all_feasible_tokens[id_token] = Trie(filtered_completions)
+                    possible_completions = Trie(filtered_completions)
+                    all_feasible_tokens[id_token] = possible_completions
+                    all_possible_completions.merge(possible_completions)
                 else:
                     denied[id_token] = None
                 text_file.delete(len(token))
