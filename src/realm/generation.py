@@ -164,6 +164,7 @@ def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> I
         },
         'position': pos,
     })
+    # breakpoint()
     # if 'result' in completion_result:
     completions: Iterator[str] = (
         item['textEdit']['newText']  # type: ignore # noqa
@@ -617,45 +618,49 @@ def sample(
             if os.getenv('ACTIVE') is not None and len(gen_tokens := gen_context.generated_tokens) > 0:
                 token = gen_tokens[-1]
                 found = False
-                idx = 0
-                for c in reversed(token):
-                    idx += 1
-                    if c.isdigit() or c.isalpha() or c == '_':
-                        pass
-                    else:
-                        if c == '.':
-                            found = True
-                            assert token[-idx] == '.'
-                        break
+                try:
+                    id_token = get_id_token(gen_tokens)
+                    found = True
+                except IDTokenError:
+                    pass
                 if found:
                     analyzer = lsp_context.analyzer
                     # Active completion
                     text_file = lsp_context.text_file
                     analyzer.change(text_file)
-                    assert text_file.content[text_file.cursor-idx] == '.'
-                    completions = [c[idx - 1:x] if (x := c.find('$')) != -1 else c[idx - 1:]
+                    # assert text_file.content[text_file.cursor-idx] == '.'
+                    completions = (c[len(id_token):x] if (x := c.find('$')) != -1 else c[len(id_token):]
                         for c in (
                             get_completions(analyzer, text_file.path.as_uri(), text_file.get_position(text_file.cursor)))
-                    ]
-                    warpers = LogitsProcessorList()
-                    warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
-                    next_token_scores = warpers(input_ids, next_token_scores)
-                    assert len(next_token_scores) == 1
-                    scores = next_token_scores[0]
-                    probs = nn.functional.softmax(scores, dim=-1)
-                    next_token_ids = torch.multinomial(probs, num_samples=1)
-                    next_token_id_item = next_token_ids.item()
-                    next_token = CODET5_TOKEN_MAP[next_token_id_item]
-                    possible_completions = []
-                    for compl in completions:
-                        if len(compl) <= len(next_token) and next_token.startswith(compl):
-                            possible_completions.append(compl)
-                        elif len(compl) > len(next_token) and compl.startswith(next_token):
-                            possible_completions.append(compl)
-                    if len(possible_completions) == 0:
-                        completion = next_token
+                        if c.startswith(id_token)
+                    )
+                    completions = [x for x in completions if len(x) > 0]
+                    # if 'copy' not in gen_tokens[-1] and len(completions) > 0:
+                    #     breakpoint()
+                    # if False:
+                    #     pass
+                    if len(completions) <= 5 and len(completions) > 0:
+                        completion = random.choice(completions)
                     else:
-                        completion = random.choice(possible_completions)
+                        warpers = LogitsProcessorList()
+                        warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+                        next_token_scores = warpers(input_ids, next_token_scores)
+                        assert len(next_token_scores) == 1
+                        scores = next_token_scores[0]
+                        probs = nn.functional.softmax(scores, dim=-1)
+                        next_token_ids = torch.multinomial(probs, num_samples=1)
+                        next_token_id_item = next_token_ids.item()
+                        next_token = CODET5_TOKEN_MAP[next_token_id_item]
+                        possible_completions = []
+                        for compl in completions:
+                            if len(compl) <= len(next_token) and next_token.startswith(compl):
+                                possible_completions.append(compl)
+                            elif len(compl) > len(next_token) and compl.startswith(next_token):
+                                possible_completions.append(compl)
+                        if len(possible_completions) == 0:
+                            completion = next_token
+                        else:
+                            completion = random.choice(possible_completions)
                     # breakpoint()
     
                 # if len(gen_context.generated_tokens) > 0 and gen_context.generated_tokens[-1].endswith('.'):

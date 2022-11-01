@@ -299,86 +299,86 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     succeeded_patches: Set[int] = set()
     patch_groups = get_patch_groups(bug_dir)
     result: dict = {
-        'with_lsp': {
-            'succeeded': [],
-            'comp_failed': [],
-            'test_failed': [],
-            'dup_succeeded': [],
-            'dup_test_failed': [],
-            'dup_comp_failed': [],
-        },
-        'without_lsp': {
-            'succeeded': [],
-            'comp_failed': [],
-            'test_failed': [],
-            'dup_succeeded': [],
-            'dup_test_failed': [],
-            'dup_comp_failed': [],
-        }
+        # 'with_lsp': {
+        'succeeded': [],
+        'comp_failed': [],
+        'test_failed': [],
+        'dup_succeeded': [],
+        'dup_test_failed': [],
+        'dup_comp_failed': [],
+        # },
+        # 'without_lsp': {
+        #     'succeeded': [],
+        #     'comp_failed': [],
+        #     'test_failed': [],
+        #     'dup_succeeded': [],
+        #     'dup_test_failed': [],
+        #     'dup_comp_failed': [],
+        # }
     }
-    half = len(patch_groups) // 2
-    for idx, patch_group in patch_groups[:half]:
+    # half = len(patch_groups) // 2
+    for idx, patch_group in patch_groups:
         hash = compress(patch_group)
         if hash in comp_failed_patches:
             # print(bug_id, idx, 'is duplicated')
-            result['with_lsp']['dup_comp_failed'].append(int(idx))
+            result['dup_comp_failed'].append(int(idx))
             continue
         if hash in test_failed_patches:
             # print(bug_id, idx, 'is duplicated')
-            result['with_lsp']['dup_test_failed'].append(int(idx))
+            result['dup_test_failed'].append(int(idx))
             continue
         if hash in succeeded_patches:
             # print(bug_id, idx, 'is duplicated')
-            result['with_lsp']['dup_succeeded'].append(int(idx))
+            result['dup_succeeded'].append(int(idx))
             continue
         val_result = validate_proj(bug_id, bug, patch_group)
         match val_result:
             case ValResult.CompilationError:
-                result['with_lsp']['comp_failed'].append(int(idx))
+                result['comp_failed'].append(int(idx))
                 comp_failed_patches.add(hash)
             case ValResult.TestingError:
-                result['with_lsp']['test_failed'].append(int(idx))
+                result['test_failed'].append(int(idx))
                 test_failed_patches.add(hash)
             case ValResult.Success:
-                result['with_lsp']['succeeded'].append(int(idx))
+                result['succeeded'].append(int(idx))
                 succeeded_patches.add(hash)
 
-    # Do it again
-    comp_failed_patches = set()
-    test_failed_patches = set()
-    succeeded_patches = set()
-    for idx, patch_group in patch_groups[half:]:
-        hash = compress(patch_group)
-        if hash in comp_failed_patches:
-            # print(bug_id, idx, 'is duplicated')
-            result['without_lsp']['dup_comp_failed'].append(int(idx) - half)
-            comp_failed_patches.add(hash)
-            continue
-        if hash in test_failed_patches:
-            # print(bug_id, idx, 'is duplicated')
-            result['without_lsp']['dup_test_failed'].append(int(idx) - half)
-            test_failed_patches.add(hash)
-            continue
-        if hash in succeeded_patches:
-            # print(bug_id, idx, 'is duplicated')
-            result['without_lsp']['dup_succeeded'].append(int(idx) - half)
-            succeeded_patches.add(hash)
-            continue
-        val_result = validate_proj(bug_id, bug, patch_group)
-        match val_result:
-            case ValResult.CompilationError:
-                result['without_lsp']['comp_failed'].append(int(idx) - half)
-                comp_failed_patches.add(hash)
-            case ValResult.TestingError:
-                result['without_lsp']['test_failed'].append(int(idx) - half)
-                test_failed_patches.add(hash)
-            case ValResult.Success:
-                result['without_lsp']['succeeded'].append(int(idx) - half)
-                succeeded_patches.add(hash)
+    # # Do it again
+    # comp_failed_patches = set()
+    # test_failed_patches = set()
+    # succeeded_patches = set()
+    # for idx, patch_group in patch_groups[half:]:
+    #     hash = compress(patch_group)
+    #     if hash in comp_failed_patches:
+    #         # print(bug_id, idx, 'is duplicated')
+    #         result['without_lsp']['dup_comp_failed'].append(int(idx) - half)
+    #         comp_failed_patches.add(hash)
+    #         continue
+    #     if hash in test_failed_patches:
+    #         # print(bug_id, idx, 'is duplicated')
+    #         result['without_lsp']['dup_test_failed'].append(int(idx) - half)
+    #         test_failed_patches.add(hash)
+    #         continue
+    #     if hash in succeeded_patches:
+    #         # print(bug_id, idx, 'is duplicated')
+    #         result['without_lsp']['dup_succeeded'].append(int(idx) - half)
+    #         succeeded_patches.add(hash)
+    #         continue
+    #     val_result = validate_proj(bug_id, bug, patch_group)
+    #     match val_result:
+    #         case ValResult.CompilationError:
+    #             result['without_lsp']['comp_failed'].append(int(idx) - half)
+    #             comp_failed_patches.add(hash)
+    #         case ValResult.TestingError:
+    #             result['without_lsp']['test_failed'].append(int(idx) - half)
+    #             test_failed_patches.add(hash)
+    #         case ValResult.Success:
+    #             result['without_lsp']['succeeded'].append(int(idx) - half)
+    #             succeeded_patches.add(hash)
     return result
 
 
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 
 
 def validate_all_bugs(all_bugs: dict, proj_dir: Path):
