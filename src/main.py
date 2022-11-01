@@ -1,3 +1,11 @@
+from realm.lsp import TextDocument
+from realm.syntax import reduce
+
+# doc = TextDocument(r'System.out.println("Hello " + "world")')
+# reduce(doc, raise_unexpected_exc=True)
+# print(doc)
+# exit()
+
 import difflib
 import multiprocessing as mp
 from enum import Enum
@@ -16,14 +24,14 @@ from realm import generation, utils
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp import TextDocument, client, spec
 import json
-from typing import Generator, List, Set, Tuple, cast
+from typing import Dict, Generator, List, Set, Tuple, cast
 from init import data
 from unidiff import PatchSet
 import git
 import hashlib
 
 from realm.lsp.spec import TextChange
-from realm.lsp.text import TextFile
+from realm.lsp.text import MutableTextDocument, TextFile
 from datasets import d4j
 
 assert shutil.which('defects4j')
@@ -53,6 +61,7 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration /home/yuxiang/.cache/jdtls \
         -data .lsp_data/{uuid.uuid4()}")
 
+
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
     repo = git.Repo(bug.proj_path)
@@ -68,7 +77,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         cast(str, os.getenv('JAVA8_HOME')),
         verbose=False
     )
-    
+
     analyzer.init_client()
     analyzer.init()
 
@@ -78,10 +87,13 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     base_dir = result_dir / proj / id_str
     base_dir.mkdir(exist_ok=False, parents=True)
 
-    # Clear memoization TODO: generated all changes first for each bug / or refine memoization
-    generation.PARTIAL_MEMOIZED.clear()
-    generation.COMPLETE_MEMOIZED.clear()
-
+    # generation.PARTIAL_MEMOIZED.clear()
+    # generation.COMPLETE_MEMOIZED.clear()
+    # Clear memoization
+    memoized: Dict[Tuple[int, int], Tuple[
+        Dict[bytes, List[bool]],
+        Dict[bytes, List[int]]
+    ]] = dict()
     for idx in range(n_patch_groups):
         print('Repair:', idx)
         if idx != 0:
@@ -93,7 +105,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
 
-        for buggy_file in bug.buggy_files:
+        for buggy_file_idx, buggy_file in enumerate(bug.buggy_files):
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
             if idx == 0:
                 analyzer.open(text_file)
@@ -102,7 +114,10 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             print([(c.start, len(c.removed_lines))
                    for c in reversed(buggy_file.changes)])
 
-            for change in reversed(buggy_file.changes):
+            for (change_idx, change) in enumerate(reversed(buggy_file.changes)):
+                if (mem_id := (buggy_file_idx, change_idx)) not in memoized:
+                    memoized[mem_id] = ({}, {})
+                generation.PARTIAL_MEMOIZED, generation.COMPLETE_MEMOIZED = memoized[mem_id]
                 start = change.start - 1
                 end = start + len(change.removed_lines)
                 start_pos = text_file.refine_index(start, 0)
@@ -110,7 +125,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
                 start_index = text_file.form_index(start, 0)
                 end_index = text_file.form_index(end, 0)
-                
+
                 # TODO: justify 25
                 prefix_start = text_file.form_index(
                     max(0, start_pos['line'] - 25), 0)
@@ -150,7 +165,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
                 start_time = time.time()
                 try:
-                    completion_overhead, _, output = gen.repair(lm_context, lsp_context)
+                    completion_overhead, _, output = gen.repair(
+                        lm_context, lsp_context)
                 except TimeoutError:
                     print('Fatal timeout error')
                     with open('timeout-error', 'a') as f:
@@ -160,6 +176,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 end_time = time.time()
                 times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
+                memoized[mem_id] = (generation.PARTIAL_MEMOIZED, generation.COMPLETE_MEMOIZED)
                 # This is always True
                 # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
                 print('Success')
@@ -404,7 +421,8 @@ if __name__ == '__main__':
     for bug_id, bug in dataset.all_bugs().items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
-        if not bug_id in ['Chart-1']:
+        # TODO (DONE): IMPORTANT!!!!! Memorize multiple changes when doing repair
+        if not bug_id.startswith('Chart'):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
@@ -414,7 +432,7 @@ if __name__ == '__main__':
         # if bug_id != 'Mockito-1':
         #     continue
         print(bug_id)
-        patch_groups = repair_proj(result_dir, bug_id, bug, 10)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 20)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):
@@ -427,21 +445,3 @@ if __name__ == '__main__':
     #     '/home/yuxiang/Developer/d4j-checkout/Lang-1-buggy/src/main/java/org/apache/commons/lang3/Validate.java')
     # with open(file_path) as f:
     #     content = TextDocument(f.read())
-
-    # a = java_syntax.reduce(content)
-    # print(content.content)
-    # print(a.content)
-    # a.feed(';;')
-
-    # try:
-    #     a.feed('test')
-    # except java_syntax.TokenizeError:
-    #     print(a.parser.tokens.look())
-    #     pass
-    # # try:
-    # #     a.feed('')
-    # # except java_syntax.AnalysisError:
-    # #     pass
-    # # a.feed('package com.yourorganization.maven_sample')
-    # #     # print(a.parser.tokens.look())
-    # #     # a.feed(content[:10])

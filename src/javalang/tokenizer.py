@@ -150,6 +150,7 @@ class JavaTokenizer(object):
     IDENT_PART_CATEGORIES = set(['Lu', 'Ll', 'Lt', 'Lm', 'Lo', 'Mc', 'Mn', 'Nd', 'Nl', 'Pc', 'Sc'])
 
     def __init__(self, data, ignore_errors=False):
+        self.last_position = None
         self.data = data
         self.ignore_errors = ignore_errors
         self.errors = []
@@ -493,6 +494,7 @@ class JavaTokenizer(object):
         self.pre_tokenize()
 
         while self.i < self.length:
+            self.last_position = self.i
             token_type = None
 
             c = self.data[self.i]

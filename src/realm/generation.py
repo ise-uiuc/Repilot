@@ -1,5 +1,6 @@
 """Copied and rewritted from transformers.generation_utils"""
 from logging import warning
+import os
 import pickle
 import random
 from datasets import d4j
@@ -156,6 +157,21 @@ def repair(
         temperature=lm_context.inference_config.temperature,
     )
 
+def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> Iterator[str]:
+    completion_result = analyzer.client.textDocument_completion({
+        'textDocument': {
+            'uri': uri
+        },
+        'position': pos,
+    })
+    # if 'result' in completion_result:
+    completions: Iterator[str] = (
+        item['textEdit']['newText']  # type: ignore # noqa
+        if 'textEdit' in item
+        else item['insertText']  # type: ignore # noqa
+        for item in completion_result['result']['items']  # type: ignore # noqa
+    )
+    return completions
 
 def feasible(
     analyzer: JdtLspAnalyzer,
@@ -170,21 +186,9 @@ def feasible(
             f'Cannot recognize {token} as an identifier, probabily unicode.')
     assert token not in JAVA_KEYWORDS
     start_time = time.time()
-    completion_result = analyzer.client.textDocument_completion({
-        'textDocument': {
-            'uri': uri
-        },
-        'position': pos,
-    })
+    completions = get_completions(analyzer, uri, pos)
     completion_overhead.append(time.time() - start_time)
-    # if 'result' in completion_result:
-    completions: Iterator[str] = (
-        item['textEdit']['newText']  # type: ignore # noqa
-        if 'textEdit' in item
-        else item['insertText']  # type: ignore # noqa
-        for item in completion_result['result']['items']  # type: ignore # noqa
-    )
-    filtered_completions: Dict[str, None] = {c: None for c in completions}
+    filtered_completions: Dict[str, None] = {c: None for c in completions if c.startswith(token)}
     # else:
     #     print(uri)
     #     print(completion_result['error'])
@@ -208,14 +212,20 @@ def is_special_token(token: str) -> bool:
 
 
 def get_id_token(generated_tokens: List[str]) -> str:
-    def get():
-        for token in reversed(generated_tokens):
-            for c in reversed(token):
-                if c.isdigit() or c.isalpha() or c == '_':
-                    yield c
-                else:
-                    return
-    result = ''.join(reversed(list(get())))
+    result = ''
+    first_unmatched_char = None
+    for token in reversed(generated_tokens):
+        should_break = False
+        for c in reversed(token):
+            if c.isdigit() or c.isalpha() or c == '_':
+                result = c + result
+            else:
+                should_break = True
+                break
+        if should_break:
+            break
+    # if first_unmatched_char == '.' and len(result) > 0:
+    #     breakpoint()
 
     if len(result) > 0 and not result[0].isdigit() and result not in JAVA_KEYWORDS:
         return result
@@ -231,7 +241,7 @@ def get_feasible_token_ids(
     considered_token_ids: List[int],
     top_k: int,
     completion_overhead: List[float]
-):
+) -> List[int]:
     print("RUNNING feasibility check")
     # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
     # NOTE: do not do it now. Just evaluate on both
@@ -284,7 +294,6 @@ def get_feasible_token_ids(
                 analyzer.change(text_file)
                 pos = text_file.get_position(
                     text_file.cursor - rspace_len)
- 
                 if (filtered_completions := feasible(
                     analyzer,
                     text_file.path.as_uri(),
@@ -594,6 +603,7 @@ def sample(
         # next_token_scores = logits_warper(input_ids, next_token_scores)
         assert len(next_token_scores) == 1
 
+        completion: Optional[str] = None
         if gen_context.inside_line_comment or gen_context.inside_block_comment:
             # Modified from GenerationMixin.get_logits_warper
             # if temperature is not None and temperature != 1.0:
@@ -604,11 +614,63 @@ def sample(
             assert len(next_token_scores) == 1
             scores = next_token_scores[0]
         else:
-            scores = next_token_scores[0]
-            considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
-            assert len(considered_next_token_ids.shape) == 1
-            considered_next_token_ids = considered_next_token_ids[
-                scores[considered_next_token_ids] > -float('inf')]
+            if os.getenv('ACTIVE') is not None and len(gen_tokens := gen_context.generated_tokens) > 0:
+                token = gen_tokens[-1]
+                found = False
+                idx = 0
+                for c in reversed(token):
+                    idx += 1
+                    if c.isdigit() or c.isalpha() or c == '_':
+                        pass
+                    else:
+                        if c == '.':
+                            found = True
+                            assert token[-idx] == '.'
+                        break
+                if found:
+                    analyzer = lsp_context.analyzer
+                    # Active completion
+                    text_file = lsp_context.text_file
+                    analyzer.change(text_file)
+                    assert text_file.content[text_file.cursor-idx] == '.'
+                    completions = [c[idx - 1:x] if (x := c.find('$')) != -1 else c[idx - 1:]
+                        for c in (
+                            get_completions(analyzer, text_file.path.as_uri(), text_file.get_position(text_file.cursor)))
+                    ]
+                    warpers = LogitsProcessorList()
+                    warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+                    next_token_scores = warpers(input_ids, next_token_scores)
+                    assert len(next_token_scores) == 1
+                    scores = next_token_scores[0]
+                    probs = nn.functional.softmax(scores, dim=-1)
+                    next_token_ids = torch.multinomial(probs, num_samples=1)
+                    next_token_id_item = next_token_ids.item()
+                    next_token = CODET5_TOKEN_MAP[next_token_id_item]
+                    possible_completions = []
+                    for compl in completions:
+                        if len(compl) <= len(next_token) and next_token.startswith(compl):
+                            possible_completions.append(compl)
+                        elif len(compl) > len(next_token) and compl.startswith(next_token):
+                            possible_completions.append(compl)
+                    if len(possible_completions) == 0:
+                        completion = next_token
+                    else:
+                        completion = random.choice(possible_completions)
+                    # breakpoint()
+    
+                # if len(gen_context.generated_tokens) > 0 and gen_context.generated_tokens[-1].endswith('.'):
+                #     text_file = lsp_context.text_file
+                #     pos = text_file.get_position(text_file.cursor)
+                #     completions = get_completions(lsp_context.analyzer, text_file.path.as_uri(), pos)
+                #     completion = next(completions, None)
+            if completion is not None:
+                pass
+            else:
+                scores = next_token_scores[0]
+                considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
+                assert len(considered_next_token_ids.shape) == 1
+                considered_next_token_ids = considered_next_token_ids[
+                    scores[considered_next_token_ids] > -float('inf')]
 
             assert len(input_ids) == 1
             input_ids_list = input_ids[0].tolist()
@@ -651,19 +713,26 @@ def sample(
                 mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(DEVICE), False)
                 scores.masked_fill_(mask, -float('inf'))
 
-        probs = nn.functional.softmax(scores, dim=-1)
-        assert len(probs.shape) == 1
+        if completion is None:
+            probs = nn.functional.softmax(scores, dim=-1)
+            assert len(probs.shape) == 1
 
-        # shape: (1)
-        next_token_id = torch.multinomial(probs, num_samples=1)
-        next_token_id_item = next_token_id.item()
+            # shape: (1)
+            next_token_ids = torch.multinomial(probs, num_samples=1)
+            next_token_ids_list = next_token_ids.tolist()
+            next_token_id_item = next_token_ids.item()
+            next_token = CODET5_TOKEN_MAP[next_token_id_item]
+        else:
+            next_token = completion
+            next_token_ids_list = CODET5_TOKENIZER.encode(completion, add_special_tokens=False)
+            next_token_ids = torch.LongTensor(next_token_ids_list).to(DEVICE)
+            next_token_id_item = -1
         # except RuntimeError:
         #     # TODO: fix
         #     print("RUNTIME ERROR")
         #     probs = nn.functional.softmax(next_token_scores, dim=-1)
         #     next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
         
-        next_token = CODET5_TOKEN_MAP[next_token_id]
         if next_token.strip().startswith('//'):
             gen_context.inside_line_comment = True
         elif next_token.endswith('\n'):
@@ -677,12 +746,14 @@ def sample(
 
         if not is_special_token(next_token):
             lsp_context.text_file.add(next_token)
-            gen_context.generated_ids.append(next_token_id)
-            gen_context.generated_tokens.append(next_token)
+            gen_context.generated_ids.extend(next_token_ids_list)
+            gen_context.generated_tokens.extend([CODET5_TOKEN_MAP[idx] for idx in next_token_ids_list])
 
 
         # update generated ids, model inputs, and length for next step
-        input_ids = torch.cat([input_ids, next_token_id[:, None]], dim=-1)
+        # NOTE: originally next_token_ids[:, None] because for each batch it generate 'one' token;
+        #  but here we do not consider batch and we can generate multiple tokens
+        input_ids = torch.cat([input_ids, next_token_ids[None, :]], dim=-1)
         model_kwargs = model._update_model_kwargs_for_generation(
             outputs, model_kwargs, is_encoder_decoder=model.config.is_encoder_decoder
         )

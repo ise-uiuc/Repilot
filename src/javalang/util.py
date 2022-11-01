@@ -1,5 +1,8 @@
 
 
+from javalang.tokenizer import EndOfInput
+
+
 class LookAheadIterator(object):
     def __init__(self, iterable):
         self.iterable = iter(iterable)
@@ -140,7 +143,7 @@ class LookAheadListIterator(object):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Reset the iterator if there was an error
-        if exc_type or exc_val or exc_tb:
+        if (exc_type or exc_val or exc_tb) and not isinstance(self.look(), EndOfInput):
             self.pop_marker(True)
         else:
             self.pop_marker(False)
