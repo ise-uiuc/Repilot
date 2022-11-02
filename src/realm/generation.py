@@ -586,6 +586,8 @@ def sample(
 
     # auto-regressive generation
     while True:
+        # if len(gen_context.generated_tokens) > 0 and 'dataset' in gen_context.generated_tokens[-1]:
+        #     breakpoint()
         # prepare model inputs
         model_inputs = model.prepare_inputs_for_generation(
             input_ids, **model_kwargs)
@@ -616,32 +618,50 @@ def sample(
             scores = next_token_scores[0]
         else:
             if os.getenv('ACTIVE') is not None and len(gen_tokens := gen_context.generated_tokens) > 0:
-                token = gen_tokens[-1]
                 found = False
-                try:
-                    id_token = get_id_token(gen_tokens)
+                id_token = ''
+                if gen_tokens[-1][-1] == '.':
                     found = True
-                except IDTokenError:
-                    pass
+                else:
+                    try:
+                        id_token = get_id_token(gen_tokens)
+                        found = True
+                    except IDTokenError:
+                        pass
                 if found:
                     analyzer = lsp_context.analyzer
                     # Active completion
                     text_file = lsp_context.text_file
                     analyzer.change(text_file)
                     # assert text_file.content[text_file.cursor-idx] == '.'
-                    completions = (c[len(id_token):x] if (x := c.find('$')) != -1 else c[len(id_token):]
+                    # print(gen_tokens)
+                    # completion_result = analyzer.client.textDocument_completion({
+                    #     'textDocument': {
+                    #         'uri': text_file.path.as_uri()
+                    #     },
+                    #     'position': text_file.get_position(text_file.cursor)
+                    # })
+                    # breakpoint()
+                    completions_iter = (c[len(id_token):x] if (x := c.find('$')) != -1 else c[len(id_token):]
                         for c in (
                             get_completions(analyzer, text_file.path.as_uri(), text_file.get_position(text_file.cursor)))
                         if c.startswith(id_token)
                     )
-                    completions = [x for x in completions if len(x) > 0]
+                    completions = []
+                    empty_completion = False
+                    for completion in completions_iter:
+                        if completion == '':
+                            empty_completion = True
+                        else:
+                            completions.append(completion)
                     # if 'copy' not in gen_tokens[-1] and len(completions) > 0:
                     #     breakpoint()
                     # if False:
                     #     pass
-                    if len(completions) <= 5 and len(completions) > 0:
+                    if not empty_completion and len(completions) <= 5 and len(completions) > 0:
                         completion = random.choice(completions)
                     else:
+                        # breakpoint()
                         warpers = LogitsProcessorList()
                         warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
                         next_token_scores = warpers(input_ids, next_token_scores)
@@ -651,17 +671,23 @@ def sample(
                         next_token_ids = torch.multinomial(probs, num_samples=1)
                         next_token_id_item = next_token_ids.item()
                         next_token = CODET5_TOKEN_MAP[next_token_id_item]
-                        possible_completions = []
-                        for compl in completions:
-                            if len(compl) <= len(next_token) and next_token.startswith(compl):
-                                possible_completions.append(compl)
-                            elif len(compl) > len(next_token) and compl.startswith(next_token):
-                                possible_completions.append(compl)
-                        if len(possible_completions) == 0:
+                        if empty_completion:
                             completion = next_token
                         else:
-                            completion = random.choice(possible_completions)
-                    # breakpoint()
+                            possible_completions = []
+                            for compl in completions:
+                                if len(compl) <= len(next_token) and next_token.startswith(compl):
+                                    possible_completions.append(compl)
+                                elif len(compl) > len(next_token) and compl.startswith(next_token):
+                                    possible_completions.append(compl)
+                            if len(possible_completions) == 0:
+                                completion = next_token # ?
+                            else:
+                                completion = random.choice(possible_completions)
+                    if completion is not None:
+                        with open('completions', 'a') as f:
+                            f.write(f'Completion: {completion}, id_token: {id_token}, file: {text_file.content[text_file.cursor - 20:text_file.cursor]}')
+                            f.write('\n')
     
                 # if len(gen_context.generated_tokens) > 0 and gen_context.generated_tokens[-1].endswith('.'):
                 #     text_file = lsp_context.text_file
@@ -677,46 +703,46 @@ def sample(
                 considered_next_token_ids = considered_next_token_ids[
                     scores[considered_next_token_ids] > -float('inf')]
 
-            assert len(input_ids) == 1
-            input_ids_list = input_ids[0].tolist()
+                assert len(input_ids) == 1
+                input_ids_list = input_ids[0].tolist()
 
-            considered_next_token_ids_list = considered_next_token_ids.tolist()
-            state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
-            if state_bytes in COMPLETE_MEMOIZED:
-                print("HUGE HIT")
-                # breakpoint()
-                feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
-            else:
-                lsp_context.analyzer.change(lsp_context.text_file)
-                input_ids_bytes = pickle.dumps(input_ids_list)
-                # TODO: delete this
-                partial_memoized_result = PARTIAL_MEMOIZED.get(input_ids_bytes)
-                if partial_memoized_result is not None:
-                    print("SMALL HIT")
+                considered_next_token_ids_list = considered_next_token_ids.tolist()
+                state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
+                if state_bytes in COMPLETE_MEMOIZED:
+                    print("HUGE HIT")
                     # breakpoint()
-                feasible_next_token_ids = get_feasible_token_ids(
-                    partial_memoized_result,
-                    gen_context.generated_tokens,
-                    lsp_context,
-                    considered_next_token_ids_list,
-                    top_k,
-                    completion_overhead,
-                )
-                assert len(feasible_next_token_ids) <= top_k
-                COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
-                if partial_memoized_result is None:
-                    PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
-                for idx in feasible_next_token_ids:
-                    PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
+                    feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
+                else:
+                    lsp_context.analyzer.change(lsp_context.text_file)
+                    input_ids_bytes = pickle.dumps(input_ids_list)
+                    # TODO: delete this
+                    partial_memoized_result = PARTIAL_MEMOIZED.get(input_ids_bytes)
+                    if partial_memoized_result is not None:
+                        print("SMALL HIT")
+                        # breakpoint()
+                    feasible_next_token_ids = get_feasible_token_ids(
+                        partial_memoized_result,
+                        gen_context.generated_tokens,
+                        lsp_context,
+                        considered_next_token_ids_list,
+                        top_k,
+                        completion_overhead,
+                    )
+                    assert len(feasible_next_token_ids) <= top_k
+                    COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
+                    if partial_memoized_result is None:
+                        PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
+                    for idx in feasible_next_token_ids:
+                        PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
 
-            if len(feasible_next_token_ids) != 0:
-                # rewrite scores
-                mask = torch.ones(
-                    scores.shape,
-                    dtype=torch.bool
-                ).to(DEVICE)
-                mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(DEVICE), False)
-                scores.masked_fill_(mask, -float('inf'))
+                if len(feasible_next_token_ids) != 0:
+                    # rewrite scores
+                    mask = torch.ones(
+                        scores.shape,
+                        dtype=torch.bool
+                    ).to(DEVICE)
+                    mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(DEVICE), False)
+                    scores.masked_fill_(mask, -float('inf'))
 
         if completion is None:
             probs = nn.functional.softmax(scores, dim=-1)

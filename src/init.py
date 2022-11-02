@@ -32,7 +32,7 @@ def get_all_bugs() -> Metadata:
 
 # print(get_all_bugs()['Lang'][0])
 
-ROOT = Path('/home/yuxiang/Developer/d4j-checkout')
+ROOT = Path('/home/yuxiang/fastd/Developer/d4j-checkout')
 
 
 def get_checkout_meta(proj: str, bug: Dict[str, str]) -> Dict:
