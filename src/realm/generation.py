@@ -305,9 +305,9 @@ def get_feasible_token_ids(
                     result.append(token_id)
                     # if id_token == 'numerator':
                     #     breakpoint()
-                    possible_completions = Trie(filtered_completions)
-                    all_feasible_tokens[id_token] = possible_completions
-                    all_possible_completions.merge(possible_completions)
+                    plausible_completions = Trie(filtered_completions)
+                    all_feasible_tokens[id_token] = plausible_completions
+                    all_possible_completions.merge(plausible_completions)
                 else:
                     denied[id_token] = None
                 text_file.delete(len(token))
@@ -607,7 +607,7 @@ def sample(
         assert len(next_token_scores) == 1
 
         completion: Optional[str] = None
-        if gen_context.inside_line_comment or gen_context.inside_block_comment:
+        if os.getenv('PLAIN') is not None or gen_context.inside_line_comment or gen_context.inside_block_comment:
             # Modified from GenerationMixin.get_logits_warper
             # if temperature is not None and temperature != 1.0:
             #     warpers.append(TemperatureLogitsWarper(temperature))
@@ -658,32 +658,38 @@ def sample(
                     #     breakpoint()
                     # if False:
                     #     pass
-                    if not empty_completion and len(completions) <= 5 and len(completions) > 0:
+                    # if not empty_completion and len(completions) <= 5 and len(completions) > 0:
+                    if not empty_completion and len(completions) == 1:
                         completion = random.choice(completions)
-                    else:
                         # breakpoint()
-                        warpers = LogitsProcessorList()
-                        warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
-                        next_token_scores = warpers(input_ids, next_token_scores)
-                        assert len(next_token_scores) == 1
-                        scores = next_token_scores[0]
-                        probs = nn.functional.softmax(scores, dim=-1)
-                        next_token_ids = torch.multinomial(probs, num_samples=1)
-                        next_token_id_item = next_token_ids.item()
-                        next_token = CODET5_TOKEN_MAP[next_token_id_item]
-                        if empty_completion:
-                            completion = next_token
-                        else:
-                            possible_completions = []
-                            for compl in completions:
-                                if len(compl) <= len(next_token) and next_token.startswith(compl):
-                                    possible_completions.append(compl)
-                                elif len(compl) > len(next_token) and compl.startswith(next_token):
-                                    possible_completions.append(compl)
-                            if len(possible_completions) == 0:
-                                completion = next_token # ?
-                            else:
-                                completion = random.choice(possible_completions)
+                    else:
+                        completion = None
+                    # else:
+                    #     # breakpoint()
+                    #     warpers = LogitsProcessorList()
+                    #     warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+                    #     next_token_scores = warpers(input_ids, next_token_scores)
+                    #     assert len(next_token_scores) == 1
+                    #     scores = next_token_scores[0]
+                    #     probs = nn.functional.softmax(scores, dim=-1)
+                    #     next_token_ids = torch.multinomial(probs, num_samples=1)
+                    #     next_token_id_item = next_token_ids.item()
+                    #     next_token = CODET5_TOKEN_MAP[next_token_id_item]
+                    #     if empty_completion:
+                    #         completion = next_token
+                    #     else:
+                    #         plausible_completions = []
+                    #         for compl in completions:
+                    #             if len(compl) <= len(next_token) and next_token.startswith(compl):
+                    #                 plausible_completions.append(compl)
+                    #             elif len(compl) > len(next_token) and compl.startswith(next_token):
+                    #                 plausible_completions.append(compl)
+                    #         if len(completions) == 0:
+                    #             completion = None
+                    #         elif len(plausible_completions) == 0:
+                    #             completion = random.choice(completions)
+                    #         else:
+                    #             completion = random.choice(plausible_completions)
                     if completion is not None:
                         with open('completions', 'a') as f:
                             f.write(f'Completion: {completion}, id_token: {id_token}, file: {text_file.content[text_file.cursor - 20:text_file.cursor]}')
@@ -706,7 +712,7 @@ def sample(
                 assert len(input_ids) == 1
                 input_ids_list = input_ids[0].tolist()
 
-                considered_next_token_ids_list = considered_next_token_ids.tolist()
+                considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
                 state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
                 if state_bytes in COMPLETE_MEMOIZED:
                     print("HUGE HIT")
