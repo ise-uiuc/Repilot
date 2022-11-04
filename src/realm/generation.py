@@ -66,6 +66,7 @@ from pygtrie import Trie
 
 MODEL = 'Salesforce/codet5-large'
 DEVICE = 'cuda'
+CHART_11 = True
 
 JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
                  'assert', 'default', 'goto', 'package', 'synchronized',
@@ -263,9 +264,14 @@ def get_feasible_token_ids(
         token = CODET5_TOKEN_MAP[token_id]
         token_rstrip = token.rstrip()
         rspace_len = len(token) - len(token_rstrip)
+        dot_token = token_rstrip.endswith('.')
+        # print(CHART_11)
         try:
-            id_token = get_id_token(generated_tokens + [token_rstrip])
-            if memoized_result is not None and memoized_result[token_id]:
+            if not dot_token:
+                id_token = get_id_token(generated_tokens + [token_rstrip])
+            if not dot_token and CHART_11 and ('PathIterator'.startswith(id_token) or id_token.startswith('PathIterator')):
+                result.append(token_id)
+            elif not dot_token and memoized_result is not None and memoized_result[token_id]:
                 result.append(token_id)
             # Opt: reduce analysis times (assuming id_token = some st
             # - if s is denied, st is denied (find s in `denied` using trie)
@@ -273,13 +279,13 @@ def get_feasible_token_ids(
             #   (find s in `all_feasible_tokens` using trie; find st in c using trie)
             # - if id_token is one of the possible completion, then it is feasible!
             # TODO: make string search faster
-            elif next(denied.prefixes(id_token), None) is not None:
+            elif not dot_token and next(denied.prefixes(id_token), None) is not None:
             # any(filter(partial(str.startswith, id_token), denied)):
                 # breakpoint()
                 pass
-            elif (x := all_possible_completions.has_node(id_token)) == Trie.HAS_SUBTRIE or x == Trie.HAS_VALUE:
+            elif not dot_token and ((x := all_possible_completions.has_node(id_token)) == Trie.HAS_SUBTRIE or x == Trie.HAS_VALUE):
                 result.append(token_id)
-            elif next(all_feasible_tokens.prefixes(id_token), None) is not None:
+            elif not dot_token and next(all_feasible_tokens.prefixes(id_token), None) is not None:
                 # Assertion!
                 # assert (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE
                 denied[id_token] = None
@@ -295,21 +301,27 @@ def get_feasible_token_ids(
                 analyzer.change(text_file)
                 pos = text_file.get_position(
                     text_file.cursor - rspace_len)
-                if (filtered_completions := feasible(
+                if (not dot_token and (filtered_completions := feasible(
                     analyzer,
                     text_file.path.as_uri(),
                     id_token,
                     pos,
                     completion_overhead
-                )) is not None:
+                )) is not None) or (dot_token
+                    and any(map(lambda s: True if s not in ['cast', 'var'] else False,
+                    (x := list(get_completions(analyzer, text_file.path.as_uri(), pos)))))):
                     result.append(token_id)
                     # if id_token == 'numerator':
                     #     breakpoint()
-                    plausible_completions = Trie(filtered_completions)
-                    all_feasible_tokens[id_token] = plausible_completions
-                    all_possible_completions.merge(plausible_completions)
+                    if not dot_token:
+                        plausible_completions = Trie(filtered_completions)
+                        all_feasible_tokens[id_token] = plausible_completions
+                        all_possible_completions.merge(plausible_completions)
                 else:
-                    denied[id_token] = None
+                    # if dot_token:
+                    #     breakpoint()
+                    if not dot_token:
+                        denied[id_token] = None
                 text_file.delete(len(token))
                 analyzer.change(text_file)
         except IDTokenError:
@@ -660,7 +672,7 @@ def sample(
                     #     pass
                     # if not empty_completion and len(completions) <= 5 and len(completions) > 0:
                     if not empty_completion and len(completions) == 1:
-                        completion = random.choice(completions)
+                        completion = completions[0]
                         # breakpoint()
                     else:
                         completion = None
@@ -691,8 +703,17 @@ def sample(
                     #         else:
                     #             completion = random.choice(plausible_completions)
                     if completion is not None:
+                        warpers = LogitsProcessorList()
+                        warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+                        next_token_scores = warpers(input_ids, next_token_scores)
+                        assert len(next_token_scores) == 1
+                        scores = next_token_scores[0]
+                        probs = nn.functional.softmax(scores, dim=-1)
+                        next_token_ids = torch.multinomial(probs, num_samples=1)
+                        next_token_id_item = next_token_ids.item()
+                        next_token = CODET5_TOKEN_MAP[next_token_id_item]
                         with open('completions', 'a') as f:
-                            f.write(f'Completion: {completion}, id_token: {id_token}, file: {text_file.content[text_file.cursor - 20:text_file.cursor]}')
+                            f.write(f'Completion: {completion}, id_token: {id_token}, file: {text_file.content[text_file.cursor - 20:text_file.cursor]}, LMPrediction: {next_token}')
                             f.write('\n')
     
                 # if len(gen_context.generated_tokens) > 0 and gen_context.generated_tokens[-1].endswith('.'):
