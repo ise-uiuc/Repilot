@@ -57,8 +57,18 @@ model = None
 
 
 def server_cmd(bug_id: str) -> List[str]:
-    return shlex.split(f"/home/yuxiang/Developer/jdt-lsp/bin/jdtls \
-        -configuration /home/yuxiang/.cache/jdtls \
+    JDT_REPO = "/home/yuxiang/fastd/Developer/eclipse.jdt.ls/org.eclipse.jdt.ls.product/target/repository"
+    return shlex.split(f"java -Declipse.application=org.eclipse.jdt.ls.core.id1 \
+        -Dosgi.bundles.defaultStartLevel=4 \
+        -Declipse.product=org.eclipse.jdt.ls.core.product \
+        -Dlog.level=ALL \
+        -noverify \
+        -Xmx1G \
+        --add-modules=ALL-SYSTEM \
+        --add-opens java.base/java.util=ALL-UNNAMED \
+        --add-opens java.base/java.lang=ALL-UNNAMED \
+        -jar {JDT_REPO}/plugins/org.eclipse.equinox.launcher_1.6.400.v20210924-0641.jar \
+        -configuration {JDT_REPO}/config_linux \
         -data .lsp_data/{uuid.uuid4()}")
 
 
@@ -422,7 +432,7 @@ if __name__ == '__main__':
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
         # TODO (DONE): IMPORTANT!!!!! Memorize multiple changes when doing repair
-        if not bug_id.startswith('Chart'):
+        if not bug_id.startswith('Closure'):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
@@ -433,7 +443,7 @@ if __name__ == '__main__':
         #     continue
         print(bug_id)
         gen.CHART_11 = bug_id == 'Chart-11'
-        patch_groups = repair_proj(result_dir, bug_id, bug, 200)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 1)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):

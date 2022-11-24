@@ -58,6 +58,7 @@ from realm.lsp.text import TextDocument, TextFile
 from realm import utils
 from functools import partial
 from pygtrie import Trie
+import javalang
 
 # class IncoderEOM(StoppingCriteria):
 #     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
@@ -124,7 +125,7 @@ class LspContext(NamedTuple):
 
 CODET5 = T5ForConditionalGeneration.from_pretrained(MODEL).to(DEVICE)
 CODET5_TOKENIZER: PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL)
-CODET5_INFERENCE_CONFIG = LMInferenceConfig(0.8, 50, 70, 2)
+CODET5_INFERENCE_CONFIG = LMInferenceConfig(0.8, 50, 500, 2)
 CODET5_VOC_SIZE: int = CODET5.config.vocab_size
 CODET5_TOKEN_MAP: List[str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), [
     CODET5_TOKENIZER.decode(
@@ -133,6 +134,34 @@ CODET5_TOKEN_MAP: List[str] = utils.load_and_cache_data(Path('codet5_token_map.p
         clean_up_tokenization_spaces=False
     ) for id in range(CODET5_VOC_SIZE)
 ])
+
+def prepare_inputs_for_generation(
+    self,
+    input_ids,
+    past=None,
+    attention_mask=None,
+    head_mask=None,
+    decoder_head_mask=None,
+    cross_attn_head_mask=None,
+    use_cache=None,
+    encoder_outputs=None,
+    **kwargs
+):
+
+    # cut decoder_input_ids if past is used
+    if past is not None:
+        input_ids = input_ids[:, -1:]
+
+    return {
+        "decoder_input_ids": input_ids,
+        "past_key_values": past,
+        "encoder_outputs": encoder_outputs,
+        "attention_mask": attention_mask,
+        "head_mask": head_mask,
+        "decoder_head_mask": decoder_head_mask,
+        "cross_attn_head_mask": cross_attn_head_mask,
+        "use_cache": use_cache,
+    }
 
 
 def codet5_context(prefix: str, suffix: str) -> str:
@@ -165,6 +194,14 @@ def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> I
         },
         'position': pos,
     })
+    new_completion_result = analyzer.client.newCompletion({
+        'textDocument': {
+            'uri': uri
+        },
+        'position': pos,
+    })
+    # if new_completion_result['result'] is None:
+    #     breakpoint()
     # breakpoint()
     # if 'result' in completion_result:
     completions: Iterator[str] = (
@@ -261,6 +298,12 @@ def get_feasible_token_ids(
     for token_id in considered_token_ids:
         if len(result) == top_k:
             break
+        # if token_id == 32098 or token_id == CODET5_INFERENCE_CONFIG.end_id:
+        #     try:
+        #         javalang.parse.parse(text_file.content)
+        #     except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
+        #         # breakpoint()
+        #         continue
         token = CODET5_TOKEN_MAP[token_id]
         token_rstrip = token.rstrip()
         rspace_len = len(token) - len(token_rstrip)
@@ -601,6 +644,7 @@ def sample(
         # if len(gen_context.generated_tokens) > 0 and 'dataset' in gen_context.generated_tokens[-1]:
         #     breakpoint()
         # prepare model inputs
+        # TODO: set use_cache to False when using our own completion (length > 1)
         model_inputs = model.prepare_inputs_for_generation(
             input_ids, **model_kwargs)
 
@@ -629,8 +673,10 @@ def sample(
             assert len(next_token_scores) == 1
             scores = next_token_scores[0]
         else:
+            found = False
+            completions = []
+            empty_completion = False
             if os.getenv('ACTIVE') is not None and len(gen_tokens := gen_context.generated_tokens) > 0:
-                found = False
                 id_token = ''
                 if gen_tokens[-1][-1] == '.':
                     found = True
@@ -659,8 +705,6 @@ def sample(
                             get_completions(analyzer, text_file.path.as_uri(), text_file.get_position(text_file.cursor)))
                         if c.startswith(id_token)
                     )
-                    completions = []
-                    empty_completion = False
                     for completion in completions_iter:
                         if completion == '':
                             empty_completion = True
@@ -734,33 +778,56 @@ def sample(
                 input_ids_list = input_ids[0].tolist()
 
                 considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
-                state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
-                if state_bytes in COMPLETE_MEMOIZED:
-                    print("HUGE HIT")
-                    # breakpoint()
-                    feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
+                if found and not empty_completion and len(completions) > 1:
+                    assert completion is None
+                    warpers = LogitsProcessorList()
+                    warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+                    next_token_scores = warpers(input_ids, next_token_scores)
+                    assert len(next_token_scores) == 1
+                    scores = next_token_scores[0]
+                    probs = nn.functional.softmax(scores, dim=-1)
+                    next_token_ids = torch.multinomial(probs, num_samples=1)
+                    next_token_id_item = next_token_ids.item()
+                    next_token = CODET5_TOKEN_MAP[next_token_id_item]
+                    # for c in completions:
+                    #     if c.startswith(next_token) or next_token.startswith(c):
+                    #         completion = c
+                    #         break
+                    # if completion is None:
+                    #     completion = random.choice(completions)
+                    completion = completions[0]
+                    with open('active', 'a') as f:
+                        text_file = lsp_context.text_file
+                        f.write(f'Completion: {completion}, PLM: {next_token}, context: {text_file.content[text_file.cursor - 20:text_file.cursor]}')
+                        f.write('\n')
                 else:
-                    lsp_context.analyzer.change(lsp_context.text_file)
-                    input_ids_bytes = pickle.dumps(input_ids_list)
-                    # TODO: delete this
-                    partial_memoized_result = PARTIAL_MEMOIZED.get(input_ids_bytes)
-                    if partial_memoized_result is not None:
-                        print("SMALL HIT")
+                    state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
+                    if state_bytes in COMPLETE_MEMOIZED:
+                        print("HUGE HIT")
                         # breakpoint()
-                    feasible_next_token_ids = get_feasible_token_ids(
-                        partial_memoized_result,
-                        gen_context.generated_tokens,
-                        lsp_context,
-                        considered_next_token_ids_list,
-                        top_k,
-                        completion_overhead,
-                    )
-                    assert len(feasible_next_token_ids) <= top_k
-                    COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
-                    if partial_memoized_result is None:
-                        PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
-                    for idx in feasible_next_token_ids:
-                        PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
+                        feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
+                    else:
+                        lsp_context.analyzer.change(lsp_context.text_file)
+                        input_ids_bytes = pickle.dumps(input_ids_list)
+                        # TODO: delete this
+                        partial_memoized_result = PARTIAL_MEMOIZED.get(input_ids_bytes)
+                        if partial_memoized_result is not None:
+                            print("SMALL HIT")
+                            # breakpoint()
+                        feasible_next_token_ids = get_feasible_token_ids(
+                            partial_memoized_result,
+                            gen_context.generated_tokens,
+                            lsp_context,
+                            considered_next_token_ids_list,
+                            top_k,
+                            completion_overhead,
+                        )
+                        assert len(feasible_next_token_ids) <= top_k
+                        COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
+                        if partial_memoized_result is None:
+                            PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
+                        for idx in feasible_next_token_ids:
+                            PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
 
                 if len(feasible_next_token_ids) != 0:
                     # rewrite scores
@@ -811,6 +878,7 @@ def sample(
         # update generated ids, model inputs, and length for next step
         # NOTE: originally next_token_ids[:, None] because for each batch it generate 'one' token;
         #  but here we do not consider batch and we can generate multiple tokens
+        use_cache = len(next_token_ids_list) == 1
         input_ids = torch.cat([input_ids, next_token_ids[None, :]], dim=-1)
         model_kwargs = model._update_model_kwargs_for_generation(
             outputs, model_kwargs, is_encoder_decoder=model.config.is_encoder_decoder

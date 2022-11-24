@@ -224,6 +224,7 @@ class LSPClient(Thread):
         'textDocument/didChange', spec.DidChangeTextDocumentParams)
     textDocument_completion = d_call(
         'textDocument/completion', spec.CompletionParams)
+    newCompletion = d_call('newCompletion', spec.CompletionParams)
 
     # @d_call
     # def _initialize(pid: int, proj_path: PathLike, java_home: str) -> RPC:  # type: ignore[misc] # noqa

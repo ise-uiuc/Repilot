@@ -45,7 +45,7 @@ class JdtLspAnalyzer:
     
     def init_client(self):
         self.client = LSPClient(
-            self.process.stdin, self.process.stdout, self.verbose, 30)
+            self.process.stdin, self.process.stdout, self.verbose, 120)
         self.client.start()
 
 
