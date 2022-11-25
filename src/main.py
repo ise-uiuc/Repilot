@@ -6,6 +6,7 @@ from realm.syntax import reduce
 # print(doc)
 # exit()
 
+import sys
 import difflib
 import multiprocessing as mp
 from enum import Enum
@@ -408,7 +409,6 @@ def validate_all_bugs(all_bugs: dict, proj_dir: Path):
 
 if __name__ == '__main__':
     if os.getenv('VAL') is not None:
-        import sys
         result_dir = Path(sys.argv[1])
         all_bugs = dataset.all_bugs()
         assert result_dir.exists()
@@ -423,7 +423,7 @@ if __name__ == '__main__':
     from realm import generation as gen
     torch.manual_seed(0)
     random.seed(0)
-    result_dir = Path(f'results-{uuid.uuid4()}')
+    result_dir = Path(f'results-{uuid.uuid4() if len(sys.argv) < 2 else sys.argv[1]}')
     if os.getenv('DEBUG') is not None:
         result_dir = Path('../results') / 'temp' / result_dir
     result_dir.mkdir(exist_ok=False, parents=True)
@@ -432,7 +432,7 @@ if __name__ == '__main__':
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
         # TODO (DONE): IMPORTANT!!!!! Memorize multiple changes when doing repair
-        if not bug_id.startswith('Closure'):
+        if not bug_id.startswith('Chart'):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
@@ -443,7 +443,7 @@ if __name__ == '__main__':
         #     continue
         print(bug_id)
         gen.CHART_11 = bug_id == 'Chart-11'
-        patch_groups = repair_proj(result_dir, bug_id, bug, 1)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 200)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):

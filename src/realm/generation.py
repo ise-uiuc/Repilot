@@ -125,7 +125,7 @@ class LspContext(NamedTuple):
 
 CODET5 = T5ForConditionalGeneration.from_pretrained(MODEL).to(DEVICE)
 CODET5_TOKENIZER: PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL)
-CODET5_INFERENCE_CONFIG = LMInferenceConfig(0.8, 50, 500, 2)
+CODET5_INFERENCE_CONFIG = LMInferenceConfig(0.8, 50, 100, 2)
 CODET5_VOC_SIZE: int = CODET5.config.vocab_size
 CODET5_TOKEN_MAP: List[str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), [
     CODET5_TOKENIZER.decode(
@@ -226,18 +226,22 @@ def feasible(
     #         f'Cannot recognize {token} as an identifier, probabily unicode.')
     # assert token not in JAVA_KEYWORDS
     start_time = time.time()
+    if is_special_token(token):
+        return True
     completions = get_completions(analyzer, uri, pos)
     completion_overhead.append(time.time() - start_time)
     if completions is None:
+        print('UNKNOWN:', token)
+        # breakpoint()
         return True
-    filtered_completions = [c for c in completions if c['target'].startswith(c['source'])]
+    filtered_completions = [(c['source'], c['target']) for c in completions if c['target'].startswith(c['source'])]
     # else:
     #     print(uri)
     #     print(completion_result['error'])
     #     print(completion_result['error']['data'])
     #     raise RuntimeError
     if len(filtered_completions) > 0:
-        print('Accepted:', token)#, token, completions)
+        print('Accepted:', token, filtered_completions[0])#, token, completions)
         # if 'lastFraction' in completions:
         #     breakpoint()
         # print("Yes!")
