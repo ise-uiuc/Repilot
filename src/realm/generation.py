@@ -187,13 +187,13 @@ def repair(
         temperature=lm_context.inference_config.temperature,
     )
 
-def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> Iterator[str]:
-    completion_result = analyzer.client.textDocument_completion({
-        'textDocument': {
-            'uri': uri
-        },
-        'position': pos,
-    })
+def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> Optional[List[dict]]:
+    # completion_result = analyzer.client.textDocument_completion({
+    #     'textDocument': {
+    #         'uri': uri
+    #     },
+    #     'position': pos,
+    # })
     new_completion_result = analyzer.client.newCompletion({
         'textDocument': {
             'uri': uri
@@ -204,30 +204,33 @@ def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> I
     #     breakpoint()
     # breakpoint()
     # if 'result' in completion_result:
-    completions: Iterator[str] = (
-        item['textEdit']['newText']  # type: ignore # noqa
-        if 'textEdit' in item
-        else item['insertText']  # type: ignore # noqa
-        for item in completion_result['result']['items']  # type: ignore # noqa
-    )
-    return completions
+    # completions: Iterator[str] = (
+    #     item['textEdit']['newText']  # type: ignore # noqa
+    #     if 'textEdit' in item
+    #     else item['insertText']  # type: ignore # noqa
+    #     for item in new_completion_result['result']  # type: ignore # noqa
+    # )
+    return new_completion_result['result']
 
+# TODO: rewrite the logic
 def feasible(
     analyzer: JdtLspAnalyzer,
     uri: str,
     token: str,
     pos: spec.Position,
     completion_overhead: List[float],
-) -> Optional[Dict[str, None]]:
+) -> bool:
     """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
-    if regex.match('^([a-zA-Z_][a-zA-Z\\d_]*)$', token) is None:
-        warning(
-            f'Cannot recognize {token} as an identifier, probabily unicode.')
-    assert token not in JAVA_KEYWORDS
+    # if regex.match('^([a-zA-Z_][a-zA-Z\\d_]*)$', token) is None:
+    #     warning(
+    #         f'Cannot recognize {token} as an identifier, probabily unicode.')
+    # assert token not in JAVA_KEYWORDS
     start_time = time.time()
     completions = get_completions(analyzer, uri, pos)
     completion_overhead.append(time.time() - start_time)
-    filtered_completions: Dict[str, None] = {c: None for c in completions if c.startswith(token)}
+    if completions is None:
+        return True
+    filtered_completions = [c for c in completions if c['target'].startswith(c['source'])]
     # else:
     #     print(uri)
     #     print(completion_result['error'])
@@ -239,10 +242,10 @@ def feasible(
         #     breakpoint()
         # print("Yes!")
         # print(completions)
-        return filtered_completions
+        return True
     else:
         print('Denied', token)#, token, completions)
-        return None
+        return False
 
 def is_special_token(token: str) -> bool:
     return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
@@ -292,9 +295,9 @@ def get_feasible_token_ids(
     text_file = lsp_context.text_file
     # analyzer.client.stop()
     result: List[int] = []
-    denied = Trie()
-    all_feasible_tokens = Trie()
-    all_possible_completions = Trie()
+    # denied = Trie()
+    # all_feasible_tokens = Trie()
+    # all_possible_completions = Trie()
     for token_id in considered_token_ids:
         if len(result) == top_k:
             break
@@ -305,33 +308,33 @@ def get_feasible_token_ids(
         #         # breakpoint()
         #         continue
         token = CODET5_TOKEN_MAP[token_id]
-        token_rstrip = token.rstrip()
-        rspace_len = len(token) - len(token_rstrip)
-        dot_token = token_rstrip.endswith('.')
+        # token_rstrip = token.rstrip()
+        # rspace_len = len(token) - len(token_rstrip)
+        # dot_token = token_rstrip.endswith('.')
         # print(CHART_11)
         try:
-            if not dot_token:
-                id_token = get_id_token(generated_tokens + [token_rstrip])
-            if not dot_token and CHART_11 and ('PathIterator'.startswith(id_token) or id_token.startswith('PathIterator')):
+            # if not dot_token:
+                # id_token = get_id_token(generated_tokens + [token_rstrip])
+            # if not dot_token and CHART_11 and ('PathIterator'.startswith(id_token) or id_token.startswith('PathIterator')):
+            #     result.append(token_id)
+            if memoized_result is not None and memoized_result[token_id]:
                 result.append(token_id)
-            elif not dot_token and memoized_result is not None and memoized_result[token_id]:
-                result.append(token_id)
-            # Opt: reduce analysis times (assuming id_token = some st
-            # - if s is denied, st is denied (find s in `denied` using trie)
-            # - if c is all possible completions for s, st should be a prefix of one completion in c
-            #   (find s in `all_feasible_tokens` using trie; find st in c using trie)
-            # - if id_token is one of the possible completion, then it is feasible!
-            # TODO: make string search faster
-            elif not dot_token and next(denied.prefixes(id_token), None) is not None:
-            # any(filter(partial(str.startswith, id_token), denied)):
-                # breakpoint()
-                pass
-            elif not dot_token and ((x := all_possible_completions.has_node(id_token)) == Trie.HAS_SUBTRIE or x == Trie.HAS_VALUE):
-                result.append(token_id)
-            elif not dot_token and next(all_feasible_tokens.prefixes(id_token), None) is not None:
-                # Assertion!
-                # assert (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE
-                denied[id_token] = None
+            # # Opt: reduce analysis times (assuming id_token = some st
+            # # - if s is denied, st is denied (find s in `denied` using trie)
+            # # - if c is all possible completions for s, st should be a prefix of one completion in c
+            # #   (find s in `all_feasible_tokens` using trie; find st in c using trie)
+            # # - if id_token is one of the possible completion, then it is feasible!
+            # # TODO: make string search faster
+            # elif not dot_token and next(denied.prefixes(id_token), None) is not None:
+            # # any(filter(partial(str.startswith, id_token), denied)):
+            #     # breakpoint()
+            #     pass
+            # elif not dot_token and ((x := all_possible_completions.has_node(id_token)) == Trie.HAS_SUBTRIE or x == Trie.HAS_VALUE):
+            #     result.append(token_id)
+            # elif not dot_token and next(all_feasible_tokens.prefixes(id_token), None) is not None:
+            #     # Assertion!
+            #     # assert (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE
+            #     denied[id_token] = None
                 # else:
                 # (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE):
             # any(filter(
@@ -342,29 +345,29 @@ def get_feasible_token_ids(
                 # No exception afterwards
                 text_file.add(token)
                 analyzer.change(text_file)
-                pos = text_file.get_position(
-                    text_file.cursor - rspace_len)
-                if (not dot_token and (filtered_completions := feasible(
+                pos = text_file.get_position(text_file.cursor)
+                if feasible(
                     analyzer,
                     text_file.path.as_uri(),
-                    id_token,
+                    token,
                     pos,
                     completion_overhead
-                )) is not None) or (dot_token
-                    and any(map(lambda s: True if s not in ['cast', 'var'] else False,
-                    (x := list(get_completions(analyzer, text_file.path.as_uri(), pos)))))):
+                ):
+                    # or (dot_token
+                    # and any(map(lambda s: True if s not in ['cast', 'var'] else False,
+                    # (x := list(get_completions(analyzer, text_file.path.as_uri(), pos)))))):
                     result.append(token_id)
                     # if id_token == 'numerator':
                     #     breakpoint()
-                    if not dot_token:
-                        plausible_completions = Trie(filtered_completions)
-                        all_feasible_tokens[id_token] = plausible_completions
-                        all_possible_completions.merge(plausible_completions)
-                else:
-                    # if dot_token:
-                    #     breakpoint()
-                    if not dot_token:
-                        denied[id_token] = None
+                    # if not dot_token:
+                    #     plausible_completions = Trie(filtered_completions)
+                    #     all_feasible_tokens[id_token] = plausible_completions
+                    #     all_possible_completions.merge(plausible_completions)
+                # else:
+                #     # if dot_token:
+                #     #     breakpoint()
+                #     if not dot_token:
+                #         denied[id_token] = None
                 text_file.delete(len(token))
                 analyzer.change(text_file)
         except IDTokenError:
