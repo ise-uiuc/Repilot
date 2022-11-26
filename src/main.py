@@ -423,7 +423,7 @@ if __name__ == '__main__':
     from realm import generation as gen
     torch.manual_seed(0)
     random.seed(0)
-    result_dir = Path(f'results-{uuid.uuid4() if len(sys.argv) < 2 else sys.argv[1]}')
+    result_dir = Path(f'results-{uuid.uuid4()}' if len(sys.argv) < 2 else sys.argv[1])
     if os.getenv('DEBUG') is not None:
         result_dir = Path('../results') / 'temp' / result_dir
     result_dir.mkdir(exist_ok=False, parents=True)
@@ -432,7 +432,7 @@ if __name__ == '__main__':
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
         # TODO (DONE): IMPORTANT!!!!! Memorize multiple changes when doing repair
-        if not bug_id.startswith('Chart'):
+        if not bug_id.startswith('Closure'):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
