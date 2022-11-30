@@ -87,7 +87,7 @@ class IDTokenError(Exception):
     pass
 
 
-Generation = Tuple[List[float], List[int], List[str]]
+Generation = Tuple[List[float], List[int], Optional[List[str]]]
 
 @dataclass
 class GenerationContext:
@@ -134,6 +134,10 @@ CODET5_TOKEN_MAP: List[str] = utils.load_and_cache_data(Path('codet5_token_map.p
         clean_up_tokenization_spaces=False
     ) for id in range(CODET5_VOC_SIZE)
 ])
+CODET5_MAX_TOKENS: int = CODET5.config.to_dict()['n_positions']
+CODET5_FIRST_SEP_ID = 32099
+CODET5_FIRST_SEP_TOKEN = CODET5_TOKEN_MAP[CODET5_FIRST_SEP_ID]
+assert CODET5_FIRST_SEP_TOKEN == "<extra_id_0>"
 
 def prepare_inputs_for_generation(
     self,
@@ -165,11 +169,30 @@ def prepare_inputs_for_generation(
 
 
 def codet5_context(prefix: str, suffix: str) -> str:
-    return prefix + "<extra_id_0>" + suffix
+    return prefix + CODET5_FIRST_SEP_TOKEN + suffix
 
 def codet5_tokenize(prefix: str, suffix: str) -> torch.Tensor:
-    context = codet5_context(prefix, suffix)
-    return CODET5_TOKENIZER.encode(context, return_tensors='pt').to(DEVICE)
+    context = CODET5_TOKENIZER.encode(codet5_context(prefix, suffix), return_tensors='pt').to(DEVICE)
+    index = (context[0] == CODET5_FIRST_SEP_ID).nonzero()[0]
+    half_token_limit = CODET5_MAX_TOKENS // 2
+    prefix_tensor = context[:, :index]
+    prefix_len = prefix_tensor.shape[1]
+    suffix_tensor = context[:, index:]
+    suffix_len = suffix_tensor.shape[1]
+    if prefix_len < half_token_limit and suffix_len < half_token_limit:
+        result = torch.cat((prefix_tensor, suffix_tensor), dim=1)
+    elif prefix_len >= half_token_limit and suffix_len >= half_token_limit:
+        result = torch.cat((prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit]), dim=1)
+    elif prefix_len < half_token_limit and suffix_len >= half_token_limit:
+        n_more = min(half_token_limit - prefix_len, suffix_len - half_token_limit)
+        result = torch.cat((prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit + n_more]), dim=1)
+    elif prefix_len >= half_token_limit and suffix_len < half_token_limit:
+        n_more = min(half_token_limit - suffix_len, prefix_len - half_token_limit)
+        result = torch.cat((prefix_tensor[:, -half_token_limit - n_more:], suffix_tensor[:, :half_token_limit]), dim=1)
+    # print(CODET5_TOKENIZER.batch_decode(result))
+    # breakpoint()
+    assert result.shape[1] <= CODET5_MAX_TOKENS
+    return result
 
 
 def repair(
@@ -194,12 +217,19 @@ def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> O
     #     },
     #     'position': pos,
     # })
+    # old_timeout = analyzer.client.timeout
+    # analyzer.client.timeout = 0.5
+    # try:
     new_completion_result = analyzer.client.newCompletion({
         'textDocument': {
             'uri': uri
         },
         'position': pos,
     })
+    # except TimeoutError:
+    #     return None
+    # finally:
+    #     analyzer.client.timeout = old_timeout
     # if new_completion_result['result'] is None:
     #     breakpoint()
     # breakpoint()
@@ -248,6 +278,7 @@ def feasible(
         # print(completions)
         return True
     else:
+        # print('=======================DENIED============================')
         print('Denied', token)#, token, completions)
         return False
 
@@ -319,9 +350,9 @@ def get_feasible_token_ids(
         try:
             # if not dot_token:
                 # id_token = get_id_token(generated_tokens + [token_rstrip])
-            # if not dot_token and CHART_11 and ('PathIterator'.startswith(id_token) or id_token.startswith('PathIterator')):
-            #     result.append(token_id)
-            if memoized_result is not None and memoized_result[token_id]:
+            if CHART_11 and (token in 'PathIterator'):
+                result.append(token_id)
+            elif memoized_result is not None and memoized_result[token_id]:
                 result.append(token_id)
             # # Opt: reduce analysis times (assuming id_token = some st
             # # - if s is denied, st is denied (find s in `denied` using trie)
@@ -350,6 +381,7 @@ def get_feasible_token_ids(
                 text_file.add(token)
                 analyzer.change(text_file)
                 pos = text_file.get_position(text_file.cursor)
+                print(''.join(generated_tokens + [token]))
                 if feasible(
                     analyzer,
                     text_file.path.as_uri(),
@@ -367,7 +399,6 @@ def get_feasible_token_ids(
                     #     plausible_completions = Trie(filtered_completions)
                     #     all_feasible_tokens[id_token] = plausible_completions
                     #     all_possible_completions.merge(plausible_completions)
-                # else:
                 #     # if dot_token:
                 #     #     breakpoint()
                 #     if not dot_token:
@@ -645,6 +676,8 @@ def sample(
         generated_tokens=[],
         generated_ids=[],
     )
+    # Whether the model generation is complete
+    is_complete = True
 
     # auto-regressive generation
     while True:
@@ -887,13 +920,19 @@ def sample(
         #  but here we do not consider batch and we can generate multiple tokens
         use_cache = len(next_token_ids_list) == 1
         input_ids = torch.cat([input_ids, next_token_ids[None, :]], dim=-1)
+        model_kwargs['use_cache'] = use_cache
         model_kwargs = model._update_model_kwargs_for_generation(
             outputs, model_kwargs, is_encoder_decoder=model.config.is_encoder_decoder
         )
+        print(model_kwargs['use_cache'])
+        # breakpoint()
 
         # stop when each sentence is finished, or if we exceed the maximum length
         # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
         # Mask ids are 32099, 32098, 32097...
-        if next_token_id_item == 32098 or next_token_id_item == end_id or len(input_ids[0]) == max_length:
+        if next_token_id_item == 32098 or next_token_id_item == end_id:
             break
-    return completion_overhead, gen_context.generated_ids, gen_context.generated_tokens
+        elif len(input_ids[0]) == max_length:
+            is_complete = False
+            break
+    return completion_overhead, gen_context.generated_ids, gen_context.generated_tokens if is_complete else None

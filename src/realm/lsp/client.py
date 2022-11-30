@@ -108,6 +108,7 @@ class LSPClient(Thread):
                     condition.notify()
                     condition.release()
             # else:
+            #     print(server_response)
             #     assert False, server_response
 
     def call(self, method: str, params: spec.array | spec.object) -> spec.ResponseMessage:

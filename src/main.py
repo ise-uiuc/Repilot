@@ -116,6 +116,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
 
+        generation_successful = True
         for buggy_file_idx, buggy_file in enumerate(bug.buggy_files):
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
             if idx == 0:
@@ -138,9 +139,11 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 end_index = text_file.form_index(end, 0)
 
                 # TODO: justify 25
-                prefix_start = text_file.form_index(
-                    max(0, start_pos['line'] - 25), 0)
-                suffix_end = text_file.form_index(end_pos['line'] + 25, 0)
+                # prefix_start = text_file.form_index(
+                #     max(0, start_pos['line'] - 25), 0)
+                prefix_start = 0
+                # suffix_end = text_file.form_index(end_pos['line'] + 25, 0)
+                suffix_end = len(text_file.content)
                 prefix = text_file.content[prefix_start:start_index]
                 suffix = '\n' + text_file.content[end_index:suffix_end]
 
@@ -182,8 +185,11 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     print('Fatal timeout error')
                     with open('timeout-error', 'a') as f:
                         f.write("TIMEOUT\n")
-                    output = ['']
+                    output = None
                     completion_overhead = []
+                if output is None:
+                    generation_successful = False
+                    break
                 end_time = time.time()
                 times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
@@ -195,7 +201,11 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 # breakpoint()
                 print([f'{t:.2f}' for t in times])
             # text_file.write()
+            if not generation_successful:
+                break
             text_files.append(text_file)
+        if not generation_successful:
+            continue
         patch_groups.append(text_files)
         # TODO: opt
         save_dir = base_dir / str(len(patch_groups))
@@ -389,7 +399,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     return result
 
 
-BATCH_SIZE = 16
+BATCH_SIZE = 12
 
 
 def validate_all_bugs(all_bugs: dict, proj_dir: Path):
@@ -432,7 +442,7 @@ if __name__ == '__main__':
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
         # TODO (DONE): IMPORTANT!!!!! Memorize multiple changes when doing repair
-        if not bug_id.startswith('Closure'):
+        if not bug_id.startswith('Chart-23'):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
@@ -443,7 +453,7 @@ if __name__ == '__main__':
         #     continue
         print(bug_id)
         gen.CHART_11 = bug_id == 'Chart-11'
-        patch_groups = repair_proj(result_dir, bug_id, bug, 200)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 10)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):
