@@ -87,7 +87,8 @@ class IDTokenError(Exception):
     pass
 
 
-Generation = Tuple[List[float], List[int], Optional[List[str]]]
+GenerationLog = List[dict]
+Generation = Tuple[List[float], List[int], Optional[List[str]], GenerationLog]
 
 @dataclass
 class GenerationContext:
@@ -105,7 +106,7 @@ class LMInferenceConfig(NamedTuple):
 
 class LMContext(NamedTuple):
     # for LM
-    model: GenerationMixin
+    model: T5ForConditionalGeneration
     tokenizer: PreTrainedTokenizer
     input_token_ids: torch.Tensor
     inference_config: LMInferenceConfig
@@ -125,7 +126,7 @@ class LspContext(NamedTuple):
 
 CODET5 = T5ForConditionalGeneration.from_pretrained(MODEL).to(DEVICE)
 CODET5_TOKENIZER: PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL)
-CODET5_INFERENCE_CONFIG = LMInferenceConfig(0.8, 50, 100, 2)
+CODET5_INFERENCE_CONFIG = LMInferenceConfig(1.0, 50, 50, 2)
 CODET5_VOC_SIZE: int = CODET5.config.vocab_size
 CODET5_TOKEN_MAP: List[str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), [
     CODET5_TOKENIZER.decode(
@@ -138,34 +139,6 @@ CODET5_MAX_TOKENS: int = CODET5.config.to_dict()['n_positions']
 CODET5_FIRST_SEP_ID = 32099
 CODET5_FIRST_SEP_TOKEN = CODET5_TOKEN_MAP[CODET5_FIRST_SEP_ID]
 assert CODET5_FIRST_SEP_TOKEN == "<extra_id_0>"
-
-def prepare_inputs_for_generation(
-    self,
-    input_ids,
-    past=None,
-    attention_mask=None,
-    head_mask=None,
-    decoder_head_mask=None,
-    cross_attn_head_mask=None,
-    use_cache=None,
-    encoder_outputs=None,
-    **kwargs
-):
-
-    # cut decoder_input_ids if past is used
-    if past is not None:
-        input_ids = input_ids[:, -1:]
-
-    return {
-        "decoder_input_ids": input_ids,
-        "past_key_values": past,
-        "encoder_outputs": encoder_outputs,
-        "attention_mask": attention_mask,
-        "head_mask": head_mask,
-        "decoder_head_mask": decoder_head_mask,
-        "cross_attn_head_mask": cross_attn_head_mask,
-        "use_cache": use_cache,
-    }
 
 
 def codet5_context(prefix: str, suffix: str) -> str:
@@ -244,6 +217,8 @@ def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> O
 
 # TODO: rewrite the logic
 def feasible(
+    generation_log: GenerationLog,
+    generated_tokens: List[str],
     analyzer: JdtLspAnalyzer,
     uri: str,
     token: str,
@@ -260,24 +235,38 @@ def feasible(
         return True
     completions = get_completions(analyzer, uri, pos)
     completion_overhead.append(time.time() - start_time)
+    context = ''.join(generated_tokens + [token])
+    print(context)
     if completions is None:
+        generation_log.append({
+            'context': context,
+            'result': None,
+        })
         print('UNKNOWN:', token)
         # breakpoint()
         return True
-    filtered_completions = [(c['source'], c['target']) for c in completions if c['target'].startswith(c['source'])]
+    filtered_completions = [c for c in completions if c['target'].startswith(c['source'])]
     # else:
     #     print(uri)
     #     print(completion_result['error'])
     #     print(completion_result['error']['data'])
     #     raise RuntimeError
     if len(filtered_completions) > 0:
-        print('Accepted:', token, filtered_completions[0])#, token, completions)
+        generation_log.append({
+            'context': context,
+            'result': filtered_completions,
+        })
+        print('Accepted:', token, f"{filtered_completions[0]['source']} -> {filtered_completions[0]['target']}")#, token, completions)
         # if 'lastFraction' in completions:
         #     breakpoint()
         # print("Yes!")
         # print(completions)
         return True
     else:
+        generation_log.append({
+            'context': context,
+            'result': [],
+        })
         # print('=======================DENIED============================')
         print('Denied', token)#, token, completions)
         return False
@@ -311,6 +300,7 @@ def get_id_token(generated_tokens: List[str]) -> str:
 
 
 def get_feasible_token_ids(
+    generation_log: GenerationLog,
     memoized_result: Optional[List[bool]],
     generated_tokens: List[str],
     lsp_context: LspContext,
@@ -381,8 +371,10 @@ def get_feasible_token_ids(
                 text_file.add(token)
                 analyzer.change(text_file)
                 pos = text_file.get_position(text_file.cursor)
-                print(''.join(generated_tokens + [token]))
+                # print(''.join(generated_tokens + [token]))
                 if feasible(
+                    generation_log,
+                    generated_tokens,
                     analyzer,
                     text_file.path.as_uri(),
                     token,
@@ -413,7 +405,7 @@ def get_feasible_token_ids(
 @typing.no_type_check
 @torch.no_grad()
 def generate(
-    model: GenerationMixin,
+    model: T5ForConditionalGeneration,
     lm_context: LMContext,
     lsp_context: LspContext,
     inputs: Optional[torch.Tensor] = None,
@@ -625,6 +617,7 @@ def generate(
         lsp_context=lsp_context,
         end_id=lm_context.inference_config.end_id,
         top_k=top_k,
+        temperature=temperature,
         logits_processor=logits_processor,
         logits_warper=logits_warper,
         stopping_criteria=stopping_criteria,
@@ -638,10 +631,11 @@ def generate(
 
 @typing.no_type_check
 def sample(
-    model: GenerationMixin,
+    model: T5ForConditionalGeneration,
     input_ids: torch.LongTensor,
     lsp_context: LspContext,
     top_k: int,
+    temperature: float,
     end_id: int,
     logits_processor: Optional[LogitsProcessorList] = None,
     logits_warper: Optional[LogitsProcessorList] = None,
@@ -679,6 +673,9 @@ def sample(
     # Whether the model generation is complete
     is_complete = True
 
+    # Logging
+    generation_log: GenerationLog = []
+
     # auto-regressive generation
     while True:
         # if len(gen_context.generated_tokens) > 0 and 'dataset' in gen_context.generated_tokens[-1]:
@@ -699,6 +696,8 @@ def sample(
         # -1 because decoder's self-attention produces n outputs given n inputs
         next_token_logits = outputs.logits[:, -1, :]
         next_token_scores = logits_processor(input_ids, next_token_logits)
+        if temperature != 1.0:
+            next_token_scores = TemperatureLogitsWarper(temperature)(input_ids, next_token_logits)
         # next_token_scores = logits_warper(input_ids, next_token_scores)
         assert len(next_token_scores) == 1
 
@@ -855,6 +854,7 @@ def sample(
                             print("SMALL HIT")
                             # breakpoint()
                         feasible_next_token_ids = get_feasible_token_ids(
+                            generation_log,
                             partial_memoized_result,
                             gen_context.generated_tokens,
                             lsp_context,
@@ -877,6 +877,9 @@ def sample(
                     ).to(DEVICE)
                     mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(DEVICE), False)
                     scores.masked_fill_(mask, -float('inf'))
+                else:
+                    is_complete = False
+                    break
 
         if completion is None:
             probs = nn.functional.softmax(scores, dim=-1)
@@ -935,4 +938,4 @@ def sample(
         elif len(input_ids[0]) == max_length:
             is_complete = False
             break
-    return completion_overhead, gen_context.generated_ids, gen_context.generated_tokens if is_complete else None
+    return completion_overhead, gen_context.generated_ids, gen_context.generated_tokens if is_complete else None, generation_log

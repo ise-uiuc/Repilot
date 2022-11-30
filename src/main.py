@@ -1,5 +1,6 @@
 from realm.lsp import TextDocument
 from realm.syntax import reduce
+from realm import utils
 
 # doc = TextDocument(r'System.out.println("Hello " + "world")')
 # reduce(doc, raise_unexpected_exc=True)
@@ -21,7 +22,6 @@ import shlex
 from pathlib import Path
 import shutil
 import subprocess
-from realm import generation, utils
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp import TextDocument, client, spec
 import json
@@ -30,10 +30,11 @@ from init import data
 from unidiff import PatchSet
 import git
 import hashlib
-
+import io
 from realm.lsp.spec import TextChange
 from realm.lsp.text import MutableTextDocument, TextFile
 from datasets import d4j
+import argparse
 
 assert shutil.which('defects4j')
 
@@ -51,14 +52,16 @@ assert shutil.which('defects4j')
 def str_hash(s: str) -> int:
     return int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**8
 
+JDT_LS_REPO = '/home/yuxiang/fastd/Developer/eclipse.jdt.ls/'
+D4J_REPO = '/home/yuxiang/Developer/defects4j'
 
-dataset = d4j.Defects4J('/home/yuxiang/Developer/defects4j', data)
+dataset = d4j.Defects4J(D4J_REPO, data)
 # model = SpanLM('facebook/incoder-1B', batch_size=N_SAMPLE)
 model = None
 
 
 def server_cmd(bug_id: str) -> List[str]:
-    JDT_REPO = "/home/yuxiang/fastd/Developer/eclipse.jdt.ls/org.eclipse.jdt.ls.product/target/repository"
+    JDT_REPO = f'{JDT_LS_REPO}/org.eclipse.jdt.ls.product/target/repository'
     return shlex.split(f"java -Declipse.application=org.eclipse.jdt.ls.core.id1 \
         -Dosgi.bundles.defaultStartLevel=4 \
         -Declipse.product=org.eclipse.jdt.ls.core.product \
@@ -98,8 +101,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     base_dir = result_dir / proj / id_str
     base_dir.mkdir(exist_ok=False, parents=True)
 
-    # generation.PARTIAL_MEMOIZED.clear()
-    # generation.COMPLETE_MEMOIZED.clear()
+    # gen.PARTIAL_MEMOIZED.clear()
+    # gen.COMPLETE_MEMOIZED.clear()
     # Clear memoization
     memoized: Dict[Tuple[int, int], Tuple[
         Dict[bytes, List[bool]],
@@ -116,6 +119,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
 
+        logs: List[gen.GenerationLog] = []
         generation_successful = True
         for buggy_file_idx, buggy_file in enumerate(bug.buggy_files):
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
@@ -129,7 +133,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             for (change_idx, change) in enumerate(reversed(buggy_file.changes)):
                 if (mem_id := (buggy_file_idx, change_idx)) not in memoized:
                     memoized[mem_id] = ({}, {})
-                generation.PARTIAL_MEMOIZED, generation.COMPLETE_MEMOIZED = memoized[mem_id]
+                gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED = memoized[mem_id]
                 start = change.start - 1
                 end = start + len(change.removed_lines)
                 start_pos = text_file.refine_index(start, 0)
@@ -179,7 +183,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
                 start_time = time.time()
                 try:
-                    completion_overhead, _, output = gen.repair(
+                    completion_overhead, _, output, generation_log = gen.repair(
                         lm_context, lsp_context)
                 except TimeoutError:
                     print('Fatal timeout error')
@@ -193,7 +197,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 end_time = time.time()
                 times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
-                memoized[mem_id] = (generation.PARTIAL_MEMOIZED, generation.COMPLETE_MEMOIZED)
+                memoized[mem_id] = (gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED)
                 # This is always True
                 # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
                 print('Success')
@@ -204,6 +208,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             if not generation_successful:
                 break
             text_files.append(text_file)
+            logs.append(generation_log)
         if not generation_successful:
             continue
         patch_groups.append(text_files)
@@ -213,8 +218,9 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         debug_dir = save_dir / 'debug'
         debug_dir.mkdir()
         assert len(text_files) == len(bug.buggy_files)
-        for text_file, buggy_file_path in zip(
+        for text_file, log, buggy_file_path in zip(
             text_files,
+            logs,
             map(lambda b: Path(bug.proj_path) / b.path, bug.buggy_files)
         ):
             with open(save_dir / text_file.path.with_suffix('.json').name, 'w') as f:
@@ -233,6 +239,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             )
             with open(debug_dir / buggy_file_path.with_suffix('.diff').name, 'w') as f:
                 f.writelines(unified_diff)
+            with open(debug_dir / buggy_file_path.with_suffix('.log.json').name, 'w') as f:
+                json.dump(log, f, indent=2)
             # with open()
     with open(base_dir / 'time.json', 'w') as f:
         json.dump({
@@ -327,6 +335,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
         'dup_succeeded': [],
         'dup_test_failed': [],
         'dup_comp_failed': [],
+        'times': {},
         # },
         # 'without_lsp': {
         #     'succeeded': [],
@@ -352,7 +361,10 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
             # print(bug_id, idx, 'is duplicated')
             result['dup_succeeded'].append(int(idx))
             continue
+        start_time = time.time()
         val_result = validate_proj(bug_id, bug, patch_group)
+        cost = time.time() - start_time
+        result['times'][idx] = cost
         match val_result:
             case ValResult.CompilationError:
                 result['comp_failed'].append(int(idx))
@@ -416,33 +428,73 @@ def validate_all_bugs(all_bugs: dict, proj_dir: Path):
         with open(proj_dir / proj_dir.with_suffix('.json').name, 'w') as f:
             json.dump(ret, f, indent=2)
 
+def log_repo(f: io.TextIOBase, tag: str, repo: git.Repo):
+    f.write(f'{tag} GIT HASH: {repo.head.object.hexsha}\n')
+    f.write(f'{tag} GIT STATUS: ')
+    f.write(
+        '\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n')
+    f.write(repo.git.status())
+    f.write(
+        '\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\n')
+
+parser = argparse.ArgumentParser('REALM program repair')
+parser.add_argument('-d', '--dir', required=False, default=None, help='The directory to store generated data')
+parser.add_argument('-b', '--bug', required=False, default=None, help='The bug to repair')
+args = parser.parse_args()
 
 if __name__ == '__main__':
+    assert os.getenv('JAVA8_HOME')
+
     if os.getenv('VAL') is not None:
-        result_dir = Path(sys.argv[1])
-        all_bugs = dataset.all_bugs()
+        assert args.dir is not None, "Directory should be explicitly specified"
+        result_dir = Path(args.dir)
         assert result_dir.exists()
+        with open(result_dir / 'val_meta.txt', 'w') as f:
+            log_repo(f, 'Defects4J', git.Repo(Path(D4J_REPO)))
+        all_bugs = dataset.all_bugs()
         all_results: dict = {}
         for proj_dir in filter(Path.is_dir, result_dir.iterdir()):
             validate_all_bugs(all_bugs, proj_dir)
             # all_results = dict(all_results, **result)
         exit()
 
-    assert os.getenv('JAVA8_HOME')
-
     from realm import generation as gen
     torch.manual_seed(0)
     random.seed(0)
-    result_dir = Path(f'results-{uuid.uuid4()}' if len(sys.argv) < 2 else sys.argv[1])
+    result_dir = Path(f'results-{uuid.uuid4()}' if args.dir is None else args.dir)
     if os.getenv('DEBUG') is not None:
         result_dir = Path('../results') / 'temp' / result_dir
     result_dir.mkdir(exist_ok=False, parents=True)
+    with open(result_dir / 'gen_meta.txt', 'w') as f:
+        log_repo(f, 'Repair tool', git.Repo(Path('.')))
+        log_repo(f, 'Defects4J', git.Repo(Path(D4J_REPO)))
+        log_repo(f, 'Language server', git.Repo(Path(JDT_LS_REPO)))
+    with open(result_dir / 'args.txt', 'w') as f:
+        f.write(str(gen.CODET5_INFERENCE_CONFIG))
     print(f'Metadata will be saved in {result_dir}')
-    for bug_id, bug in dataset.all_bugs().items():
+
+    # def is_single_hunk(bug: d4j.Bug) -> bool:
+    #     if len(bug.buggy_files) == 1 and len(changes := bug.buggy_files[0].changes) == 1:
+    #         change = changes[0]
+    #     else:
+    #         return False
+
+
+    # Get single hunk bugs
+    all_bugs = dataset.all_bugs()
+    single_hunk_bugs = {
+        id: bug for (id, bug) in all_bugs.items()
+        # TODO
+        if len(bug.buggy_files) == 1 and len(bug.buggy_files[0].changes) == 1
+    }
+
+    assert args.bug is not None
+
+    for bug_id, bug in single_hunk_bugs.items():
         proj = bug_id.split('-')[0]
         # if proj in proj_accessed or proj == 'Mockito':
         # TODO (DONE): IMPORTANT!!!!! Memorize multiple changes when doing repair
-        if not bug_id.startswith('Chart-23'):
+        if not bug_id.startswith(args.bug):
             continue
         # if int(bug_id.split('-')[1]) < 115:
         #     continue
@@ -453,7 +505,7 @@ if __name__ == '__main__':
         #     continue
         print(bug_id)
         gen.CHART_11 = bug_id == 'Chart-11'
-        patch_groups = repair_proj(result_dir, bug_id, bug, 10)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 200)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):
