@@ -492,6 +492,9 @@ if __name__ == '__main__':
 
     for bug_id, bug in single_hunk_bugs.items():
         proj = bug_id.split('-')[0]
+        # Unicode error
+        if bug_id == 'Lang-25':
+            continue
         # if proj in proj_accessed or proj == 'Mockito':
         # TODO (DONE): IMPORTANT!!!!! Memorize multiple changes when doing repair
         if not bug_id.startswith(args.bug):
