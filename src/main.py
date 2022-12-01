@@ -35,6 +35,7 @@ from realm.lsp.spec import TextChange
 from realm.lsp.text import MutableTextDocument, TextFile
 from datasets import d4j
 import argparse
+import javalang
 
 assert shutil.which('defects4j')
 
@@ -274,9 +275,10 @@ def compress(patch_group: List[TextFile]) -> int:
 
 
 class ValResult(Enum):
-    CompilationError = 0
-    TestingError = 1
-    Success = 2
+    ParseError = 0
+    CompilationError = 1
+    TestingError = 2
+    Success = 3
 
 
 def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> ValResult:
@@ -289,7 +291,17 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> Val
                     f'-v{id_str}f', '-w', bug.proj_path])
     repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
     repo.git.execute(['git', 'clean', '-xfd'])
+
     for patch_file in patch_group:
+        try:
+            javalang.parse.parse(patch_file.content)
+        except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
+            return ValResult.ParseError
+        except Exception as e:
+            with open('unexpected_exception', 'a') as f:
+                f.write(str(type(e)))
+                f.write('\n')
+                f.write(str(e))
         patch_file.write()
     result = subprocess.run(['defects4j', 'compile'],
                             env=env, cwd=bug.proj_path)
@@ -323,6 +335,7 @@ def get_patch_groups(bug_dir: Path) -> List[Tuple[str, List[TextFile]]]:
 
 
 def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
+    parse_failed_patches: Set[int] = set()
     comp_failed_patches: Set[int] = set()
     test_failed_patches: Set[int] = set()
     succeeded_patches: Set[int] = set()
@@ -330,9 +343,11 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     result: dict = {
         # 'with_lsp': {
         'succeeded': [],
+        'parse_failed': [],
         'comp_failed': [],
         'test_failed': [],
         'dup_succeeded': [],
+        'dup_parse_failed': [],
         'dup_test_failed': [],
         'dup_comp_failed': [],
         'times': {},
@@ -366,6 +381,9 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
         cost = time.time() - start_time
         result['times'][idx] = cost
         match val_result:
+            case ValResult.ParseError:
+                result['parse_failed'].append(int(idx))
+                parse_failed_patches.add(hash)
             case ValResult.CompilationError:
                 result['comp_failed'].append(int(idx))
                 comp_failed_patches.add(hash)
@@ -411,7 +429,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     return result
 
 
-BATCH_SIZE = 12
+BATCH_SIZE = 10
 
 
 def validate_all_bugs(all_bugs: dict, proj_dir: Path):
