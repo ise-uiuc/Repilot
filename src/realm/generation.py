@@ -57,12 +57,52 @@ from realm.analyze.jdt_lsp import JdtLspAnalyzer
 from realm.lsp.text import TextDocument, TextFile
 from realm import utils
 from functools import partial
-from pygtrie import Trie
+# from pygtrie import Trie
 import javalang
 
 # class IncoderEOM(StoppingCriteria):
 #     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
 #         return True if input_ids[0, -1] == Repairer.EOM_ID else False
+from typing import List
+
+class TrieNode:
+    def __init__(self):
+        self.children = {}
+        self.is_end_of_word = False
+
+
+class Trie:
+    def __init__(self):
+        self.root = TrieNode()
+
+    def insert(self, word: str) -> None:
+        curr = self.root
+        for ch in word:
+            if ch not in curr.children:
+                curr.children[ch] = TrieNode()
+            curr = curr.children[ch]
+        curr.is_end_of_word = True
+
+
+def common_prefix(strings: List[str]) -> Optional[str]:
+    trie = Trie()
+    for s in strings:
+        trie.insert(s)
+
+    common = ""
+    curr = trie.root
+    while curr:
+        if curr.is_end_of_word and len(curr.children) > 1:
+            return common
+        if len(curr.children) == 1:
+            ch = list(curr.children.keys())[0]
+            common += ch
+            curr = curr.children[ch]
+        else:
+            break
+
+    return common if len(common) > 0 else None
+
 
 
 MODEL = 'Salesforce/codet5-large'
@@ -702,7 +742,7 @@ def sample(
         assert len(next_token_scores) == 1
 
         completion: Optional[str] = None
-        if os.getenv('PLAIN') is not None or gen_context.inside_line_comment or gen_context.inside_block_comment:
+        if os.getenv('PLAIN') is not None:
             # Modified from GenerationMixin.get_logits_warper
             # if temperature is not None and temperature != 1.0:
             #     warpers.append(TemperatureLogitsWarper(temperature))
@@ -711,93 +751,98 @@ def sample(
             next_token_scores = warpers(input_ids, next_token_scores)
             assert len(next_token_scores) == 1
             scores = next_token_scores[0]
+            probs = nn.functional.softmax(scores, dim=-1)
+            assert len(probs.shape) == 1
+
+            # shape: (1)
+            next_token_ids = torch.multinomial(probs, num_samples=1)
+            next_token_ids_list = next_token_ids.tolist()
+            next_token_id_item = next_token_ids.item()
+            next_token = CODET5_TOKEN_MAP[next_token_id_item]
         else:
-            found = False
-            completions = []
-            empty_completion = False
-            if os.getenv('ACTIVE') is not None and len(gen_tokens := gen_context.generated_tokens) > 0:
-                id_token = ''
-                if gen_tokens[-1][-1] == '.':
-                    found = True
-                else:
-                    try:
-                        id_token = get_id_token(gen_tokens)
-                        found = True
-                    except IDTokenError:
-                        pass
-                if found:
-                    analyzer = lsp_context.analyzer
-                    # Active completion
-                    text_file = lsp_context.text_file
-                    analyzer.change(text_file)
-                    # assert text_file.content[text_file.cursor-idx] == '.'
-                    # print(gen_tokens)
-                    # completion_result = analyzer.client.textDocument_completion({
-                    #     'textDocument': {
-                    #         'uri': text_file.path.as_uri()
-                    #     },
-                    #     'position': text_file.get_position(text_file.cursor)
-                    # })
-                    # breakpoint()
-                    completions_iter = (c[len(id_token):x] if (x := c.find('$')) != -1 else c[len(id_token):]
-                        for c in (
-                            get_completions(analyzer, text_file.path.as_uri(), text_file.get_position(text_file.cursor)))
-                        if c.startswith(id_token)
-                    )
-                    for completion in completions_iter:
-                        if completion == '':
-                            empty_completion = True
-                        else:
-                            completions.append(completion)
-                    # if 'copy' not in gen_tokens[-1] and len(completions) > 0:
+            if os.getenv('ACTIVE') is not None:
+                analyzer = lsp_context.analyzer
+                # Active completion
+                text_file = lsp_context.text_file
+                analyzer.change(text_file)
+                # assert text_file.content[text_file.cursor-idx] == '.'
+                # print(gen_tokens)
+                # completion_result = analyzer.client.textDocument_completion({
+                #     'textDocument': {
+                #         'uri': text_file.path.as_uri()
+                #     },
+                #     'position': text_file.get_position(text_file.cursor)
+                # })
+                # breakpoint()
+                continuations = get_completions(analyzer, text_file.path.as_uri(), text_file.get_position(text_file.cursor))
+                if continuations is not None:
+                    continuations = [item for c in continuations if (target := c['target']).startswith(source := c['source']) and len(item := target[len(source):]) > 0]
+                    completion = common_prefix(continuations)
+                    # if completion is not None:
                     #     breakpoint()
-                    # if False:
-                    #     pass
-                    # if not empty_completion and len(completions) <= 5 and len(completions) > 0:
-                    if not empty_completion and len(completions) == 1:
-                        completion = completions[0]
-                        # breakpoint()
-                    else:
-                        completion = None
-                    # else:
-                    #     # breakpoint()
+                    # if len(continuations) == 1:
+                    #     completion = continuations[0]
+                    # elif len(continuations) < top_k:
                     #     warpers = LogitsProcessorList()
                     #     warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
                     #     next_token_scores = warpers(input_ids, next_token_scores)
                     #     assert len(next_token_scores) == 1
                     #     scores = next_token_scores[0]
-                    #     probs = nn.functional.softmax(scores, dim=-1)
-                    #     next_token_ids = torch.multinomial(probs, num_samples=1)
-                    #     next_token_id_item = next_token_ids.item()
-                    #     next_token = CODET5_TOKEN_MAP[next_token_id_item]
-                    #     if empty_completion:
-                    #         completion = next_token
-                    #     else:
-                    #         plausible_completions = []
-                    #         for compl in completions:
-                    #             if len(compl) <= len(next_token) and next_token.startswith(compl):
-                    #                 plausible_completions.append(compl)
-                    #             elif len(compl) > len(next_token) and compl.startswith(next_token):
-                    #                 plausible_completions.append(compl)
-                    #         if len(completions) == 0:
-                    #             completion = None
-                    #         elif len(plausible_completions) == 0:
-                    #             completion = random.choice(completions)
-                    #         else:
-                    #             completion = random.choice(plausible_completions)
-                    if completion is not None:
-                        warpers = LogitsProcessorList()
-                        warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
-                        next_token_scores = warpers(input_ids, next_token_scores)
-                        assert len(next_token_scores) == 1
-                        scores = next_token_scores[0]
-                        probs = nn.functional.softmax(scores, dim=-1)
-                        next_token_ids = torch.multinomial(probs, num_samples=1)
-                        next_token_id_item = next_token_ids.item()
-                        next_token = CODET5_TOKEN_MAP[next_token_id_item]
-                        with open('completions', 'a') as f:
-                            f.write(f'Completion: {completion}, id_token: {id_token}, file: {text_file.content[text_file.cursor - 20:text_file.cursor]}, LMPrediction: {next_token}')
-                            f.write('\n')
+                    #     considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
+                    #     assert len(considered_next_token_ids.shape) == 1
+                    #     considered_next_token_ids = considered_next_token_ids[
+                    #         scores[considered_next_token_ids] > -float('inf')]
+                    #     considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
+                    #     considered_next_tokens = [CODET5_TOKEN_MAP[id] for id in considered_next_token_ids_list]
+                    #     for possible_next_token in considered_next_tokens:
+                    #         for continuation in continuations:
+                    #             if continuation.startswith(possible_next_token):
+                    #                 completion = continuation
+                    #                 breakpoint()
+                    #                 break
+                    #         if completion is not None:
+                    #             break
+                else:
+                    completion = None
+                # else:
+                #     # breakpoint()
+                #     warpers = LogitsProcessorList()
+                #     warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+                #     next_token_scores = warpers(input_ids, next_token_scores)
+                #     assert len(next_token_scores) == 1
+                #     scores = next_token_scores[0]
+                #     probs = nn.functional.softmax(scores, dim=-1)
+                #     next_token_ids = torch.multinomial(probs, num_samples=1)
+                #     next_token_id_item = next_token_ids.item()
+                #     next_token = CODET5_TOKEN_MAP[next_token_id_item]
+                #     if empty_completion:
+                #         completion = next_token
+                #     else:
+                #         plausible_completions = []
+                #         for compl in completions:
+                #             if len(compl) <= len(next_token) and next_token.startswith(compl):
+                #                 plausible_completions.append(compl)
+                #             elif len(compl) > len(next_token) and compl.startswith(next_token):
+                #                 plausible_completions.append(compl)
+                #         if len(completions) == 0:
+                #             completion = None
+                #         elif len(plausible_completions) == 0:
+                #             completion = random.choice(completions)
+                #         else:
+                #             completion = random.choice(plausible_completions)
+                if completion is not None:
+                    warpers = LogitsProcessorList()
+                    warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+                    next_token_scores = warpers(input_ids, next_token_scores)
+                    assert len(next_token_scores) == 1
+                    scores = next_token_scores[0]
+                    probs = nn.functional.softmax(scores, dim=-1)
+                    next_token_ids = torch.multinomial(probs, num_samples=1)
+                    next_token_id_item = next_token_ids.item()
+                    next_token = CODET5_TOKEN_MAP[next_token_id_item]
+                    with open('completions', 'a') as f:
+                        f.write(f'Completion: {completion}, file: {text_file.content[text_file.cursor - 20:text_file.cursor]}, LMPrediction: {next_token}')
+                        f.write('\n')
     
                 # if len(gen_context.generated_tokens) > 0 and gen_context.generated_tokens[-1].endswith('.'):
                 #     text_file = lsp_context.text_file
@@ -817,57 +862,34 @@ def sample(
                 input_ids_list = input_ids[0].tolist()
 
                 considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
-                if found and not empty_completion and len(completions) > 1:
-                    assert completion is None
-                    warpers = LogitsProcessorList()
-                    warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
-                    next_token_scores = warpers(input_ids, next_token_scores)
-                    assert len(next_token_scores) == 1
-                    scores = next_token_scores[0]
-                    probs = nn.functional.softmax(scores, dim=-1)
-                    next_token_ids = torch.multinomial(probs, num_samples=1)
-                    next_token_id_item = next_token_ids.item()
-                    next_token = CODET5_TOKEN_MAP[next_token_id_item]
-                    # for c in completions:
-                    #     if c.startswith(next_token) or next_token.startswith(c):
-                    #         completion = c
-                    #         break
-                    # if completion is None:
-                    #     completion = random.choice(completions)
-                    completion = completions[0]
-                    with open('active', 'a') as f:
-                        text_file = lsp_context.text_file
-                        f.write(f'Completion: {completion}, PLM: {next_token}, context: {text_file.content[text_file.cursor - 20:text_file.cursor]}')
-                        f.write('\n')
+                state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
+                if state_bytes in COMPLETE_MEMOIZED:
+                    print("HUGE HIT")
+                    # breakpoint()
+                    feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
                 else:
-                    state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
-                    if state_bytes in COMPLETE_MEMOIZED:
-                        print("HUGE HIT")
+                    lsp_context.analyzer.change(lsp_context.text_file)
+                    input_ids_bytes = pickle.dumps(input_ids_list)
+                    # TODO: delete this
+                    partial_memoized_result = PARTIAL_MEMOIZED.get(input_ids_bytes)
+                    if partial_memoized_result is not None:
+                        print("SMALL HIT")
                         # breakpoint()
-                        feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
-                    else:
-                        lsp_context.analyzer.change(lsp_context.text_file)
-                        input_ids_bytes = pickle.dumps(input_ids_list)
-                        # TODO: delete this
-                        partial_memoized_result = PARTIAL_MEMOIZED.get(input_ids_bytes)
-                        if partial_memoized_result is not None:
-                            print("SMALL HIT")
-                            # breakpoint()
-                        feasible_next_token_ids = get_feasible_token_ids(
-                            generation_log,
-                            partial_memoized_result,
-                            gen_context.generated_tokens,
-                            lsp_context,
-                            considered_next_token_ids_list,
-                            top_k,
-                            completion_overhead,
-                        )
-                        assert len(feasible_next_token_ids) <= top_k
-                        COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
-                        if partial_memoized_result is None:
-                            PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
-                        for idx in feasible_next_token_ids:
-                            PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
+                    feasible_next_token_ids = get_feasible_token_ids(
+                        generation_log,
+                        partial_memoized_result,
+                        gen_context.generated_tokens,
+                        lsp_context,
+                        considered_next_token_ids_list,
+                        top_k,
+                        completion_overhead,
+                    )
+                    assert len(feasible_next_token_ids) <= top_k
+                    COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
+                    if partial_memoized_result is None:
+                        PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
+                    for idx in feasible_next_token_ids:
+                        PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
 
                 if len(feasible_next_token_ids) != 0:
                     # rewrite scores
@@ -901,17 +923,6 @@ def sample(
         #     probs = nn.functional.softmax(next_token_scores, dim=-1)
         #     next_token_ids = torch.multinomial(probs, num_samples=1).squeeze(1)
         
-        if next_token.strip().startswith('//'):
-            gen_context.inside_line_comment = True
-        elif next_token.endswith('\n'):
-            # breakpoint()
-            gen_context.inside_line_comment = False
-        elif next_token.strip().startswith('/*'):
-            gen_context.inside_block_comment = True
-        elif next_token.endswith('*/'):
-            # breakpoint()
-            gen_context.inside_block_comment = False
-
         if not is_special_token(next_token):
             lsp_context.text_file.add(next_token)
             gen_context.generated_ids.extend(next_token_ids_list)

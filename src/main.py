@@ -281,7 +281,7 @@ class ValResult(Enum):
     Success = 3
 
 
-def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> ValResult:
+def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> Tuple[ValResult, str, str]:
     proj, id_str = bug_id.split('-')
     java8_home = cast(str, os.getenv('JAVA8_HOME'))
     env = dict(os.environ, JAVA_HOME=java8_home)
@@ -295,8 +295,8 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> Val
     for patch_file in patch_group:
         try:
             javalang.parse.parse(patch_file.content)
-        except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
-            return ValResult.ParseError
+        except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError) as e:
+            return ValResult.ParseError, '', str(e)
         except Exception as e:
             with open('unexpected_exception', 'a') as f:
                 f.write(str(type(e)))
@@ -304,9 +304,9 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> Val
                 f.write(str(e))
         patch_file.write()
     result = subprocess.run(['defects4j', 'compile'],
-                            env=env, cwd=bug.proj_path)
+                            env=env, cwd=bug.proj_path, text=True, capture_output=True)
     if result.returncode != 0:
-        return ValResult.CompilationError
+        return ValResult.CompilationError, result.stdout, result.stderr
     # Filter out candidate patches (not even plausible)
     try:
         subprocess.run(['defects4j', 'test'], env=env,
@@ -314,9 +314,9 @@ def validate_proj(bug_id: str, bug: d4j.Bug, patch_group: List[TextFile]) -> Val
         failing_tests = Path(bug.proj_path) / 'failing_tests'
         assert failing_tests.exists()
         with open(failing_tests) as f:
-            return ValResult.Success if f.read().strip() == '' else ValResult.TestingError
+            return (ValResult.Success if f.read().strip() == '' else ValResult.TestingError), '', ''
     except subprocess.TimeoutExpired:
-        return ValResult.TestingError
+        return ValResult.TestingError, '', ''
 
 
 def get_patch_groups(bug_dir: Path) -> List[Tuple[str, List[TextFile]]]:
@@ -351,6 +351,8 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
         'dup_test_failed': [],
         'dup_comp_failed': [],
         'times': {},
+        'stdout': {},
+        'stderr': {},
         # },
         # 'without_lsp': {
         #     'succeeded': [],
@@ -377,9 +379,11 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
             result['dup_succeeded'].append(int(idx))
             continue
         start_time = time.time()
-        val_result = validate_proj(bug_id, bug, patch_group)
+        val_result, stdout, stderr = validate_proj(bug_id, bug, patch_group)
         cost = time.time() - start_time
         result['times'][idx] = cost
+        result['stdout'][idx] = stdout
+        result['stderr'][idx] = stderr
         match val_result:
             case ValResult.ParseError:
                 result['parse_failed'].append(int(idx))
@@ -429,7 +433,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     return result
 
 
-BATCH_SIZE = 10
+BATCH_SIZE = 3
 
 
 def validate_all_bugs(all_bugs: dict, proj_dir: Path):
