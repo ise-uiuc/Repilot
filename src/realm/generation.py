@@ -93,7 +93,7 @@ def common_prefix(strings: List[str]) -> Optional[str]:
     curr = trie.root
     while curr:
         if curr.is_end_of_word and len(curr.children) > 1:
-            return common
+            return common if len(common) > 0 else None
         if len(curr.children) == 1:
             ch = list(curr.children.keys())[0]
             common += ch
@@ -109,22 +109,22 @@ MODEL = 'Salesforce/codet5-large'
 DEVICE = 'cuda'
 CHART_11 = True
 
-JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
-                 'assert', 'default', 'goto', 'package', 'synchronized',
-                 'boolean', 'do', 'if', 'private', 'this',
-                 'break', 'double', 'implements', 'protected', 'throw',
-                 'byte', 'else', 'import', 'public', 'throws',
-                 'case', 'enum', 'instanceof', 'return', 'transient',
-                 'catch', 'extends', 'int', 'short', 'try',
-                 'char', 'final', 'interface', 'static', 'void',
-                 'class', 'finally', 'long', 'strictfp', 'volatile',
-                 'const' 'float', 'native', 'super', 'while']
+# JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
+#                  'assert', 'default', 'goto', 'package', 'synchronized',
+#                  'boolean', 'do', 'if', 'private', 'this',
+#                  'break', 'double', 'implements', 'protected', 'throw',
+#                  'byte', 'else', 'import', 'public', 'throws',
+#                  'case', 'enum', 'instanceof', 'return', 'transient',
+#                  'catch', 'extends', 'int', 'short', 'try',
+#                  'char', 'final', 'interface', 'static', 'void',
+#                  'class', 'finally', 'long', 'strictfp', 'volatile',
+#                  'const' 'float', 'native', 'super', 'while']
 
 PARTIAL_MEMOIZED: Dict[bytes, List[bool]] = {}
 COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
 
-class IDTokenError(Exception):
-    pass
+# class IDTokenError(Exception):
+#     pass
 
 
 GenerationLog = List[dict]
@@ -317,26 +317,26 @@ def is_special_token(token: str) -> bool:
 # Get the exact identifier token position
 
 
-def get_id_token(generated_tokens: List[str]) -> str:
-    result = ''
-    first_unmatched_char = None
-    for token in reversed(generated_tokens):
-        should_break = False
-        for c in reversed(token):
-            if c.isdigit() or c.isalpha() or c == '_':
-                result = c + result
-            else:
-                should_break = True
-                break
-        if should_break:
-            break
-    # if first_unmatched_char == '.' and len(result) > 0:
-    #     breakpoint()
+# def get_id_token(generated_tokens: List[str]) -> str:
+#     result = ''
+#     first_unmatched_char = None
+#     for token in reversed(generated_tokens):
+#         should_break = False
+#         for c in reversed(token):
+#             if c.isdigit() or c.isalpha() or c == '_':
+#                 result = c + result
+#             else:
+#                 should_break = True
+#                 break
+#         if should_break:
+#             break
+#     # if first_unmatched_char == '.' and len(result) > 0:
+#     #     breakpoint()
 
-    if len(result) > 0 and not result[0].isdigit() and result not in JAVA_KEYWORDS:
-        return result
-    else:
-        raise IDTokenError
+#     if len(result) > 0 and not result[0].isdigit() and result not in JAVA_KEYWORDS:
+#         return result
+#     else:
+#         raise IDTokenError
 
 
 def get_feasible_token_ids(
@@ -377,68 +377,68 @@ def get_feasible_token_ids(
         # rspace_len = len(token) - len(token_rstrip)
         # dot_token = token_rstrip.endswith('.')
         # print(CHART_11)
-        try:
-            # if not dot_token:
-                # id_token = get_id_token(generated_tokens + [token_rstrip])
-            if CHART_11 and (token in 'PathIterator'):
-                result.append(token_id)
-            elif memoized_result is not None and memoized_result[token_id]:
-                result.append(token_id)
-            # # Opt: reduce analysis times (assuming id_token = some st
-            # # - if s is denied, st is denied (find s in `denied` using trie)
-            # # - if c is all possible completions for s, st should be a prefix of one completion in c
-            # #   (find s in `all_feasible_tokens` using trie; find st in c using trie)
-            # # - if id_token is one of the possible completion, then it is feasible!
-            # # TODO: make string search faster
-            # elif not dot_token and next(denied.prefixes(id_token), None) is not None:
-            # # any(filter(partial(str.startswith, id_token), denied)):
-            #     # breakpoint()
-            #     pass
-            # elif not dot_token and ((x := all_possible_completions.has_node(id_token)) == Trie.HAS_SUBTRIE or x == Trie.HAS_VALUE):
-            #     result.append(token_id)
-            # elif not dot_token and next(all_feasible_tokens.prefixes(id_token), None) is not None:
-            #     # Assertion!
-            #     # assert (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE
-            #     denied[id_token] = None
-                # else:
-                # (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE):
-            # any(filter(
-            #     lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
-            #     all_feasible_tokens.items()
-            # )):
-            else:
-                # No exception afterwards
-                text_file.add(token)
-                analyzer.change(text_file)
-                pos = text_file.get_position(text_file.cursor)
-                # print(''.join(generated_tokens + [token]))
-                if feasible(
-                    generation_log,
-                    generated_tokens,
-                    analyzer,
-                    text_file.path.as_uri(),
-                    token,
-                    pos,
-                    completion_overhead
-                ):
-                    # or (dot_token
-                    # and any(map(lambda s: True if s not in ['cast', 'var'] else False,
-                    # (x := list(get_completions(analyzer, text_file.path.as_uri(), pos)))))):
-                    result.append(token_id)
-                    # if id_token == 'numerator':
-                    #     breakpoint()
-                    # if not dot_token:
-                    #     plausible_completions = Trie(filtered_completions)
-                    #     all_feasible_tokens[id_token] = plausible_completions
-                    #     all_possible_completions.merge(plausible_completions)
-                #     # if dot_token:
-                #     #     breakpoint()
-                #     if not dot_token:
-                #         denied[id_token] = None
-                text_file.delete(len(token))
-                analyzer.change(text_file)
-        except IDTokenError:
+        # try:
+        # if not dot_token:
+            # id_token = get_id_token(generated_tokens + [token_rstrip])
+        if CHART_11 and (token in 'PathIterator'):
             result.append(token_id)
+        elif memoized_result is not None and memoized_result[token_id]:
+            result.append(token_id)
+        # # Opt: reduce analysis times (assuming id_token = some st
+        # # - if s is denied, st is denied (find s in `denied` using trie)
+        # # - if c is all possible completions for s, st should be a prefix of one completion in c
+        # #   (find s in `all_feasible_tokens` using trie; find st in c using trie)
+        # # - if id_token is one of the possible completion, then it is feasible!
+        # # TODO: make string search faster
+        # elif not dot_token and next(denied.prefixes(id_token), None) is not None:
+        # # any(filter(partial(str.startswith, id_token), denied)):
+        #     # breakpoint()
+        #     pass
+        # elif not dot_token and ((x := all_possible_completions.has_node(id_token)) == Trie.HAS_SUBTRIE or x == Trie.HAS_VALUE):
+        #     result.append(token_id)
+        # elif not dot_token and next(all_feasible_tokens.prefixes(id_token), None) is not None:
+        #     # Assertion!
+        #     # assert (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE
+        #     denied[id_token] = None
+            # else:
+            # (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE):
+        # any(filter(
+        #     lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
+        #     all_feasible_tokens.items()
+        # )):
+        else:
+            # No exception afterwards
+            text_file.add(token)
+            analyzer.change(text_file)
+            pos = text_file.get_position(text_file.cursor)
+            # print(''.join(generated_tokens + [token]))
+            if feasible(
+                generation_log,
+                generated_tokens,
+                analyzer,
+                text_file.path.as_uri(),
+                token,
+                pos,
+                completion_overhead
+            ):
+                # or (dot_token
+                # and any(map(lambda s: True if s not in ['cast', 'var'] else False,
+                # (x := list(get_completions(analyzer, text_file.path.as_uri(), pos)))))):
+                result.append(token_id)
+                # if id_token == 'numerator':
+                #     breakpoint()
+                # if not dot_token:
+                #     plausible_completions = Trie(filtered_completions)
+                #     all_feasible_tokens[id_token] = plausible_completions
+                #     all_possible_completions.merge(plausible_completions)
+            #     # if dot_token:
+            #     #     breakpoint()
+            #     if not dot_token:
+            #         denied[id_token] = None
+            text_file.delete(len(token))
+            analyzer.change(text_file)
+        # except IDTokenError:
+        #     result.append(token_id)
     return result
 
 
