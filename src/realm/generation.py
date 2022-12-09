@@ -66,15 +66,20 @@ import javalang
 from typing import List
 
 class TrieNode:
+    # This class represents a single node in a Trie. It has a dictionary of children
+    # nodes and a flag to indicate if it is the end of a word
     def __init__(self):
-        self.children = {}
+        self.children: Dict[str, TrieNode] = {}
         self.is_end_of_word = False
 
 
 class Trie:
     def __init__(self):
         self.root = TrieNode()
-
+    
+    # This method takes a word and inserts it into the Trie
+    # by creating a new TrieNode for each character in the word
+    # and setting the is_end_of_word flag for the last TrieNode to True
     def insert(self, word: str) -> None:
         curr = self.root
         for ch in word:
@@ -83,10 +88,19 @@ class Trie:
             curr = curr.children[ch]
         curr.is_end_of_word = True
 
-
+# This function finds the common prefix shared by all the strings in the given list
+# by inserting each string into a Trie and traversing the Trie starting from the root
+# If a TrieNode is reached that is the end of a word and has more than one child
+# then we return the common prefix up to that point
+# Otherwise, if the current TrieNode has only one child we continue to traverse
+# the Trie using the child node and add the child's character to the common prefix
+# If we reach a TrieNode that has 0 or more than 1 children then we return the common
+# prefix (if it's not empty) or None if the prefix is empty
 def common_prefix(strings: List[str]) -> Optional[str]:
     trie = Trie()
     for s in strings:
+        if s == '':
+            return None
         trie.insert(s)
 
     common = ""
@@ -102,6 +116,7 @@ def common_prefix(strings: List[str]) -> Optional[str]:
             break
 
     return common if len(common) > 0 else None
+
 
 
 
@@ -258,6 +273,7 @@ def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> O
 # TODO: rewrite the logic
 def feasible(
     generation_log: GenerationLog,
+    generated_ids: List[int],
     generated_tokens: List[str],
     analyzer: JdtLspAnalyzer,
     uri: str,
@@ -275,7 +291,11 @@ def feasible(
         return True
     completions = get_completions(analyzer, uri, pos)
     completion_overhead.append(time.time() - start_time)
-    context = ''.join(generated_tokens + [token])
+    context = {
+        'ids': [id for id in generated_ids],
+        'text': ''.join(generated_tokens),
+        'new_token': token
+    }
     print(context)
     if completions is None:
         generation_log.append({
@@ -343,6 +363,7 @@ def get_feasible_token_ids(
     generation_log: GenerationLog,
     memoized_result: Optional[List[bool]],
     generated_tokens: List[str],
+    generated_ids: List[int],
     lsp_context: LspContext,
     # Should be ranked (higher probability first)
     considered_token_ids: List[int],
@@ -414,6 +435,7 @@ def get_feasible_token_ids(
             # print(''.join(generated_tokens + [token]))
             if feasible(
                 generation_log,
+                generated_ids,
                 generated_tokens,
                 analyzer,
                 text_file.path.as_uri(),
@@ -535,9 +557,11 @@ def generate(
     # model_input_name is defined if model-specific keyword input is passed
     # otherwise model_input_name is None
     # all model-specific keyword inputs are removed from `model_kwargs`
+    prev_use_cache = model_kwargs.get('use_cache')
     inputs_tensor, model_input_name, model_kwargs = model._prepare_model_inputs(
         inputs, bos_token_id, model_kwargs)
     batch_size = inputs_tensor.shape[0]
+    assert prev_use_cache == model_kwargs.get('use_cache')
     assert batch_size == 1
 
     # 3. Define other model kwargs
@@ -776,8 +800,24 @@ def sample(
                 # breakpoint()
                 continuations = get_completions(analyzer, text_file.path.as_uri(), text_file.get_position(text_file.cursor))
                 if continuations is not None:
-                    continuations = [item for c in continuations if (target := c['target']).startswith(source := c['source']) and len(item := target[len(source):]) > 0]
+                    continuations = [item if not (item := target[len(source):]).endswith('(') else item[:-1] for c in continuations if (target := c['target']).startswith(source := c['source'])]
+                    # continuations = [item for item in continuations if len(item) > 0]
                     completion = common_prefix(continuations)
+                
+# """BUG!!!
+# --- bug 
+# +++ patch 
+# @@ -854,7 +854,8 @@ 
+#       *         subclasses may differ. 
+#       */ 
+#      public Object clone() throws CloneNotSupportedException { 
+# -        Object clone = createCopy(0, getItemCount() - 1); 
+# + 
+# +        ObjectUtilities clone = new ObjectUtilities(); 
+#          return clone; 
+#      }
+# """
+
                     # if completion is not None:
                     #     breakpoint()
                     # if len(continuations) == 1:
@@ -879,6 +919,7 @@ def sample(
                         generation_log,
                         partial_memoized_result,
                         gen_context.generated_tokens,
+                        gen_context.generated_ids,
                         lsp_context,
                         considered_next_token_ids_list,
                         top_k,
@@ -917,6 +958,7 @@ def sample(
             next_token_ids_list = CODET5_TOKENIZER.encode(completion, add_special_tokens=False)
             next_token_ids = torch.LongTensor(next_token_ids_list).to(DEVICE)
             next_token_id_item = -1
+        
         # except RuntimeError:
         #     # TODO: fix
         #     print("RUNTIME ERROR")
@@ -933,6 +975,7 @@ def sample(
         # NOTE: originally next_token_ids[:, None] because for each batch it generate 'one' token;
         #  but here we do not consider batch and we can generate multiple tokens
         use_cache = len(next_token_ids_list) == 1
+        # use_cache = False
         input_ids = torch.cat([input_ids, next_token_ids[None, :]], dim=-1)
         model_kwargs['use_cache'] = use_cache
         model_kwargs = model._update_model_kwargs_for_generation(
