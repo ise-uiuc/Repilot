@@ -804,19 +804,6 @@ def sample(
                     # continuations = [item for item in continuations if len(item) > 0]
                     completion = common_prefix(continuations)
                 
-# """BUG!!!
-# --- bug 
-# +++ patch 
-# @@ -854,7 +854,8 @@ 
-#       *         subclasses may differ. 
-#       */ 
-#      public Object clone() throws CloneNotSupportedException { 
-# -        Object clone = createCopy(0, getItemCount() - 1); 
-# + 
-# +        ObjectUtilities clone = new ObjectUtilities(); 
-#          return clone; 
-#      }
-# """
 
                     # if completion is not None:
                     #     breakpoint()
@@ -844,6 +831,11 @@ def sample(
                     #             break
                 else:
                     completion = None
+                # Directly use completion to continue the code
+                if os.getenv('COMPLETION') is not None:
+                    N_COMPLETION = 10
+                    if completion is None and len(continuations) > 0 and len(continuations) < N_COMPLETION:
+                        completion = choice if (choice := random.choice(continuations)) != '' else None
                 # else:
                 #     # breakpoint()
                 #     warpers = LogitsProcessorList()
@@ -870,19 +862,19 @@ def sample(
                 #             completion = random.choice(completions)
                 #         else:
                 #             completion = random.choice(plausible_completions)
-                if completion is not None:
-                    warpers = LogitsProcessorList()
-                    warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
-                    next_token_scores = warpers(input_ids, next_token_scores)
-                    assert len(next_token_scores) == 1
-                    scores = next_token_scores[0]
-                    probs = nn.functional.softmax(scores, dim=-1)
-                    next_token_ids = torch.multinomial(probs, num_samples=1)
-                    next_token_id_item = next_token_ids.item()
-                    next_token = CODET5_TOKEN_MAP[next_token_id_item]
-                    with open('completions', 'a') as f:
-                        f.write(f'Completion: {completion}, file: {text_file.content[text_file.cursor - 20:text_file.cursor]}, LMPrediction: {next_token}')
-                        f.write('\n')
+                # if completion is not None:
+                #     warpers = LogitsProcessorList()
+                #     warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+                #     next_token_scores = warpers(input_ids, next_token_scores)
+                #     assert len(next_token_scores) == 1
+                #     scores = next_token_scores[0]
+                #     probs = nn.functional.softmax(scores, dim=-1)
+                #     next_token_ids = torch.multinomial(probs, num_samples=1)
+                #     next_token_id_item = next_token_ids.item()
+                #     next_token = CODET5_TOKEN_MAP[next_token_id_item]
+                #     with open('completions', 'a') as f:
+                #         f.write(f'Completion: {completion}, file: {text_file.content[text_file.cursor - 20:text_file.cursor]}, LMPrediction: {next_token}')
+                #         f.write('\n')
     
                 # if len(gen_context.generated_tokens) > 0 and gen_context.generated_tokens[-1].endswith('.'):
                 #     text_file = lsp_context.text_file
