@@ -859,7 +859,12 @@ def sample(
                                     if cont.startswith(token) or token.startswith(cont):
                                         cont_probs[idx] += prob.item()
                                 
-                            completion = choice if (choice := random.choices(continuations, weights=cont_probs, k=1)[0]) != '' else None
+                            try:
+                                completion = choice if (choice := random.choices(continuations, weights=cont_probs, k=1)[0]) != '' else None
+                            except ValueError:
+                                completion = random.choice(continuations)
+                                if completion == '':
+                                    completion = None
                 # else:
                 #     # breakpoint()
                 #     warpers = LogitsProcessorList()
