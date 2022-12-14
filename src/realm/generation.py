@@ -833,9 +833,33 @@ def sample(
                     completion = None
                 # Directly use completion to continue the code
                 if os.getenv('COMPLETION') is not None:
-                    N_COMPLETION = 10
-                    if completion is None and len(continuations) > 0 and len(continuations) < N_COMPLETION:
-                        completion = choice if (choice := random.choice(continuations)) != '' else None
+                    N_COMPLETION = 5
+                    if completion is None and continuations is not None and len(continuations) > 0 and len(continuations) < N_COMPLETION:
+                        if os.getenv('NO_RAND') is None:
+                            completion = choice if (choice := random.choice(continuations)) != '' else None
+                            print(completion)
+                        else:
+                        # if completion is not None:
+                            scores = next_token_scores[0]
+                            probs = nn.functional.softmax(scores, dim=-1)
+                            considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
+                            assert len(considered_next_token_ids.shape) == 1
+                            considered_next_token_ids = considered_next_token_ids[
+                                scores[considered_next_token_ids] > -float('inf')]
+
+                            assert len(input_ids) == 1
+                            input_ids_list = input_ids[0].tolist()
+                            considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
+
+                            cont_probs = [0 for _ in range(len(continuations))]
+                            for idx, cont in enumerate(continuations):
+                                for id in considered_next_token_ids_list:
+                                    token = CODET5_TOKEN_MAP[id]
+                                    prob = probs[id]
+                                    if cont.startswith(token) or token.startswith(cont):
+                                        cont_probs[idx] += prob.item()
+                                
+                            completion = choice if (choice := random.choices(continuations, weights=cont_probs, k=1)[0]) != '' else None
                 # else:
                 #     # breakpoint()
                 #     warpers = LogitsProcessorList()
