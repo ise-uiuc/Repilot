@@ -107,7 +107,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     # Clear memoization
     memoized: Dict[Tuple[int, int], Tuple[
         Dict[bytes, List[bool]],
-        Dict[bytes, List[int]]
+        Dict[bytes, List[int]],
+        Dict[bytes, List[str]],
     ]] = dict()
     for idx in range(n_patch_groups):
         print('Repair:', idx)
@@ -133,8 +134,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
             for (change_idx, change) in enumerate(reversed(buggy_file.changes)):
                 if (mem_id := (buggy_file_idx, change_idx)) not in memoized:
-                    memoized[mem_id] = ({}, {})
-                gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED = memoized[mem_id]
+                    memoized[mem_id] = ({}, {}, {})
+                gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED, gen.MEMOIZED_COMPLETION = memoized[mem_id]
                 start = change.start - 1
                 end = start + len(change.removed_lines)
                 start_pos = text_file.refine_index(start, 0)
@@ -198,7 +199,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 end_time = time.time()
                 times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
-                memoized[mem_id] = (gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED)
+                memoized[mem_id] = (gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED, gen.MEMOIZED_COMPLETION)
                 # This is always True
                 # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
                 print('Success')

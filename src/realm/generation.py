@@ -65,6 +65,7 @@ import javalang
 #         return True if input_ids[0, -1] == Repairer.EOM_ID else False
 from typing import List
 
+# TODO: construct a Trie for all the vocabulary
 class TrieNode:
     # This class represents a single node in a Trie. It has a dictionary of children
     # nodes and a flag to indicate if it is the end of a word
@@ -87,6 +88,14 @@ class Trie:
                 curr.children[ch] = TrieNode()
             curr = curr.children[ch]
         curr.is_end_of_word = True
+
+    def is_prefix_of(self, word: str) -> bool:
+        curr = self.root
+        for ch in word:
+            if ch not in curr.children:
+                return curr.is_end_of_word
+            curr = curr.children[ch]
+        return curr.is_end_of_word
 
 # This function finds the common prefix shared by all the strings in the given list
 # by inserting each string into a Trie and traversing the Trie starting from the root
@@ -137,6 +146,7 @@ CHART_11 = True
 
 PARTIAL_MEMOIZED: Dict[bytes, List[bool]] = {}
 COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
+MEMOIZED_COMPLETION: Dict[bytes, List[str]] = {}
 
 # class IDTokenError(Exception):
 #     pass
@@ -381,7 +391,7 @@ def get_feasible_token_ids(
     text_file = lsp_context.text_file
     # analyzer.client.stop()
     result: List[int] = []
-    # denied = Trie()
+    denied = Trie()
     # all_feasible_tokens = Trie()
     # all_possible_completions = Trie()
     for token_id in considered_token_ids:
@@ -427,6 +437,9 @@ def get_feasible_token_ids(
         #     lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
         #     all_feasible_tokens.items()
         # )):
+        elif denied.is_prefix_of(token):
+            with open('skipped', 'a') as f:
+                f.writelines([token])
         else:
             # No exception afterwards
             text_file.add(token)
@@ -453,6 +466,8 @@ def get_feasible_token_ids(
                 #     plausible_completions = Trie(filtered_completions)
                 #     all_feasible_tokens[id_token] = plausible_completions
                 #     all_possible_completions.merge(plausible_completions)
+            else:
+                denied.insert(token)
             #     # if dot_token:
             #     #     breakpoint()
             #     if not dot_token:
@@ -798,7 +813,13 @@ def sample(
                 #     'position': text_file.get_position(text_file.cursor)
                 # })
                 # breakpoint()
-                continuations = get_completions(analyzer, text_file.path.as_uri(), text_file.get_position(text_file.cursor))
+                input_ids_list = input_ids[0].tolist()
+                input_state = pickle.dumps(input_ids_list)
+                if input_state in MEMOIZED_COMPLETION:
+                    continuations = MEMOIZED_COMPLETION[input_state]
+                else:
+                    continuations = get_completions(analyzer, text_file.path.as_uri(), text_file.get_position(text_file.cursor))
+                    MEMOIZED_COMPLETION[input_state] = continuations
                 if continuations is not None:
                     continuations = [item if not (item := target[len(source):]).endswith('(') else item[:-1] for c in continuations if (target := c['target']).startswith(source := c['source'])]
                     # continuations = [item for item in continuations if len(item) > 0]
@@ -834,7 +855,7 @@ def sample(
                 # Directly use completion to continue the code
                 if os.getenv('COMPLETION') is not None:
                     N_COMPLETION = 5
-                    if completion is None and continuations is not None and len(continuations) > 0 and len(continuations) < N_COMPLETION:
+                    if completion is None and continuations is not None and len(continuations) > 0 and len(continuations) <= N_COMPLETION:
                         if os.getenv('NO_RAND') is None:
                             completion = choice if (choice := random.choice(continuations)) != '' else None
                             print(completion)
