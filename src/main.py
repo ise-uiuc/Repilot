@@ -79,12 +79,17 @@ def server_cmd(bug_id: str) -> List[str]:
 
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
-    repo = git.Repo(bug.proj_path)
-    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
-    subprocess.run(['defects4j', 'checkout', '-p', proj,
-                    f'-v{id_str}b', '-w', bug.proj_path])
-    repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
-    repo.git.execute(['git', 'clean', '-xfd'])
+    from git.exc import GitCommandError
+    try:
+        repo = git.Repo(bug.proj_path)
+        repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+        subprocess.run(['defects4j', 'checkout', '-p', proj,
+                        f'-v{id_str}b', '-w', bug.proj_path])
+        repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+        repo.git.execute(['git', 'clean', '-xfd'])
+        repo.close()
+    except GitCommandError:
+        pass
 
     analyzer = JdtLspAnalyzer(
         server_cmd(bug_id),
@@ -113,7 +118,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     for idx in range(n_patch_groups):
         print('Repair:', idx)
         if idx != 0:
-            repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+            # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
             # TODO: refactor textfile
             for buggy_file in bug.buggy_files:
                 text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
@@ -531,7 +536,7 @@ if __name__ == '__main__':
         #     continue
         print(bug_id)
         gen.CHART_11 = bug_id == 'Chart-11'
-        patch_groups = repair_proj(result_dir, bug_id, bug, 200)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 500)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):

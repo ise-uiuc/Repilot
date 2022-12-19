@@ -943,7 +943,7 @@ def sample(
                 assert len(input_ids) == 1
                 input_ids_list = input_ids[0].tolist()
 
-                considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
+                considered_next_token_ids_list = considered_next_token_ids.tolist()#[:top_k]
                 state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
                 if state_bytes in COMPLETE_MEMOIZED:
                     print("HUGE HIT")
