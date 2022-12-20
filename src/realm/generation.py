@@ -146,7 +146,7 @@ CHART_11 = True
 
 PARTIAL_MEMOIZED: Dict[bytes, List[bool]] = {}
 COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
-MEMOIZED_COMPLETION: Dict[bytes, List[str]] = {}
+MEMOIZED_COMPLETION: Dict[bytes, Optional[List[dict]]] = {}
 
 # class IDTokenError(Exception):
 #     pass
@@ -287,6 +287,7 @@ def feasible(
     generated_tokens: List[str],
     analyzer: JdtLspAnalyzer,
     uri: str,
+    token_id: int,
     token: str,
     pos: spec.Position,
     completion_overhead: List[float],
@@ -299,7 +300,12 @@ def feasible(
     start_time = time.time()
     if is_special_token(token):
         return True
-    completions = get_completions(analyzer, uri, pos)
+    input_state = pickle.dumps(generated_ids + [token_id])
+    if input_state in MEMOIZED_COMPLETION:
+        completions = MEMOIZED_COMPLETION[input_state]
+    else:
+        completions = get_completions(analyzer, uri, pos)
+        MEMOIZED_COMPLETION[input_state] = completions
     completion_overhead.append(time.time() - start_time)
     context = {
         'ids': [id for id in generated_ids],
@@ -452,6 +458,7 @@ def get_feasible_token_ids(
                 generated_tokens,
                 analyzer,
                 text_file.path.as_uri(),
+                token_id,
                 token,
                 pos,
                 completion_overhead
@@ -814,7 +821,7 @@ def sample(
                 # })
                 # breakpoint()
                 input_ids_list = input_ids[0].tolist()
-                input_state = pickle.dumps(input_ids_list)
+                input_state = pickle.dumps(gen_context.generated_ids)
                 if input_state in MEMOIZED_COMPLETION:
                     continuations = MEMOIZED_COMPLETION[input_state]
                 else:
@@ -943,7 +950,7 @@ def sample(
                 assert len(input_ids) == 1
                 input_ids_list = input_ids[0].tolist()
 
-                considered_next_token_ids_list = considered_next_token_ids.tolist()#[:top_k]
+                considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
                 state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
                 if state_bytes in COMPLETE_MEMOIZED:
                     print("HUGE HIT")
