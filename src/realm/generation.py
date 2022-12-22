@@ -306,7 +306,7 @@ def feasible(
     else:
         completions = get_completions(analyzer, uri, pos)
         MEMOIZED_COMPLETION[input_state] = completions
-    completion_overhead.append(time.time() - start_time)
+        completion_overhead.append(time.time() - start_time)
     context = {
         'ids': [id for id in generated_ids],
         'text': ''.join(generated_tokens),
@@ -400,9 +400,15 @@ def get_feasible_token_ids(
     denied = Trie()
     # all_feasible_tokens = Trie()
     # all_possible_completions = Trie()
+    done = False
+    count = 0
     for token_id in considered_token_ids:
+        count += 1
         if len(result) == top_k:
             break
+        if done:
+            result.append(token_id)
+            continue
         # if token_id == 32098 or token_id == CODET5_INFERENCE_CONFIG.end_id:
         #     try:
         #         javalang.parse.parse(text_file.content)
@@ -443,9 +449,13 @@ def get_feasible_token_ids(
         #     lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
         #     all_feasible_tokens.items()
         # )):
+        elif len(token) > 0 and not (
+            token[-1].isalnum()
+            or token[-1] in ['.', '_', '$']
+        ):
+            result.append(token_id)
         elif denied.is_prefix_of(token):
-            with open('skipped', 'a') as f:
-                f.writelines([token])
+            pass
         else:
             # No exception afterwards
             text_file.add(token)
@@ -481,6 +491,8 @@ def get_feasible_token_ids(
             #         denied[id_token] = None
             text_file.delete(len(token))
             analyzer.change(text_file)
+        # if count == 20:
+        #     done = True
         # except IDTokenError:
         #     result.append(token_id)
     return result
@@ -762,8 +774,11 @@ def sample(
     # Logging
     generation_log: GenerationLog = []
 
+    # counter
+    count = 0
     # auto-regressive generation
     while True:
+        count += 1
         # if len(gen_context.generated_tokens) > 0 and 'dataset' in gen_context.generated_tokens[-1]:
         #     breakpoint()
         # prepare model inputs
@@ -788,7 +803,7 @@ def sample(
         assert len(next_token_scores) == 1
 
         completion: Optional[str] = None
-        if os.getenv('PLAIN') is not None:
+        if os.getenv('PLAIN') is not None or count > 5:
             # Modified from GenerationMixin.get_logits_warper
             # if temperature is not None and temperature != 1.0:
             #     warpers.append(TemperatureLogitsWarper(temperature))
