@@ -439,7 +439,7 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     return result
 
 
-BATCH_SIZE = 3
+BATCH_SIZE = 6
 
 
 def validate_all_bugs(all_bugs: dict, proj_dir: Path):

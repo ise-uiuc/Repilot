@@ -31,7 +31,7 @@ for file in files:
 
     proj, datapoints = next(iter(general.items()))
     # datapoints = data['detailed']['Chart']['10']
-    times = [v['n_total'] for v in datapoints]
+    times = [v['time_consumed'] for v in datapoints]
     n_comp_success = [v['n_comp_success'] for v in datapoints]
     plt.plot(times, n_comp_success, label=file)
 
