@@ -803,7 +803,7 @@ def sample(
         assert len(next_token_scores) == 1
 
         completion: Optional[str] = None
-        if os.getenv('PLAIN') is not None or count > 10:
+        if os.getenv('PLAIN') is not None:# or count > 10:
             # Modified from GenerationMixin.get_logits_warper
             # if temperature is not None and temperature != 1.0:
             #     warpers.append(TemperatureLogitsWarper(temperature))

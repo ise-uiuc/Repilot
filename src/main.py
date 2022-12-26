@@ -536,7 +536,7 @@ if __name__ == '__main__':
         #     continue
         print(bug_id)
         gen.CHART_11 = bug_id == 'Chart-11'
-        patch_groups = repair_proj(result_dir, bug_id, bug, 200)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 500)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):
