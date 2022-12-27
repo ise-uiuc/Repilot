@@ -1,3 +1,4 @@
+from matplotlib import pyplot as plt
 import json
 import sys
 from pathlib import Path
@@ -18,7 +19,8 @@ def get_data_for_bug(bug_meta: dict, avg_gen_time: float) -> List[DataPoint]:
     test_succeeded = bug_meta['succeeded']
     comp_succeeded = test_succeeded + bug_meta['test_failed']
     parse_succeeded = comp_succeeded + bug_meta['comp_failed']
-    all_unique_patches = parse_succeeded + (bug_meta['parse_failed'] if 'parse_failed' in bug_meta else [])
+    all_unique_patches = parse_succeeded + \
+        (bug_meta['parse_failed'] if 'parse_failed' in bug_meta else [])
     times = {int(key): value for key, value in bug_meta['times'].items()}
     assert len(times) == len(all_unique_patches)
     result: List[DataPoint] = []
@@ -143,16 +145,13 @@ def get_data(folder: Path) -> dict:
 
 # print(json.dumps(analysis, indent=2))
 
-from matplotlib import pyplot as plt
-import sys
-from pathlib import Path
-import json
 
 SMALL_SIZE = 10
 MEDIUM_SIZE = 14
 BIGGER_SIZE = 18
 
-plt.rc("font", size=SMALL_SIZE, family='sans-serif')  # controls default text sizes
+# controls default text sizes
+plt.rc("font", size=SMALL_SIZE, family='sans-serif')
 plt.rc("axes", titlesize=MEDIUM_SIZE)  # fontsize of the axes title
 plt.rc("axes", labelsize=MEDIUM_SIZE)  # fontsize of the x and y labels
 plt.rc("xtick", labelsize=MEDIUM_SIZE)  # fontsize of the tick labels
@@ -166,8 +165,45 @@ MIN_FAC = None
 plt.rc("text", usetex=True)
 # plt.rc("text.latex", preamble=r"\usepackage{xfrac}")
 
+plt.subplots_adjust(
+    left=0.1,
+    bottom=0.1,
+    right=0.9,
+    top=0.9,
+    wspace=2,
+    hspace=2
+)
+
+
+def plot_datapoints(datapoints: List[DataPoint], axs: plt.Axes, label: str):
+    n_total = [v['n_total'] for v in datapoints]
+    times = [v['total_time_consumed'] for v in datapoints]
+    gen_times = [v['gen_time'] for v in datapoints]
+    n_comp_success = [v['n_comp_success'] for v in datapoints]
+    n_plausible = [v['n_test_success'] for v in datapoints]
+
+    y_label = 'Number of compilable patches'
+
+    def plot(ax: plt.Axes, xs: list, ys: list, x_label: str, y_label: str):
+        ax.set_xlabel(make_label(x_label))
+        ax.set_ylabel(make_label(y_label))
+        ax.plot(xs, ys, label=label)
+        ax.legend()
+
+    plot(axs[0, 0], n_total, n_comp_success,
+         'Number of unique patches', y_label)
+    plot(axs[0, 1], times, n_comp_success, 'Total time consumed', y_label)
+    plot(axs[0, 2], gen_times, n_comp_success, 'Generation time', y_label)
+
+    y_label = 'Number of plausible patches'
+    plot(axs[1, 0], n_total, n_plausible, 'Number of unique patches', y_label)
+    plot(axs[1, 1], times, n_plausible, 'Total time consumed', y_label)
+    plot(axs[1, 2], gen_times, n_plausible, 'Generation time', y_label)
+
+
 def make_label(text: str) -> str:
     return f'\\textbf{{{text}}}'
+
 
 if __name__ == '__main__':
     parser = ArgumentParser('Evaluate the experimental results')
@@ -182,36 +218,36 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     result_folder = Path(args.output)
-    result_folder.mkdir(exist_ok=True)
+    result_folder.mkdir(exist_ok=True, parents=True)
 
-    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-    for folder in map(Path, args.folders):
+    folders = list(map(Path, args.folders))
+    all_details: dict = {}
+
+    fig, axs = plt.subplots(2, 3, figsize=(18, 10))
+    first_folder = True
+    for folder in folders:
         data = get_data(folder)
 
+        details = data['detailed']
+        proj, proj_details = next(iter(details.items()))
+
+        for bug_id, datapoints in proj_details.items():
+            if first_folder:
+                all_details[bug_id] = []
+            else:
+                assert bug_id in all_details
+            all_details[bug_id].append((folder.name, datapoints))
+
         general = data['general']
-
         proj, datapoints = next(iter(general.items()))
-        # datapoints = data['detailed']['Chart']['10']
-        n_total = [v['n_total'] for v in datapoints]
-        times = [v['total_time_consumed'] for v in datapoints]
-        gen_times = [v['gen_time'] for v in datapoints]
-        n_comp_success = [v['n_comp_success'] for v in datapoints]
-
-        y_label = make_label('Number of compilable patches')
-
-        axs[0].set_xlabel(make_label('Number of unique patches'))
-        axs[0].set_ylabel(y_label)
-        axs[0].plot(n_total, n_comp_success, label=folder.name)
-        axs[0].legend()
-
-        axs[1].set_xlabel(make_label('Total time consumed'))
-        axs[1].set_ylabel(y_label)
-        axs[1].plot(times, n_comp_success, label=folder.name)
-        axs[1].legend()
-
-        axs[2].set_xlabel(make_label('Generation time'))
-        axs[2].set_ylabel(y_label)
-        axs[2].plot(gen_times, n_comp_success, label=folder.name)
-        axs[2].legend()
-
+        plot_datapoints(datapoints, axs, folder.name)
+        first_folder = False
     fig.savefig(result_folder / 'plot.png')
+    plt.close()
+
+    for bug_id, all_data in all_details.items():
+        fig, axs = plt.subplots(2, 3, figsize=(18, 10))
+        for tag, datapoints in all_data:
+            plot_datapoints(datapoints, axs, f'{tag}')
+        fig.savefig(result_folder / f'{bug_id}.png')
+        plt.close()
