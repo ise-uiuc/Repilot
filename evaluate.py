@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from typing import TypedDict, List
 from argparse import ArgumentParser
+from tqdm import tqdm
 
 
 class DataPoint(TypedDict):
@@ -245,9 +246,13 @@ if __name__ == '__main__':
     fig.savefig(result_folder / 'plot.png')
     plt.close()
 
-    for bug_id, all_data in all_details.items():
+    for bug_id, all_data in tqdm(all_details.items()):
         fig, axs = plt.subplots(2, 3, figsize=(18, 10))
+        tag_prefix = '_'.join([
+            'o' if datapoints[-1]['n_test_success'] > 0 else 'x'
+            for _, datapoints in all_data
+        ])
         for tag, datapoints in all_data:
             plot_datapoints(datapoints, axs, f'{tag}')
-        fig.savefig(result_folder / f'{bug_id}.png')
+        fig.savefig(result_folder / f'{tag_prefix}-{bug_id}.png')
         plt.close()
