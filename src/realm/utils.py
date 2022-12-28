@@ -97,6 +97,7 @@ class Trie:
         curr.is_end_of_word = True
 
     def is_prefix_of(self, word: str) -> bool:
+        """Returns if there exists a string in the trie that is a prefix of `word`"""
         curr = self.root
         for ch in word:
             if ch not in curr.children:

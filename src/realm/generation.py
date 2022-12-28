@@ -20,11 +20,23 @@ import typing
 import time
 import random
 
+JAVA_KEYWORDS = {'abstract', 'continue', 'for', 'new', 'switch',
+                 'assert', 'default', 'goto', 'package', 'synchronized',
+                 'boolean', 'do', 'if', 'private', 'this',
+                 'break', 'double', 'implements', 'protected', 'throw',
+                 'byte', 'else', 'import', 'public', 'throws',
+                 'case', 'enum', 'instanceof', 'return', 'transient',
+                 'catch', 'extends', 'int', 'short', 'try',
+                 'char', 'final', 'interface', 'static', 'void',
+                 'class', 'finally', 'long', 'strictfp', 'volatile',
+                 'const' 'float', 'native', 'super', 'while'}
+
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-PARTIAL_MEMOIZED: Dict[bytes, List[bool]] = {}
+PARTIAL_MEMOIZED: Dict[bytes, List[int]] = {}
 COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
 MEMOIZED_COMPLETION: Dict[bytes, Optional[List[dict]]] = {}
+DENIED_TRIE: Dict[bytes, utils.Trie] = {}
 CHART_11 = True
 
 
@@ -183,6 +195,17 @@ def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> O
     # )
     return new_completion_result['result']
 
+def trivially_feasible(token: str) -> bool:
+    if is_special_token(token) or token.strip() in JAVA_KEYWORDS:
+        return True
+    if len(token) > 0 and not (
+        token[-1].isalnum()
+        or token[-1] in ['.', '_', '$']
+    ):
+        return True
+    return False
+
+
 # TODO: rewrite the logic
 def feasible(
     generation_log: GenerationLog,
@@ -201,8 +224,16 @@ def feasible(
     #         f'Cannot recognize {token} as an identifier, probabily unicode.')
     # assert token not in JAVA_KEYWORDS
     start_time = time.time()
-    if is_special_token(token):
-        return True
+    # if is_special_token(token) or token.strip() in JAVA_KEYWORDS:
+    #     return True
+    # if len(token) > 0 and not (
+    #     token[-1].isalnum()
+    #     or token[-1] in ['.', '_', '$']
+    # ):
+    #     return True
+    # if input_state in PARTIAL_MEMOIZED:
+    #     print("HIT")
+    #     return PARTIAL_MEMOIZED[input_state]
     input_state = pickle.dumps(generated_ids + [token_id])
     if input_state in MEMOIZED_COMPLETION:
         completions = MEMOIZED_COMPLETION[input_state]
@@ -240,6 +271,7 @@ def feasible(
         #     breakpoint()
         # print("Yes!")
         # print(completions)
+        # PARTIAL_MEMOIZED[input_state] = True
         return True
     else:
         generation_log.append({
@@ -248,6 +280,7 @@ def feasible(
         })
         # print('=======================DENIED============================')
         print('Denied', token)#, token, completions)
+        # PARTIAL_MEMOIZED[input_state] = False
         return False
 
 def is_special_token(token: str) -> bool:
@@ -702,7 +735,7 @@ def sample(
         assert len(next_token_scores) == 1
 
         completion: Optional[str] = None
-        if os.getenv('PLAIN') is not None:# or count > 10:
+        if os.getenv('PLAIN') is not None or CHART_11:# or count > 10:
             # Modified from GenerationMixin.get_logits_warper
             # if temperature is not None and temperature != 1.0:
             #     warpers.append(TemperatureLogitsWarper(temperature))
@@ -862,12 +895,31 @@ def sample(
                 scores = next_token_scores[0]
                 probs = nn.functional.softmax(scores, dim=-1)
                 assert len(probs.shape) == 1
+                input_state = pickle.dumps(gen_context.generated_ids)
+                if not input_state in PARTIAL_MEMOIZED:
+                    PARTIAL_MEMOIZED[input_state] = []
+                probs[PARTIAL_MEMOIZED[input_state]] = 0.
 
                 # shape: (1)
+                if not input_state in DENIED_TRIE:
+                    DENIED_TRIE[input_state] = utils.Trie()
+                denied_trie = DENIED_TRIE[input_state]
                 while True:
-                    next_token_ids = torch.multinomial(probs, num_samples=1)
+                    # RUNTIME ERROR
+                    # TODO
+                    # 1. PARTIAL_MEMOIZED[prev_state] = UNREACHABLE when the accumulated probability is 0.0
+                    # 2. Rewrite probs in advance according to PARTIAL_MEMOIZED[state] = UNREACHABLE (Tree search pruning)
+                    # 3. Keywords opt. Trie opt. text_file.delete(*) opt.
+                    # 4. make it a class and move XXX_memoized inside. (refactor)
+                    try:
+                        next_token_ids = torch.multinomial(probs, num_samples=1)
+                    except RuntimeError:
+                        if len(gen_context.generated_ids) > 0:
+                            PARTIAL_MEMOIZED[pickle.dumps(gen_context.generated_ids[:-1])].append(gen_context.generated_ids[-1])
+                        return [], [], None, generation_log
                     next_token_ids_list = next_token_ids.tolist()
                     next_token_id_item = next_token_ids.item()
+                    assert next_token_id_item not in PARTIAL_MEMOIZED[input_state]
                     next_token = model.token_map[next_token_id_item]
                     text_file = lsp_context.text_file
                     analyzer = lsp_context.analyzer
@@ -875,7 +927,7 @@ def sample(
                     analyzer.change(text_file)
                     pos = text_file.get_position(text_file.cursor)
                     # print(''.join(generated_tokens + [token]))
-                    if feasible(
+                    if trivially_feasible(next_token) or (not denied_trie.is_prefix_of(next_token) and feasible(
                         generation_log,
                         gen_context.generated_ids,
                         gen_context.generated_tokens,
@@ -885,11 +937,10 @@ def sample(
                         next_token,
                         pos,
                         completion_overhead
-                    ):
-                        completion = next_token
+                    )):
                         text_file.delete(len(next_token))
-                        # breakpoint()
                         break
+                    denied_trie.insert(next_token)
                     probs[next_token_id_item] = 0.
                     text_file.delete(len(next_token))
                     
@@ -947,14 +998,14 @@ def sample(
                 #     break
 
         if completion is None:
-            probs = nn.functional.softmax(scores, dim=-1)
-            assert len(probs.shape) == 1
-
-            # shape: (1)
-            next_token_ids = torch.multinomial(probs, num_samples=1)
-            next_token_ids_list = next_token_ids.tolist()
-            next_token_id_item = next_token_ids.item()
-            next_token = model.token_map[next_token_id_item]
+            # probs = nn.functional.softmax(scores, dim=-1)
+            # assert len(probs.shape) == 1
+            pass
+            # # shape: (1)
+            # next_token_ids = torch.multinomial(probs, num_samples=1)
+            # next_token_ids_list = next_token_ids.tolist()
+            # next_token_id_item = next_token_ids.item()
+            # next_token = model.token_map[next_token_id_item]
         else:
             next_token = completion
             next_token_ids_list = model.tokenizer.encode(completion, add_special_tokens=False)
@@ -992,6 +1043,7 @@ def sample(
         if model.is_end(next_token_id_item):
             break
         elif len(input_ids[0]) == max_length:
+            breakpoint()
             is_complete = False
             break
     return completion_overhead, gen_context.generated_ids, gen_context.generated_tokens if is_complete else None, generation_log

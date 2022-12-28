@@ -1,6 +1,7 @@
 from realm.lsp import TextDocument
 from realm.syntax import reduce
 from realm import utils
+from typing import Optional
 
 # doc = TextDocument(r'System.out.println("Hello " + "world")')
 # reduce(doc, raise_unexpected_exc=True)
@@ -111,9 +112,10 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     # gen.COMPLETE_MEMOIZED.clear()
     # Clear memoization
     memoized: Dict[Tuple[int, int], Tuple[
-        Dict[bytes, List[bool]],
         Dict[bytes, List[int]],
-        Dict[bytes, List[str]],
+        Dict[bytes, List[int]],
+        Dict[bytes, Optional[List[dict]]],
+        Dict[bytes, utils.Trie],
     ]] = dict()
     for idx in range(n_patch_groups):
         print('Repair:', idx)
@@ -139,8 +141,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
             for (change_idx, change) in enumerate(reversed(buggy_file.changes)):
                 if (mem_id := (buggy_file_idx, change_idx)) not in memoized:
-                    memoized[mem_id] = ({}, {}, {})
-                gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED, gen.MEMOIZED_COMPLETION = memoized[mem_id]
+                    memoized[mem_id] = ({}, {}, {}, {})
+                gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED, gen.MEMOIZED_COMPLETION, gen.DENIED_TRIE = memoized[mem_id]
                 start = change.start - 1
                 end = start + len(change.removed_lines)
                 start_pos = text_file.refine_index(start, 0)
@@ -210,7 +212,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 end_time = time.time()
                 times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
-                memoized[mem_id] = (gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED, gen.MEMOIZED_COMPLETION)
+                memoized[mem_id] = (gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED, gen.MEMOIZED_COMPLETION, gen.DENIED_TRIE)
                 # This is always True
                 # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
                 print('Success')
@@ -542,7 +544,7 @@ if __name__ == '__main__':
         #     continue
         print(bug_id)
         gen.CHART_11 = bug_id == 'Chart-11'
-        patch_groups = repair_proj(result_dir, bug_id, bug, 500)
+        patch_groups = repair_proj(result_dir, bug_id, bug, 200)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):
