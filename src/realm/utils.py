@@ -1,6 +1,6 @@
 import itertools
 import pickle
-from typing import Callable, Iterable, Iterator, List, Tuple, TypeVar
+from typing import Callable, Iterable, Iterator, List, Tuple, TypeVar, Optional
 from unidiff.patch import Line
 from pathlib import Path
 import json
@@ -70,3 +70,65 @@ def load_and_cache_data(path: Path, default_data: T) -> T:
         with open(path, 'wb') as f:
             pickle.dump(default_data, f)
         return default_data
+
+
+# TODO: construct a Trie for all the vocabulary
+class TrieNode:
+    # This class represents a single node in a Trie. It has a dictionary of children
+    # nodes and a flag to indicate if it is the end of a word
+    def __init__(self):
+        self.children: Dict[str, TrieNode] = {}
+        self.is_end_of_word = False
+
+
+class Trie:
+    def __init__(self):
+        self.root = TrieNode()
+    
+    # This method takes a word and inserts it into the Trie
+    # by creating a new TrieNode for each character in the word
+    # and setting the is_end_of_word flag for the last TrieNode to True
+    def insert(self, word: str) -> None:
+        curr = self.root
+        for ch in word:
+            if ch not in curr.children:
+                curr.children[ch] = TrieNode()
+            curr = curr.children[ch]
+        curr.is_end_of_word = True
+
+    def is_prefix_of(self, word: str) -> bool:
+        curr = self.root
+        for ch in word:
+            if ch not in curr.children:
+                return curr.is_end_of_word
+            curr = curr.children[ch]
+        return curr.is_end_of_word
+
+# This function finds the common prefix shared by all the strings in the given list
+# by inserting each string into a Trie and traversing the Trie starting from the root
+# If a TrieNode is reached that is the end of a word and has more than one child
+# then we return the common prefix up to that point
+# Otherwise, if the current TrieNode has only one child we continue to traverse
+# the Trie using the child node and add the child's character to the common prefix
+# If we reach a TrieNode that has 0 or more than 1 children then we return the common
+# prefix (if it's not empty) or None if the prefix is empty
+def common_prefix(strings: List[str]) -> Optional[str]:
+    trie = Trie()
+    for s in strings:
+        if s == '':
+            return None
+        trie.insert(s)
+
+    common = ""
+    curr = trie.root
+    while curr:
+        if curr.is_end_of_word and len(curr.children) > 1:
+            return common if len(common) > 0 else None
+        if len(curr.children) == 1:
+            ch = list(curr.children.keys())[0]
+            common += ch
+            curr = curr.children[ch]
+        else:
+            break
+
+    return common if len(common) > 0 else None

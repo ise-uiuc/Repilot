@@ -1,155 +1,31 @@
-"""Copied and rewritted from transformers.generation_utils"""
-from logging import warning
-import os
-import pickle
-import random
-from datasets import d4j
-from realm.lsp import client, spec
-import inspect
-import typing
-import warnings
+from transformers import T5ForConditionalGeneration, T5Config, AutoTokenizer
+from transformers.tokenization_utils import PreTrainedTokenizer, logger
+from transformers.generation_beam_constraints import Constraint
+from transformers.generation_logits_process import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper
+from transformers.generation_stopping_criteria import StoppingCriteriaList
+from typing import Dict, List, Optional, Tuple, NamedTuple, Union, Iterable, Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, Iterator, List, NamedTuple, Optional, Protocol, Set, Tuple, Union, cast
-import regex
-from pathlib import Path
-import time
-from joblib import Parallel, delayed
-import torch
-import torch.distributed as dist
-from torch import nn
-import multiprocessing as mp
-from transformers import T5ForConditionalGeneration
-from transformers.generation_utils import GenerationMixin, GreedySearchOutput, SampleOutput, BeamSearchOutput, BeamSampleOutput, logger, SampleEncoderDecoderOutput, SampleDecoderOnlyOutput
-from transformers.generation_beam_constraints import Constraint, DisjunctiveConstraint, PhrasalConstraint
-from transformers.generation_beam_search import BeamScorer, BeamSearchScorer, ConstrainedBeamSearchScorer
-from transformers.generation_logits_process import (
-    EncoderNoRepeatNGramLogitsProcessor,
-    ExponentialDecayLengthPenalty,
-    ForcedBOSTokenLogitsProcessor,
-    ForcedEOSTokenLogitsProcessor,
-    HammingDiversityLogitsProcessor,
-    InfNanRemoveLogitsProcessor,
-    LogitNormalization,
-    LogitsProcessorList,
-    MinLengthLogitsProcessor,
-    NoBadWordsLogitsProcessor,
-    NoRepeatNGramLogitsProcessor,
-    PrefixConstrainedLogitsProcessor,
-    RepetitionPenaltyLogitsProcessor,
-    TemperatureLogitsWarper,
-    TopKLogitsWarper,
-    TopPLogitsWarper,
-    TypicalLogitsWarper,
-)
-from transformers.generation_stopping_criteria import (
-    MaxLengthCriteria,
-    MaxTimeCriteria,
-    StoppingCriteria,
-    StoppingCriteriaList,
-    validate_stopping_criteria,
-)
-from transformers.pytorch_utils import torch_int_div
-from transformers.utils import ModelOutput, logging
-from transformers.tokenization_utils import PreTrainedTokenizer
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from tokenizers import AddedToken
-from realm.analyze.jdt_lsp import JdtLspAnalyzer
-from realm.lsp.text import TextDocument, TextFile
 from realm import utils
-from functools import partial
-# from pygtrie import Trie
-import javalang
+from realm.lsp.text import TextFile
+from realm.lsp import spec
+from realm.analyze.jdt_lsp import JdtLspAnalyzer
+from pathlib import Path
+from torch import nn
+import torch
+import os
+import inspect
+import warnings
+import pickle
+import typing
+import time
+import random
 
-# class IncoderEOM(StoppingCriteria):
-#     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-#         return True if input_ids[0, -1] == Repairer.EOM_ID else False
-from typing import List
-
-# TODO: construct a Trie for all the vocabulary
-class TrieNode:
-    # This class represents a single node in a Trie. It has a dictionary of children
-    # nodes and a flag to indicate if it is the end of a word
-    def __init__(self):
-        self.children: Dict[str, TrieNode] = {}
-        self.is_end_of_word = False
-
-
-class Trie:
-    def __init__(self):
-        self.root = TrieNode()
-    
-    # This method takes a word and inserts it into the Trie
-    # by creating a new TrieNode for each character in the word
-    # and setting the is_end_of_word flag for the last TrieNode to True
-    def insert(self, word: str) -> None:
-        curr = self.root
-        for ch in word:
-            if ch not in curr.children:
-                curr.children[ch] = TrieNode()
-            curr = curr.children[ch]
-        curr.is_end_of_word = True
-
-    def is_prefix_of(self, word: str) -> bool:
-        curr = self.root
-        for ch in word:
-            if ch not in curr.children:
-                return curr.is_end_of_word
-            curr = curr.children[ch]
-        return curr.is_end_of_word
-
-# This function finds the common prefix shared by all the strings in the given list
-# by inserting each string into a Trie and traversing the Trie starting from the root
-# If a TrieNode is reached that is the end of a word and has more than one child
-# then we return the common prefix up to that point
-# Otherwise, if the current TrieNode has only one child we continue to traverse
-# the Trie using the child node and add the child's character to the common prefix
-# If we reach a TrieNode that has 0 or more than 1 children then we return the common
-# prefix (if it's not empty) or None if the prefix is empty
-def common_prefix(strings: List[str]) -> Optional[str]:
-    trie = Trie()
-    for s in strings:
-        if s == '':
-            return None
-        trie.insert(s)
-
-    common = ""
-    curr = trie.root
-    while curr:
-        if curr.is_end_of_word and len(curr.children) > 1:
-            return common if len(common) > 0 else None
-        if len(curr.children) == 1:
-            ch = list(curr.children.keys())[0]
-            common += ch
-            curr = curr.children[ch]
-        else:
-            break
-
-    return common if len(common) > 0 else None
-
-
-
-
-MODEL = 'Salesforce/codet5-large'
-DEVICE = 'cuda'
-CHART_11 = True
-
-# JAVA_KEYWORDS = ['abstract', 'continue', 'for', 'new', 'switch',
-#                  'assert', 'default', 'goto', 'package', 'synchronized',
-#                  'boolean', 'do', 'if', 'private', 'this',
-#                  'break', 'double', 'implements', 'protected', 'throw',
-#                  'byte', 'else', 'import', 'public', 'throws',
-#                  'case', 'enum', 'instanceof', 'return', 'transient',
-#                  'catch', 'extends', 'int', 'short', 'try',
-#                  'char', 'final', 'interface', 'static', 'void',
-#                  'class', 'finally', 'long', 'strictfp', 'volatile',
-#                  'const' 'float', 'native', 'super', 'while']
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 PARTIAL_MEMOIZED: Dict[bytes, List[bool]] = {}
 COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
 MEMOIZED_COMPLETION: Dict[bytes, Optional[List[dict]]] = {}
-
-# class IDTokenError(Exception):
-#     pass
+CHART_11 = True
 
 
 GenerationLog = List[dict]
@@ -157,8 +33,6 @@ Generation = Tuple[List[float], List[int], Optional[List[str]], GenerationLog]
 
 @dataclass
 class GenerationContext:
-    inside_line_comment: bool
-    inside_block_comment: bool
     generated_tokens: List[str]
     generated_ids: List[int]
 
@@ -189,63 +63,92 @@ class LspContext(NamedTuple):
         )
 
 
-CODET5 = T5ForConditionalGeneration.from_pretrained(MODEL).to(DEVICE)
-CODET5_TOKENIZER: PreTrainedTokenizer = AutoTokenizer.from_pretrained(MODEL)
-CODET5_INFERENCE_CONFIG = LMInferenceConfig(1.0, 50, 50, 2)
-CODET5_VOC_SIZE: int = CODET5.config.vocab_size
-CODET5_TOKEN_MAP: List[str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), [
-    CODET5_TOKENIZER.decode(
-        id,
-        skip_special_tokens=False,
-        clean_up_tokenization_spaces=False
-    ) for id in range(CODET5_VOC_SIZE)
-])
-CODET5_MAX_TOKENS: int = CODET5.config.to_dict()['n_positions']
-CODET5_FIRST_SEP_ID = 32099
-CODET5_FIRST_SEP_TOKEN = CODET5_TOKEN_MAP[CODET5_FIRST_SEP_ID]
-assert CODET5_FIRST_SEP_TOKEN == "<extra_id_0>"
+class T5SuitableForRealm(T5ForConditionalGeneration):
+    def __init__(
+        self,
+        config: T5Config,
+        tokenizer: PreTrainedTokenizer,
+        *model_args,
+    ):
+        super().__init__(config)
+        self.tokenizer = tokenizer
+        self.vocab_size: int = self.config.vocab_size  # type: ignore # noqa
+        self.token_map: List[str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), [
+            tokenizer.decode(
+                id,
+                skip_special_tokens=False,
+                clean_up_tokenization_spaces=False
+            ) for id in range(self.vocab_size)
+        ])
+        self.sep_id = 32099
+        self.sep = self.token_map[self.sep_id]
+        assert self.sep == "<extra_id_0>"
+        self.max_tokens: int = self.config.to_dict()['n_positions']  # type: ignore # noqa
+        self.model_args = model_args
+
+    @classmethod
+    def t5_from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], *model_args, **kwargs):
+        tokenizer = AutoTokenizer.from_pretrained(
+            pretrained_model_name_or_path)
+        model = cls.from_pretrained(
+            pretrained_model_name_or_path, tokenizer, *model_args, **kwargs)
+        return model
+
+    def context(self, prefix: str, suffix: str) -> str:
+        return prefix + self.sep + suffix
+    
+    def is_end(self, id: int) -> bool:
+        return id == 32098 or id == 2
+
+    def encode(self, prefix: str, suffix: str) -> torch.Tensor:
+        context = self.tokenizer.encode(self.context(
+            prefix, suffix), return_tensors='pt').to(DEVICE)
+        index = (context[0] == self.sep_id).nonzero()[0]
+        half_token_limit = self.max_tokens // 2
+        prefix_tensor = context[:, :index]
+        prefix_len = prefix_tensor.shape[1]
+        suffix_tensor = context[:, index:]
+        suffix_len = suffix_tensor.shape[1]
+        if prefix_len < half_token_limit and suffix_len < half_token_limit:
+            result = torch.cat((prefix_tensor, suffix_tensor), dim=1)
+        elif prefix_len >= half_token_limit and suffix_len >= half_token_limit:
+            result = torch.cat(
+                (prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit]), dim=1)
+        elif prefix_len < half_token_limit and suffix_len >= half_token_limit:
+            n_more = min(half_token_limit - prefix_len,
+                         suffix_len - half_token_limit)
+            result = torch.cat(
+                (prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit + n_more]), dim=1)
+        elif prefix_len >= half_token_limit and suffix_len < half_token_limit:
+            n_more = min(half_token_limit - suffix_len,
+                         prefix_len - half_token_limit)
+            result = torch.cat(
+                (prefix_tensor[:, -half_token_limit - n_more:], suffix_tensor[:, :half_token_limit]), dim=1)
+        # print(CODET5_TOKENIZER.batch_decode(result))
+        # breakpoint()
+        assert result.shape[1] <= self.max_tokens
+        return result
 
 
-def codet5_context(prefix: str, suffix: str) -> str:
-    return prefix + CODET5_FIRST_SEP_TOKEN + suffix
-
-def codet5_tokenize(prefix: str, suffix: str) -> torch.Tensor:
-    context = CODET5_TOKENIZER.encode(codet5_context(prefix, suffix), return_tensors='pt').to(DEVICE)
-    index = (context[0] == CODET5_FIRST_SEP_ID).nonzero()[0]
-    half_token_limit = CODET5_MAX_TOKENS // 2
-    prefix_tensor = context[:, :index]
-    prefix_len = prefix_tensor.shape[1]
-    suffix_tensor = context[:, index:]
-    suffix_len = suffix_tensor.shape[1]
-    if prefix_len < half_token_limit and suffix_len < half_token_limit:
-        result = torch.cat((prefix_tensor, suffix_tensor), dim=1)
-    elif prefix_len >= half_token_limit and suffix_len >= half_token_limit:
-        result = torch.cat((prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit]), dim=1)
-    elif prefix_len < half_token_limit and suffix_len >= half_token_limit:
-        n_more = min(half_token_limit - prefix_len, suffix_len - half_token_limit)
-        result = torch.cat((prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit + n_more]), dim=1)
-    elif prefix_len >= half_token_limit and suffix_len < half_token_limit:
-        n_more = min(half_token_limit - suffix_len, prefix_len - half_token_limit)
-        result = torch.cat((prefix_tensor[:, -half_token_limit - n_more:], suffix_tensor[:, :half_token_limit]), dim=1)
-    # print(CODET5_TOKENIZER.batch_decode(result))
-    # breakpoint()
-    assert result.shape[1] <= CODET5_MAX_TOKENS
-    return result
-
+MODEL = T5SuitableForRealm.t5_from_pretrained(
+    'Salesforce/codet5-large').to(DEVICE)
+INFERENCE_CONFIG = LMInferenceConfig(1.0, 50, 50, 2)
 
 def repair(
-    lm_context: LMContext,
+    model: T5SuitableForRealm,
+    prefix: str,
+    suffix: str,
+    lm_inference_config: LMInferenceConfig,
     lsp_context: LspContext,
 ) -> Generation:
     return generate(
-        inputs=lm_context.input_token_ids,
-        lm_context=lm_context,
+        inputs=model.encode(prefix, suffix),
         lsp_context=lsp_context,
-        model=lm_context.model,
+        model=model,
         do_sample=True,
-        max_new_tokens=lm_context.inference_config.max_new_tokens,
-        top_k=lm_context.inference_config.top_k,
-        temperature=lm_context.inference_config.temperature,
+        max_new_tokens=lm_inference_config.max_new_tokens,
+        top_k=lm_inference_config.top_k,
+        temperature=lm_inference_config.temperature,
     )
 
 def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> Optional[List[dict]]:
@@ -376,6 +279,7 @@ def is_special_token(token: str) -> bool:
 
 
 def get_feasible_token_ids(
+    token_map,
     generation_log: GenerationLog,
     memoized_result: Optional[List[bool]],
     generated_tokens: List[str],
@@ -397,7 +301,7 @@ def get_feasible_token_ids(
     text_file = lsp_context.text_file
     # analyzer.client.stop()
     result: List[int] = []
-    denied = Trie()
+    denied = utils.Trie()
     # all_feasible_tokens = Trie()
     # all_possible_completions = Trie()
     done = False
@@ -415,7 +319,7 @@ def get_feasible_token_ids(
         #     except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
         #         # breakpoint()
         #         continue
-        token = CODET5_TOKEN_MAP[token_id]
+        token = token_map[token_id]
         # token_rstrip = token.rstrip()
         # rspace_len = len(token) - len(token_rstrip)
         # dot_token = token_rstrip.endswith('.')
@@ -502,7 +406,6 @@ def get_feasible_token_ids(
 @torch.no_grad()
 def generate(
     model: T5ForConditionalGeneration,
-    lm_context: LMContext,
     lsp_context: LspContext,
     inputs: Optional[torch.Tensor] = None,
     max_length: Optional[int] = None,
@@ -713,7 +616,6 @@ def generate(
         model,
         input_ids,
         lsp_context=lsp_context,
-        end_id=lm_context.inference_config.end_id,
         top_k=top_k,
         temperature=temperature,
         logits_processor=logits_processor,
@@ -734,7 +636,6 @@ def sample(
     lsp_context: LspContext,
     top_k: int,
     temperature: float,
-    end_id: int,
     logits_processor: Optional[LogitsProcessorList] = None,
     logits_warper: Optional[LogitsProcessorList] = None,
     stopping_criteria: Optional[StoppingCriteriaList] = None,
@@ -763,8 +664,6 @@ def sample(
     # Context variable controling when to do analysis
     # TODO(future): use AST for more accurate analysis (e.g., inside string literal, etc.)
     gen_context = GenerationContext(
-        inside_line_comment=False,
-        inside_block_comment=False,
         generated_tokens=[],
         generated_ids=[],
     )
@@ -819,7 +718,7 @@ def sample(
             next_token_ids = torch.multinomial(probs, num_samples=1)
             next_token_ids_list = next_token_ids.tolist()
             next_token_id_item = next_token_ids.item()
-            next_token = CODET5_TOKEN_MAP[next_token_id_item]
+            next_token = model.token_map[next_token_id_item]
         else:
             if os.getenv('ACTIVE') is not None:
                 analyzer = lsp_context.analyzer
@@ -845,7 +744,7 @@ def sample(
                 if continuations is not None:
                     continuations = [item if not (item := target[len(source):]).endswith('(') else item[:-1] for c in continuations if (target := c['target']).startswith(source := c['source'])]
                     # continuations = [item for item in continuations if len(item) > 0]
-                    completion = common_prefix(continuations)
+                    completion = utils.common_prefix(continuations)
                 
 
                     # if completion is not None:
@@ -863,7 +762,7 @@ def sample(
                     #     considered_next_token_ids = considered_next_token_ids[
                     #         scores[considered_next_token_ids] > -float('inf')]
                     #     considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
-                    #     considered_next_tokens = [CODET5_TOKEN_MAP[id] for id in considered_next_token_ids_list]
+                    #     considered_next_tokens = [model.token_map[id] for id in considered_next_token_ids_list]
                     #     for possible_next_token in considered_next_tokens:
                     #         for continuation in continuations:
                     #             if continuation.startswith(possible_next_token):
@@ -897,7 +796,7 @@ def sample(
                             cont_probs = [0 for _ in range(len(continuations))]
                             for idx, cont in enumerate(continuations):
                                 for id in considered_next_token_ids_list:
-                                    token = CODET5_TOKEN_MAP[id]
+                                    token = model.token_map[id]
                                     prob = probs[id]
                                     if cont.startswith(token) or token.startswith(cont):
                                         cont_probs[idx] += prob.item()
@@ -956,57 +855,96 @@ def sample(
             if completion is not None:
                 pass
             else:
+                warpers = LogitsProcessorList()
+                warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+                next_token_scores = warpers(input_ids, next_token_scores)
+                assert len(next_token_scores) == 1
                 scores = next_token_scores[0]
-                considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
-                assert len(considered_next_token_ids.shape) == 1
-                considered_next_token_ids = considered_next_token_ids[
-                    scores[considered_next_token_ids] > -float('inf')]
+                probs = nn.functional.softmax(scores, dim=-1)
+                assert len(probs.shape) == 1
 
-                assert len(input_ids) == 1
-                input_ids_list = input_ids[0].tolist()
-
-                considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
-                state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
-                if state_bytes in COMPLETE_MEMOIZED:
-                    print("HUGE HIT")
-                    # breakpoint()
-                    feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
-                else:
-                    lsp_context.analyzer.change(lsp_context.text_file)
-                    input_ids_bytes = pickle.dumps(input_ids_list)
-                    # TODO: delete this
-                    partial_memoized_result = PARTIAL_MEMOIZED.get(input_ids_bytes)
-                    if partial_memoized_result is not None:
-                        print("SMALL HIT")
-                        # breakpoint()
-                    feasible_next_token_ids = get_feasible_token_ids(
+                # shape: (1)
+                while True:
+                    next_token_ids = torch.multinomial(probs, num_samples=1)
+                    next_token_ids_list = next_token_ids.tolist()
+                    next_token_id_item = next_token_ids.item()
+                    next_token = model.token_map[next_token_id_item]
+                    text_file = lsp_context.text_file
+                    analyzer = lsp_context.analyzer
+                    text_file.add(next_token)
+                    analyzer.change(text_file)
+                    pos = text_file.get_position(text_file.cursor)
+                    # print(''.join(generated_tokens + [token]))
+                    if feasible(
                         generation_log,
-                        partial_memoized_result,
-                        gen_context.generated_tokens,
                         gen_context.generated_ids,
-                        lsp_context,
-                        considered_next_token_ids_list,
-                        top_k,
-                        completion_overhead,
-                    )
-                    assert len(feasible_next_token_ids) <= top_k
-                    COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
-                    if partial_memoized_result is None:
-                        PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
-                    for idx in feasible_next_token_ids:
-                        PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
+                        gen_context.generated_tokens,
+                        analyzer,
+                        text_file.path.as_uri(),
+                        next_token_id_item,
+                        next_token,
+                        pos,
+                        completion_overhead
+                    ):
+                        completion = next_token
+                        text_file.delete(len(next_token))
+                        # breakpoint()
+                        break
+                    probs[next_token_id_item] = 0.
+                    text_file.delete(len(next_token))
+                    
 
-                if len(feasible_next_token_ids) != 0:
-                    # rewrite scores
-                    mask = torch.ones(
-                        scores.shape,
-                        dtype=torch.bool
-                    ).to(DEVICE)
-                    mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(DEVICE), False)
-                    scores.masked_fill_(mask, -float('inf'))
-                else:
-                    is_complete = False
-                    break
+                # scores = next_token_scores[0]
+                # considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
+                # assert len(considered_next_token_ids.shape) == 1
+                # considered_next_token_ids = considered_next_token_ids[
+                #     scores[considered_next_token_ids] > -float('inf')]
+
+                # assert len(input_ids) == 1
+                # input_ids_list = input_ids[0].tolist()
+
+                # considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
+                # state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
+                # if state_bytes in COMPLETE_MEMOIZED:
+                #     print("HUGE HIT")
+                #     # breakpoint()
+                #     feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
+                # else:
+                #     lsp_context.analyzer.change(lsp_context.text_file)
+                #     input_ids_bytes = pickle.dumps(input_ids_list)
+                #     # TODO: delete this
+                #     partial_memoized_result = PARTIAL_MEMOIZED.get(input_ids_bytes)
+                #     if partial_memoized_result is not None:
+                #         print("SMALL HIT")
+                #         # breakpoint()
+                #     feasible_next_token_ids = get_feasible_token_ids(
+                #         generation_log,
+                #         partial_memoized_result,
+                #         gen_context.generated_tokens,
+                #         gen_context.generated_ids,
+                #         lsp_context,
+                #         considered_next_token_ids_list,
+                #         top_k,
+                #         completion_overhead,
+                #     )
+                #     assert len(feasible_next_token_ids) <= top_k
+                #     COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
+                #     if partial_memoized_result is None:
+                #         PARTIAL_MEMOIZED[input_ids_bytes] = [False] * CODET5_VOC_SIZE
+                #     for idx in feasible_next_token_ids:
+                #         PARTIAL_MEMOIZED[input_ids_bytes][idx] = True
+
+                # if len(feasible_next_token_ids) != 0:
+                #     # rewrite scores
+                #     mask = torch.ones(
+                #         scores.shape,
+                #         dtype=torch.bool
+                #     ).to(DEVICE)
+                #     mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(DEVICE), False)
+                #     scores.masked_fill_(mask, -float('inf'))
+                # else:
+                #     is_complete = False
+                #     break
 
         if completion is None:
             probs = nn.functional.softmax(scores, dim=-1)
@@ -1016,10 +954,10 @@ def sample(
             next_token_ids = torch.multinomial(probs, num_samples=1)
             next_token_ids_list = next_token_ids.tolist()
             next_token_id_item = next_token_ids.item()
-            next_token = CODET5_TOKEN_MAP[next_token_id_item]
+            next_token = model.token_map[next_token_id_item]
         else:
             next_token = completion
-            next_token_ids_list = CODET5_TOKENIZER.encode(completion, add_special_tokens=False)
+            next_token_ids_list = model.tokenizer.encode(completion, add_special_tokens=False)
             next_token_ids = torch.LongTensor(next_token_ids_list).to(DEVICE)
             next_token_id_item = -1
         
@@ -1032,7 +970,7 @@ def sample(
         if not is_special_token(next_token):
             lsp_context.text_file.add(next_token)
             gen_context.generated_ids.extend(next_token_ids_list)
-            gen_context.generated_tokens.extend([CODET5_TOKEN_MAP[idx] for idx in next_token_ids_list])
+            gen_context.generated_tokens.extend([model.token_map[idx] for idx in next_token_ids_list])
 
 
         # update generated ids, model inputs, and length for next step
@@ -1051,7 +989,7 @@ def sample(
         # stop when each sentence is finished, or if we exceed the maximum length
         # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
         # Mask ids are 32099, 32098, 32097...
-        if next_token_id_item == 32098 or next_token_id_item == end_id:
+        if model.is_end(next_token_id_item):
             break
         elif len(input_ids[0]) == max_length:
             is_complete = False

@@ -58,7 +58,7 @@ D4J_REPO = '/home/yuxiang/Developer/defects4j'
 
 dataset = d4j.Defects4J(D4J_REPO, data)
 # model = SpanLM('facebook/incoder-1B', batch_size=N_SAMPLE)
-model = None
+# model = None
 
 
 def server_cmd(bug_id: str) -> List[str]:
@@ -176,12 +176,12 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 assert text_file.content[text_file.cursor - 1] == '\n'
                 assert text_file.content[text_file.cursor] == '\n'
 
-                lm_context = gen.LMContext(
-                    gen.CODET5,
-                    gen.CODET5_TOKENIZER,
-                    gen.codet5_tokenize(prefix, suffix),
-                    gen.CODET5_INFERENCE_CONFIG,
-                )
+                # lm_context = gen.LMContext(
+                #     gen.CODET5,
+                #     gen.CODET5_TOKENIZER,
+                #     gen.codet5_tokenize(prefix, suffix),
+                #     gen.CODET5_INFERENCE_CONFIG,
+                # )
 
                 lsp_context = gen.LspContext(
                     text_file,
@@ -191,7 +191,13 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 start_time = time.time()
                 try:
                     completion_overhead, _, output, generation_log = gen.repair(
-                        lm_context, lsp_context)
+                        gen.MODEL,
+                        prefix,
+                        suffix,
+                        gen.INFERENCE_CONFIG,
+                        lsp_context,
+                    )
+
                 except TimeoutError:
                     print('Fatal timeout error')
                     with open('timeout-error', 'a') as f:
@@ -498,7 +504,7 @@ if __name__ == '__main__':
         log_repo(f, 'Defects4J', git.Repo(Path(D4J_REPO)))
         log_repo(f, 'Language server', git.Repo(Path(JDT_LS_REPO)))
     with open(result_dir / 'args.txt', 'w') as f:
-        f.write(str(gen.CODET5_INFERENCE_CONFIG))
+        f.write(str(gen.INFERENCE_CONFIG))
     print(f'Metadata will be saved in {result_dir}')
 
     # def is_single_hunk(bug: d4j.Bug) -> bool:
