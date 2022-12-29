@@ -111,12 +111,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     # gen.PARTIAL_MEMOIZED.clear()
     # gen.COMPLETE_MEMOIZED.clear()
     # Clear memoization
-    memoized: Dict[Tuple[int, int], Tuple[
-        Dict[bytes, List[int]],
-        Dict[bytes, List[int]],
-        Dict[bytes, Optional[List[dict]]],
-        Dict[bytes, utils.Trie],
-    ]] = dict()
+    memoized: Dict[Tuple[int, int], gen.Memorization] = dict()
     for idx in range(n_patch_groups):
         print('Repair:', idx)
         if idx != 0:
@@ -140,9 +135,9 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                    for c in reversed(buggy_file.changes)])
 
             for (change_idx, change) in enumerate(reversed(buggy_file.changes)):
-                if (mem_id := (buggy_file_idx, change_idx)) not in memoized:
-                    memoized[mem_id] = ({}, {}, {}, {})
-                gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED, gen.MEMOIZED_COMPLETION, gen.DENIED_TRIE = memoized[mem_id]
+                mem_id = (buggy_file_idx, change_idx)
+                mem = memoized.setdefault(mem_id, gen.Memorization({}, {}, {}))
+
                 start = change.start - 1
                 end = start + len(change.removed_lines)
                 start_pos = text_file.refine_index(start, 0)
@@ -173,7 +168,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 })])
 
                 text_file.move_cursor(start_index)
-                # start_cursor = text_file.cursor
+                start_cursor = text_file.cursor
                 assert prefix.endswith('\n')
                 assert text_file.content[text_file.cursor - 1] == '\n'
                 assert text_file.content[text_file.cursor] == '\n'
@@ -197,6 +192,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 )
 
                 repairer = gen.Realm(lm_context, lsp_context)
+                repairer.mem = mem
                 start_time = time.time()
                 try:
                     completion_overhead, _, output, generation_log = repairer.repair()
@@ -212,9 +208,10 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 end_time = time.time()
                 times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
-                memoized[mem_id] = (gen.PARTIAL_MEMOIZED, gen.COMPLETE_MEMOIZED, gen.MEMOIZED_COMPLETION, gen.DENIED_TRIE)
+                memoized[mem_id] = repairer.mem
                 # This is always True
-                # assert ''.join(output) == text_file.content[start_cursor:text_file.cursor]
+
+                assert (lhs := ''.join(output)) == (rhs := text_file.content[start_cursor:text_file.cursor]), (lhs, rhs)
                 print('Success')
                 print(''.join(output))
                 # breakpoint()

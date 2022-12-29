@@ -243,6 +243,7 @@ class Realm:
         next_token_id_item: int = cast(int, next_token_id.item())
         next_token = self.model.token_map[next_token_id_item]
         if not self.model.is_special_token(next_token):
+            self.text_file.add(next_token)
             gen_context.generated_ids.append(next_token_id_item)
             gen_context.generated_tokens.append(next_token)
         return next_token_id
