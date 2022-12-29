@@ -233,14 +233,15 @@ class Realm:
     def trivially_feasible(self, token: str) -> bool:
         if len(token) > 0 and not char_may_trigger_completion(token[-1]):
             return True
-        elif self.model.is_special_token(token) or token.strip() in JAVA_KEYWORDS:
+        elif token.strip() in JAVA_KEYWORDS:
             return True
         else:
             return False
     
     def plain_decode(self, gen_context: GenerationContext, probs: torch.Tensor) -> torch.LongTensor:
-        next_token_id: torch.LongTensor = cast(torch.LongTensor, torch.multinomial(probs, num_samples=1))
-        next_token_id_item: int = cast(int, next_token_id.item())
+        next_token_id = cast(torch.LongTensor, torch.multinomial(probs, num_samples=1))
+        assert next_token_id.dtype == torch.long
+        next_token_id_item = cast(int, next_token_id.item())
         next_token = self.model.token_map[next_token_id_item]
         if not self.model.is_special_token(next_token):
             self.text_file.add(next_token)
@@ -265,7 +266,8 @@ class Realm:
         while True:
             # `probs` will change each iteration (some entries will be assigned 0.)
             try:
-                trying_token_id = torch.multinomial(probs, num_samples=1)
+                trying_token_id = cast(torch.LongTensor, torch.multinomial(probs, num_samples=1))
+                assert trying_token_id.dtype == torch.long
                 trying_token_id_item = cast(int, trying_token_id.item())
                 assert isinstance(trying_token_id_item, int)
             except RuntimeError as e:
@@ -307,11 +309,12 @@ class Realm:
                 ):
                     update_gen()
                     return trying_token_id
+                else:
+                    self.text_file.delete(len(trying_token))
             # Token is infeasible if the program runs to this line
             # By setting the probability to 0.0, this token will not be selected.
             probs[trying_token_id_item] = 0.
             denied_trie.insert(trying_token)
-            self.text_file.delete(len(trying_token))
 
     @typing.no_type_check
     def sample(
