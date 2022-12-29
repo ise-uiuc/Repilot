@@ -490,7 +490,10 @@ class Realm:
                 if completion is not None:
                     pass
                 else:
-                    next_token_ids = self.pruned_decode(gen_context, probs)
+                    try:
+                        next_token_ids = self.pruned_decode(gen_context, probs)
+                    except RuntimeError:
+                        return completion_overhead, [], None, generation_log
 
             if completion is None:
                 pass
