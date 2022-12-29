@@ -2,7 +2,7 @@ from transformers.tokenization_utils import logger
 from transformers.generation_beam_constraints import Constraint
 from transformers.generation_logits_process import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper
 from transformers.generation_stopping_criteria import StoppingCriteriaList
-from typing import Dict, List, Optional, Tuple, NamedTuple, Union, Iterable, Callable, cast
+from typing import Dict, List, Optional, Tuple, NamedTuple, Union, Iterable, Callable, cast, Set
 from dataclasses import dataclass
 from realm import utils
 from realm.lsp.text import TextFile
@@ -36,8 +36,13 @@ GenerationState = bytes
 @dataclass
 class Memorization:
     infeasible_token_ids: Dict[GenerationState, List[int]]
+    feasible_token_ids: Dict[GenerationState, Set[int]]
     completions: Dict[GenerationState, Optional[List[dict]]]
     denied_tokens: Dict[GenerationState, utils.Trie]
+
+    @staticmethod
+    def init() -> 'Memorization':
+        return Memorization({}, {}, {}, {})
 
 
 # self.memorization.infeasible_token_ids: Dict[bytes, List[int]] = {}
@@ -140,7 +145,7 @@ class Realm:
         self.text_file = lsp_context.text_file
 
         # Memorizatiions
-        self.mem = Memorization({}, {}, {})
+        self.mem = Memorization.init()
 
     def repair(self) -> Generation:
         return self.generate(
@@ -180,6 +185,9 @@ class Realm:
         #     return self.memorization.infeasible_token_ids[input_state]
         input_state = pickle.dumps(generated_ids + [token_id])
         if input_state in self.mem.completions:
+            # Due to memorization, each input_state be called on this function only once
+            # => token_id in self.mem.(in)feasible_token_ids[state of generated_ids]
+            assert False
             completions = self.mem.completions[input_state]
         else:
             completions = get_completions(self.analyzer, uri, pos)
@@ -261,6 +269,7 @@ class Realm:
         denied_trie = self.mem.denied_tokens.setdefault(input_state, utils.Trie())
 
         # Ensures that all tokens tried are feasible
+        feasible_indices = self.mem.feasible_token_ids.setdefault(input_state, set())
         infeasible_indices = self.mem.infeasible_token_ids.setdefault(input_state, [])
         probs[infeasible_indices] = 0.
         while True:
@@ -293,6 +302,10 @@ class Realm:
                 return trying_token_id
             elif denied_trie.is_prefix_of(trying_token):
                 pass
+            elif trying_token_id_item in feasible_indices:
+                self.text_file.add(trying_token)
+                update_gen()
+                return trying_token_id
             else:
                 self.text_file.add(trying_token)
                 self.analyzer.change(self.text_file)
@@ -307,6 +320,7 @@ class Realm:
                     pos,
                     []
                 ):
+                    feasible_indices.add(trying_token_id_item)
                     update_gen()
                     return trying_token_id
                 else:
@@ -314,6 +328,7 @@ class Realm:
             # Token is infeasible if the program runs to this line
             # By setting the probability to 0.0, this token will not be selected.
             probs[trying_token_id_item] = 0.
+            infeasible_indices.append(trying_token_id_item)
             denied_trie.insert(trying_token)
 
     @typing.no_type_check

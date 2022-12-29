@@ -136,7 +136,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
             for (change_idx, change) in enumerate(reversed(buggy_file.changes)):
                 mem_id = (buggy_file_idx, change_idx)
-                mem = memoized.setdefault(mem_id, gen.Memorization({}, {}, {}))
+                mem = memoized.setdefault(mem_id, gen.Memorization.init())
 
                 start = change.start - 1
                 end = start + len(change.removed_lines)
