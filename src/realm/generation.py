@@ -1,9 +1,8 @@
-from transformers import T5ForConditionalGeneration
 from transformers.tokenization_utils import logger
 from transformers.generation_beam_constraints import Constraint
 from transformers.generation_logits_process import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper
 from transformers.generation_stopping_criteria import StoppingCriteriaList
-from typing import Dict, List, Optional, Tuple, NamedTuple, Union, Iterable, Callable
+from typing import Dict, List, Optional, Tuple, NamedTuple, Union, Iterable, Callable, cast
 from dataclasses import dataclass
 from realm import utils
 from realm.lsp.text import TextFile
@@ -141,7 +140,7 @@ class Realm:
         self.text_file = lsp_context.text_file
 
         # Memorizatiions
-        self.memorization = Memorization({}, {}, {})
+        self.mem = Memorization({}, {}, {})
 
     def repair(self) -> Generation:
         return self.generate(
@@ -180,11 +179,11 @@ class Realm:
         #     print("HIT")
         #     return self.memorization.infeasible_token_ids[input_state]
         input_state = pickle.dumps(generated_ids + [token_id])
-        if input_state in self.memorization.completions:
-            completions = self.memorization.completions[input_state]
+        if input_state in self.mem.completions:
+            completions = self.mem.completions[input_state]
         else:
             completions = get_completions(self.analyzer, uri, pos)
-            self.memorization.completions[input_state] = completions
+            self.mem.completions[input_state] = completions
             completion_overhead.append(time.time() - start_time)
         context = {
             'ids': [id for id in generated_ids],
@@ -234,10 +233,84 @@ class Realm:
     def trivially_feasible(self, token: str) -> bool:
         if len(token) > 0 and not char_may_trigger_completion(token[-1]):
             return True
-        elif self.model.__class__.is_special_token(token) or token.strip() in JAVA_KEYWORDS:
+        elif self.model.is_special_token(token) or token.strip() in JAVA_KEYWORDS:
             return True
         else:
             return False
+    
+    def plain_decode(self, gen_context: GenerationContext, probs: torch.Tensor) -> torch.LongTensor:
+        next_token_id: torch.LongTensor = cast(torch.LongTensor, torch.multinomial(probs, num_samples=1))
+        next_token_id_item: int = cast(int, next_token_id.item())
+        next_token = self.model.token_map[next_token_id_item]
+        if not self.model.is_special_token(next_token):
+            gen_context.generated_ids.append(next_token_id_item)
+            gen_context.generated_tokens.append(next_token)
+        return next_token_id
+
+    def pruned_decode(
+        self,
+        gen_context: GenerationContext,
+        probs: torch.Tensor,
+    ) -> torch.LongTensor:
+        """Stateful method that updates the generated token ids and tokens (excluding special
+        tokens) and returns the 'real' generation"""
+        generated_ids = gen_context.generated_ids
+        input_state = pickle.dumps(generated_ids)
+        denied_trie = self.mem.denied_tokens.setdefault(input_state, utils.Trie())
+
+        # Ensures that all tokens tried are feasible
+        infeasible_indices = self.mem.infeasible_token_ids.setdefault(input_state, [])
+        probs[infeasible_indices] = 0.
+        while True:
+            # `probs` will change each iteration (some entries will be assigned 0.)
+            try:
+                trying_token_id = torch.multinomial(probs, num_samples=1)
+                trying_token_id_item = cast(int, trying_token_id.item())
+                assert isinstance(trying_token_id_item, int)
+            except RuntimeError as e:
+                # Sum of probabilities < 0
+                if len(generated_ids) > 0:
+                    prev_state = pickle.dumps(generated_ids[:-1])
+                    last_token_id = generated_ids[-1]
+                    self.mem.infeasible_token_ids[prev_state].append(last_token_id)
+                raise e
+            # All trying tokens are feasible
+            assert trying_token_id_item not in infeasible_indices
+            trying_token = self.model.token_map[trying_token_id_item]
+
+            def update_gen():
+                generated_ids.append(trying_token_id_item)
+                gen_context.generated_tokens.append(trying_token)
+
+            if self.model.is_special_token(trying_token):
+                return trying_token_id
+            elif self.trivially_feasible(trying_token):
+                self.text_file.add(trying_token)
+                update_gen()
+                return trying_token_id
+            elif denied_trie.is_prefix_of(trying_token):
+                pass
+            else:
+                self.text_file.add(trying_token)
+                self.analyzer.change(self.text_file)
+                pos = self.text_file.get_cursor_position()
+                if self.feasible(
+                    [],
+                    generated_ids,
+                    gen_context.generated_tokens,
+                    self.text_file.path.as_uri(),
+                    trying_token_id_item,
+                    trying_token,
+                    pos,
+                    []
+                ):
+                    update_gen()
+                    return trying_token_id
+            # Token is infeasible if the program runs to this line
+            # By setting the probability to 0.0, this token will not be selected.
+            probs[trying_token_id_item] = 0.
+            denied_trie.insert(trying_token)
+            self.text_file.delete(len(trying_token))
 
     @typing.no_type_check
     def sample(
@@ -306,29 +379,18 @@ class Realm:
             next_token_scores = logits_processor(input_ids, next_token_logits)
             if temperature != 1.0:
                 next_token_scores = TemperatureLogitsWarper(
-                    temperature)(input_ids, next_token_logits)
+                    temperature)(input_ids, next_token_scores)
+            next_token_scores = TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1)(input_ids, next_token_scores)
             # next_token_scores = logits_warper(input_ids, next_token_scores)
             assert len(next_token_scores) == 1
+            scores = next_token_scores[0]
+            probs = nn.functional.softmax(scores, dim=-1)
+            assert len(probs.shape) == 1
 
             completion: Optional[str] = None
             if os.getenv('PLAIN') is not None or CHART_11:  # or count > 10:
-                # Modified from GenerationMixin.get_logits_warper
-                # if temperature is not None and temperature != 1.0:
-                #     warpers.append(TemperatureLogitsWarper(temperature))
-                warpers = LogitsProcessorList()
-                warpers.append(TopKLogitsWarper(
-                    top_k=top_k, min_tokens_to_keep=1))
-                next_token_scores = warpers(input_ids, next_token_scores)
-                assert len(next_token_scores) == 1
-                scores = next_token_scores[0]
-                probs = nn.functional.softmax(scores, dim=-1)
-                assert len(probs.shape) == 1
-
                 # shape: (1)
-                next_token_ids = torch.multinomial(probs, num_samples=1)
-                next_token_ids_list = next_token_ids.tolist()
-                next_token_id_item = next_token_ids.item()
-                next_token = model.token_map[next_token_id_item]
+                next_token_ids = self.plain_decode(gen_context, probs)
             else:
                 if os.getenv('ACTIVE') is not None:
                     # Active completion
@@ -344,12 +406,12 @@ class Realm:
                     # breakpoint()
                     input_ids_list = input_ids[0].tolist()
                     input_state = pickle.dumps(gen_context.generated_ids)
-                    if input_state in self.memorization.completions:
-                        continuations = self.memorization.completions[input_state]
+                    if input_state in self.mem.completions:
+                        continuations = self.mem.completions[input_state]
                     else:
                         continuations = get_completions(self.analyzer, self.text_file.path.as_uri(
                         ), self.text_file.get_position(self.text_file.cursor))
-                        self.memorization.completions[input_state] = continuations
+                        self.mem.completions[input_state] = continuations
                     if continuations is not None:
                         continuations = [item if not (item := target[len(source):]).endswith(
                             '(') else item[:-1] for c in continuations if (target := c['target']).startswith(source := c['source'])]
@@ -424,126 +486,10 @@ class Realm:
                 if completion is not None:
                     pass
                 else:
-                    warpers = LogitsProcessorList()
-                    warpers.append(TopKLogitsWarper(
-                        top_k=top_k, min_tokens_to_keep=1))
-                    next_token_scores = warpers(input_ids, next_token_scores)
-                    assert len(next_token_scores) == 1
-                    scores = next_token_scores[0]
-                    probs = nn.functional.softmax(scores, dim=-1)
-                    assert len(probs.shape) == 1
-                    input_state = pickle.dumps(gen_context.generated_ids)
-                    if not input_state in self.memorization.infeasible_token_ids:
-                        self.memorization.infeasible_token_ids[input_state] = [
-                        ]
-                    probs[self.memorization.infeasible_token_ids[input_state]] = 0.
-
-                    # shape: (1)
-                    if not input_state in self.memorization.denied_tokens:
-                        self.memorization.denied_tokens[input_state] = utils.Trie(
-                        )
-                    denied_trie = self.memorization.denied_tokens[input_state]
-                    while True:
-                        # RUNTIME ERROR
-                        # TODO (DONE)
-                        # 1. self.memorization.infeasible_token_ids[prev_state] = UNREACHABLE when the accumulated probability is 0.0
-                        # 2. Rewrite probs in advance according to self.memorization.infeasible_token_ids[state] = UNREACHABLE (Tree search pruning)
-                        # 3. Keywords opt. Trie opt. text_file.delete(*) opt.
-                        # 4. make it a class and move XXX_memoized inside. (refactor)
-                        try:
-                            next_token_ids = torch.multinomial(
-                                probs, num_samples=1)
-                        except RuntimeError:
-                            if len(gen_context.generated_ids) > 0:
-                                self.memorization.infeasible_token_ids[pickle.dumps(
-                                    gen_context.generated_ids[:-1])].append(gen_context.generated_ids[-1])
-                            return [], [], None, generation_log
-                        next_token_ids_list = next_token_ids.tolist()
-                        next_token_id_item = next_token_ids.item()
-                        assert next_token_id_item not in self.memorization.infeasible_token_ids[input_state]
-                        next_token = model.token_map[next_token_id_item]
-                        self.text_file.add(next_token)
-                        self.analyzer.change(self.text_file)
-                        pos = self.text_file.get_position(
-                            self.text_file.cursor)
-                        # print(''.join(generated_tokens + [token]))
-                        if self.trivially_feasible(next_token) or (not denied_trie.is_prefix_of(next_token) and self.feasible(
-                            generation_log,
-                            gen_context.generated_ids,
-                            gen_context.generated_tokens,
-                            self.text_file.path.as_uri(),
-                            next_token_id_item,
-                            next_token,
-                            pos,
-                            completion_overhead
-                        )):
-                            self.text_file.delete(len(next_token))
-                            break
-                        denied_trie.insert(next_token)
-                        probs[next_token_id_item] = 0.
-                        self.text_file.delete(len(next_token))
-
-                    # scores = next_token_scores[0]
-                    # considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
-                    # assert len(considered_next_token_ids.shape) == 1
-                    # considered_next_token_ids = considered_next_token_ids[
-                    #     scores[considered_next_token_ids] > -float('inf')]
-
-                    # assert len(input_ids) == 1
-                    # input_ids_list = input_ids[0].tolist()
-
-                    # considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
-                    # state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
-                    # if state_bytes in COMPLETE_MEMOIZED:
-                    #     print("HUGE HIT")
-                    #     # breakpoint()
-                    #     feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
-                    # else:
-                    #     lsp_context.analyzer.change(lsp_context.text_file)
-                    #     input_ids_bytes = pickle.dumps(input_ids_list)
-                    #     # TODO: delete this
-                    #     partial_memoized_result = self.memorization.infeasible_token_ids.get(input_ids_bytes)
-                    #     if partial_memoized_result is not None:
-                    #         print("SMALL HIT")
-                    #         # breakpoint()
-                    #     feasible_next_token_ids = get_feasible_token_ids(
-                    #         generation_log,
-                    #         partial_memoized_result,
-                    #         gen_context.generated_tokens,
-                    #         gen_context.generated_ids,
-                    #         lsp_context,
-                    #         considered_next_token_ids_list,
-                    #         top_k,
-                    #         completion_overhead,
-                    #     )
-                    #     assert len(feasible_next_token_ids) <= top_k
-                    #     COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
-                    #     if partial_memoized_result is None:
-                    #         self.memorization.infeasible_token_ids[input_ids_bytes] = [False] * CODET5_VOC_SIZE
-                    #     for idx in feasible_next_token_ids:
-                    #         self.memorization.infeasible_token_ids[input_ids_bytes][idx] = True
-
-                    # if len(feasible_next_token_ids) != 0:
-                    #     # rewrite scores
-                    #     mask = torch.ones(
-                    #         scores.shape,
-                    #         dtype=torch.bool
-                    #     ).to(utils.DEVICE)
-                    #     mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(utils.DEVICE), False)
-                    #     scores.masked_fill_(mask, -float('inf'))
-                    # else:
-                    #     is_complete = False
-                    #     break
+                    next_token_ids = self.pruned_decode(gen_context, probs)
 
             if completion is None:
-                # probs = nn.functional.softmax(scores, dim=-1)
-                # assert len(probs.shape) == 1
                 pass
-                # # shape: (1)
-                # next_token_ids = torch.multinomial(probs, num_samples=1)
-                # next_token_ids_list = next_token_ids.tolist()
-                # next_token_id_item = next_token_ids.item()
-                # next_token = model.token_map[next_token_id_item]
             else:
                 next_token = completion
                 next_token_ids_list = model.tokenizer.encode(
@@ -552,16 +498,16 @@ class Realm:
                     next_token_ids_list).to(utils.DEVICE)
                 next_token_id_item = -1
 
-            if not self.model.__class__.is_special_token(next_token):
-                self.text_file.add(next_token)
-                gen_context.generated_ids.extend(next_token_ids_list)
-                gen_context.generated_tokens.extend(
-                    [model.token_map[idx] for idx in next_token_ids_list])
+            # if not self.model.is_special_token(next_token):
+            #     self.text_file.add(next_token)
+            #     gen_context.generated_ids.extend(next_token_ids_list)
+            #     gen_context.generated_tokens.extend(
+            #         [model.token_map[idx] for idx in next_token_ids_list])
 
             # update generated ids, model inputs, and length for next step
             # NOTE: originally next_token_ids[:, None] because for each batch it generate 'one' token;
             #  but here we do not consider batch and we can generate multiple tokens
-            use_cache = len(next_token_ids_list) == 1
+            use_cache = len(next_token_ids) == 1
             # use_cache = False
             input_ids = torch.cat([input_ids, next_token_ids[None, :]], dim=-1)
             model_kwargs['use_cache'] = use_cache
@@ -574,7 +520,7 @@ class Realm:
             # stop when each sentence is finished, or if we exceed the maximum length
             # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
             # Mask ids are 32099, 32098, 32097...
-            if model.is_end(next_token_id_item):
+            if model.is_end(next_token_ids[-1].item()):
                 break
             elif len(input_ids[0]) == max_length:
                 is_complete = False
@@ -952,3 +898,56 @@ class Realm:
 #         # except IDTokenError:
 #         #     result.append(token_id)
 #     return result
+
+# OLD DECODING
+# scores = next_token_scores[0]
+# considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
+# assert len(considered_next_token_ids.shape) == 1
+# considered_next_token_ids = considered_next_token_ids[
+#     scores[considered_next_token_ids] > -float('inf')]
+
+# assert len(input_ids) == 1
+# input_ids_list = input_ids[0].tolist()
+
+# considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
+# state_bytes = pickle.dumps((input_ids_list, considered_next_token_ids_list))
+# if state_bytes in COMPLETE_MEMOIZED:
+#     print("HUGE HIT")
+#     # breakpoint()
+#     feasible_next_token_ids = COMPLETE_MEMOIZED[state_bytes]
+# else:
+#     lsp_context.analyzer.change(lsp_context.text_file)
+#     input_ids_bytes = pickle.dumps(input_ids_list)
+#     # TODO: delete this
+#     partial_memoized_result = self.memorization.infeasible_token_ids.get(input_ids_bytes)
+#     if partial_memoized_result is not None:
+#         print("SMALL HIT")
+#         # breakpoint()
+#     feasible_next_token_ids = get_feasible_token_ids(
+#         generation_log,
+#         partial_memoized_result,
+#         gen_context.generated_tokens,
+#         gen_context.generated_ids,
+#         lsp_context,
+#         considered_next_token_ids_list,
+#         top_k,
+#         completion_overhead,
+#     )
+#     assert len(feasible_next_token_ids) <= top_k
+#     COMPLETE_MEMOIZED[state_bytes] = feasible_next_token_ids
+#     if partial_memoized_result is None:
+#         self.memorization.infeasible_token_ids[input_ids_bytes] = [False] * CODET5_VOC_SIZE
+#     for idx in feasible_next_token_ids:
+#         self.memorization.infeasible_token_ids[input_ids_bytes][idx] = True
+
+# if len(feasible_next_token_ids) != 0:
+#     # rewrite scores
+#     mask = torch.ones(
+#         scores.shape,
+#         dtype=torch.bool
+#     ).to(utils.DEVICE)
+#     mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(utils.DEVICE), False)
+#     scores.masked_fill_(mask, -float('inf'))
+# else:
+#     is_complete = False
+#     break
