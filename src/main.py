@@ -184,22 +184,22 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 #     gen.codet5_tokenize(prefix, suffix),
                 #     gen.CODET5_INFERENCE_CONFIG,
                 # )
+                lm_context = gen.LMContext(
+                    gen.MODEL,
+                    prefix,
+                    suffix,
+                    gen.INFERENCE_CONFIG
+                )
 
                 lsp_context = gen.LspContext(
                     text_file,
                     analyzer
                 )
 
+                repairer = gen.Realm(lm_context, lsp_context)
                 start_time = time.time()
                 try:
-                    completion_overhead, _, output, generation_log = gen.repair(
-                        gen.MODEL,
-                        prefix,
-                        suffix,
-                        gen.INFERENCE_CONFIG,
-                        lsp_context,
-                    )
-
+                    completion_overhead, _, output, generation_log = repairer.repair()
                 except TimeoutError:
                     print('Fatal timeout error')
                     with open('timeout-error', 'a') as f:
