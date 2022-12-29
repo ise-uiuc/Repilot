@@ -3,10 +3,11 @@ import pickle
 from typing import Callable, Iterable, Iterator, List, Tuple, TypeVar, Optional
 from unidiff.patch import Line
 from pathlib import Path
-import json
+import torch
 
 T = TypeVar('T')
 
+DEVICE = 'cuda' if torch.cuda.is_available else 'cpu'
 
 def take_while(pred: Callable[[T], bool], iterable: Iterable[T]) -> Tuple[List[T], Iterator[T]]:
     iterator = iter(iterable)

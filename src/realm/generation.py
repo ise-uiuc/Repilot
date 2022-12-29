@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from realm import utils
 from realm.lsp.text import TextFile
 from realm.lsp import spec
+from realm.model import CodeT5Large
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
-from pathlib import Path
 from torch import nn
 import torch
 import os
@@ -31,7 +31,6 @@ JAVA_KEYWORDS = {'abstract', 'continue', 'for', 'new', 'switch',
                  'class', 'finally', 'long', 'strictfp', 'volatile',
                  'const' 'float', 'native', 'super', 'while'}
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 PARTIAL_MEMOIZED: Dict[bytes, List[int]] = {}
 COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
@@ -75,79 +74,13 @@ class LspContext(NamedTuple):
         )
 
 
-class T5SuitableForRealm(T5ForConditionalGeneration):
-    def __init__(
-        self,
-        config: T5Config,
-        tokenizer: PreTrainedTokenizer,
-        *model_args,
-    ):
-        super().__init__(config)
-        self.tokenizer = tokenizer
-        self.vocab_size: int = self.config.vocab_size  # type: ignore # noqa
-        self.token_map: List[str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), [
-            tokenizer.decode(
-                id,
-                skip_special_tokens=False,
-                clean_up_tokenization_spaces=False
-            ) for id in range(self.vocab_size)
-        ])
-        self.sep_id = 32099
-        self.sep = self.token_map[self.sep_id]
-        assert self.sep == "<extra_id_0>"
-        self.max_tokens: int = self.config.to_dict()['n_positions']  # type: ignore # noqa
-        self.model_args = model_args
-
-    @classmethod
-    def t5_from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], *model_args, **kwargs):
-        tokenizer = AutoTokenizer.from_pretrained(
-            pretrained_model_name_or_path)
-        model = cls.from_pretrained(
-            pretrained_model_name_or_path, tokenizer, *model_args, **kwargs)
-        return model
-
-    def context(self, prefix: str, suffix: str) -> str:
-        return prefix + self.sep + suffix
-    
-    def is_end(self, id: int) -> bool:
-        return id == 32098 or id == 2
-
-    def encode(self, prefix: str, suffix: str) -> torch.Tensor:
-        context = self.tokenizer.encode(self.context(
-            prefix, suffix), return_tensors='pt').to(DEVICE)
-        index = (context[0] == self.sep_id).nonzero()[0]
-        half_token_limit = self.max_tokens // 2
-        prefix_tensor = context[:, :index]
-        prefix_len = prefix_tensor.shape[1]
-        suffix_tensor = context[:, index:]
-        suffix_len = suffix_tensor.shape[1]
-        if prefix_len < half_token_limit and suffix_len < half_token_limit:
-            result = torch.cat((prefix_tensor, suffix_tensor), dim=1)
-        elif prefix_len >= half_token_limit and suffix_len >= half_token_limit:
-            result = torch.cat(
-                (prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit]), dim=1)
-        elif prefix_len < half_token_limit and suffix_len >= half_token_limit:
-            n_more = min(half_token_limit - prefix_len,
-                         suffix_len - half_token_limit)
-            result = torch.cat(
-                (prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit + n_more]), dim=1)
-        elif prefix_len >= half_token_limit and suffix_len < half_token_limit:
-            n_more = min(half_token_limit - suffix_len,
-                         prefix_len - half_token_limit)
-            result = torch.cat(
-                (prefix_tensor[:, -half_token_limit - n_more:], suffix_tensor[:, :half_token_limit]), dim=1)
-        # print(CODET5_TOKENIZER.batch_decode(result))
-        # breakpoint()
-        assert result.shape[1] <= self.max_tokens
-        return result
 
 
-MODEL = T5SuitableForRealm.t5_from_pretrained(
-    'Salesforce/codet5-large').to(DEVICE)
+MODEL = CodeT5Large().to(utils.DEVICE) # type: ignore # noqa
 INFERENCE_CONFIG = LMInferenceConfig(1.0, 50, 50, 2)
 
 def repair(
-    model: T5SuitableForRealm,
+    model: CodeT5Large,
     prefix: str,
     suffix: str,
     lm_inference_config: LMInferenceConfig,
@@ -285,154 +218,6 @@ def feasible(
 
 def is_special_token(token: str) -> bool:
     return (token.strip() in ['<s>', '</s>', '<pad>', '<mask>', '<unk>']) or token.startswith('<extra_id_')
-
-# Get the exact identifier token position
-
-
-# def get_id_token(generated_tokens: List[str]) -> str:
-#     result = ''
-#     first_unmatched_char = None
-#     for token in reversed(generated_tokens):
-#         should_break = False
-#         for c in reversed(token):
-#             if c.isdigit() or c.isalpha() or c == '_':
-#                 result = c + result
-#             else:
-#                 should_break = True
-#                 break
-#         if should_break:
-#             break
-#     # if first_unmatched_char == '.' and len(result) > 0:
-#     #     breakpoint()
-
-#     if len(result) > 0 and not result[0].isdigit() and result not in JAVA_KEYWORDS:
-#         return result
-#     else:
-#         raise IDTokenError
-
-
-def get_feasible_token_ids(
-    token_map,
-    generation_log: GenerationLog,
-    memoized_result: Optional[List[bool]],
-    generated_tokens: List[str],
-    generated_ids: List[int],
-    lsp_context: LspContext,
-    # Should be ranked (higher probability first)
-    considered_token_ids: List[int],
-    top_k: int,
-    completion_overhead: List[float]
-) -> List[int]:
-    print("RUNNING feasibility check")
-    # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
-    # NOTE: do not do it now. Just evaluate on both
-    # if idx == 0 and random.random() < 0.1:
-    #     exists_satsified_token = True
-    #     new_index = idx
-    #     break
-    analyzer = lsp_context.analyzer
-    text_file = lsp_context.text_file
-    # analyzer.client.stop()
-    result: List[int] = []
-    denied = utils.Trie()
-    # all_feasible_tokens = Trie()
-    # all_possible_completions = Trie()
-    done = False
-    count = 0
-    for token_id in considered_token_ids:
-        count += 1
-        if len(result) == top_k:
-            break
-        if done:
-            result.append(token_id)
-            continue
-        # if token_id == 32098 or token_id == CODET5_INFERENCE_CONFIG.end_id:
-        #     try:
-        #         javalang.parse.parse(text_file.content)
-        #     except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
-        #         # breakpoint()
-        #         continue
-        token = token_map[token_id]
-        # token_rstrip = token.rstrip()
-        # rspace_len = len(token) - len(token_rstrip)
-        # dot_token = token_rstrip.endswith('.')
-        # print(CHART_11)
-        # try:
-        # if not dot_token:
-            # id_token = get_id_token(generated_tokens + [token_rstrip])
-        if CHART_11 and (token in 'PathIterator'):
-            result.append(token_id)
-        elif memoized_result is not None and memoized_result[token_id]:
-            result.append(token_id)
-        # # Opt: reduce analysis times (assuming id_token = some st
-        # # - if s is denied, st is denied (find s in `denied` using trie)
-        # # - if c is all possible completions for s, st should be a prefix of one completion in c
-        # #   (find s in `all_feasible_tokens` using trie; find st in c using trie)
-        # # - if id_token is one of the possible completion, then it is feasible!
-        # # TODO: make string search faster
-        # elif not dot_token and next(denied.prefixes(id_token), None) is not None:
-        # # any(filter(partial(str.startswith, id_token), denied)):
-        #     # breakpoint()
-        #     pass
-        # elif not dot_token and ((x := all_possible_completions.has_node(id_token)) == Trie.HAS_SUBTRIE or x == Trie.HAS_VALUE):
-        #     result.append(token_id)
-        # elif not dot_token and next(all_feasible_tokens.prefixes(id_token), None) is not None:
-        #     # Assertion!
-        #     # assert (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE
-        #     denied[id_token] = None
-            # else:
-            # (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE):
-        # any(filter(
-        #     lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
-        #     all_feasible_tokens.items()
-        # )):
-        elif len(token) > 0 and not (
-            token[-1].isalnum()
-            or token[-1] in ['.', '_', '$']
-        ):
-            result.append(token_id)
-        elif denied.is_prefix_of(token):
-            pass
-        else:
-            # No exception afterwards
-            text_file.add(token)
-            analyzer.change(text_file)
-            pos = text_file.get_position(text_file.cursor)
-            # print(''.join(generated_tokens + [token]))
-            if feasible(
-                generation_log,
-                generated_ids,
-                generated_tokens,
-                analyzer,
-                text_file.path.as_uri(),
-                token_id,
-                token,
-                pos,
-                completion_overhead
-            ):
-                # or (dot_token
-                # and any(map(lambda s: True if s not in ['cast', 'var'] else False,
-                # (x := list(get_completions(analyzer, text_file.path.as_uri(), pos)))))):
-                result.append(token_id)
-                # if id_token == 'numerator':
-                #     breakpoint()
-                # if not dot_token:
-                #     plausible_completions = Trie(filtered_completions)
-                #     all_feasible_tokens[id_token] = plausible_completions
-                #     all_possible_completions.merge(plausible_completions)
-            else:
-                denied.insert(token)
-            #     # if dot_token:
-            #     #     breakpoint()
-            #     if not dot_token:
-            #         denied[id_token] = None
-            text_file.delete(len(token))
-            analyzer.change(text_file)
-        # if count == 20:
-        #     done = True
-        # except IDTokenError:
-        #     result.append(token_id)
-    return result
 
 
 @typing.no_type_check
@@ -906,7 +691,7 @@ def sample(
                 denied_trie = DENIED_TRIE[input_state]
                 while True:
                     # RUNTIME ERROR
-                    # TODO
+                    # TODO (DONE)
                     # 1. PARTIAL_MEMOIZED[prev_state] = UNREACHABLE when the accumulated probability is 0.0
                     # 2. Rewrite probs in advance according to PARTIAL_MEMOIZED[state] = UNREACHABLE (Tree search pruning)
                     # 3. Keywords opt. Trie opt. text_file.delete(*) opt.
@@ -990,8 +775,8 @@ def sample(
                 #     mask = torch.ones(
                 #         scores.shape,
                 #         dtype=torch.bool
-                #     ).to(DEVICE)
-                #     mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(DEVICE), False)
+                #     ).to(utils.DEVICE)
+                #     mask.index_fill_(0, torch.LongTensor(feasible_next_token_ids).to(utils.DEVICE), False)
                 #     scores.masked_fill_(mask, -float('inf'))
                 # else:
                 #     is_complete = False
@@ -1009,7 +794,7 @@ def sample(
         else:
             next_token = completion
             next_token_ids_list = model.tokenizer.encode(completion, add_special_tokens=False)
-            next_token_ids = torch.LongTensor(next_token_ids_list).to(DEVICE)
+            next_token_ids = torch.LongTensor(next_token_ids_list).to(utils.DEVICE)
             next_token_id_item = -1
         
         # except RuntimeError:
@@ -1043,7 +828,153 @@ def sample(
         if model.is_end(next_token_id_item):
             break
         elif len(input_ids[0]) == max_length:
-            breakpoint()
             is_complete = False
             break
     return completion_overhead, gen_context.generated_ids, gen_context.generated_tokens if is_complete else None, generation_log
+
+# Get the exact identifier token position
+
+# def get_id_token(generated_tokens: List[str]) -> str:
+#     result = ''
+#     first_unmatched_char = None
+#     for token in reversed(generated_tokens):
+#         should_break = False
+#         for c in reversed(token):
+#             if c.isdigit() or c.isalpha() or c == '_':
+#                 result = c + result
+#             else:
+#                 should_break = True
+#                 break
+#         if should_break:
+#             break
+#     # if first_unmatched_char == '.' and len(result) > 0:
+#     #     breakpoint()
+
+#     if len(result) > 0 and not result[0].isdigit() and result not in JAVA_KEYWORDS:
+#         return result
+#     else:
+#         raise IDTokenError
+
+
+# def get_feasible_token_ids(
+#     token_map,
+#     generation_log: GenerationLog,
+#     memoized_result: Optional[List[bool]],
+#     generated_tokens: List[str],
+#     generated_ids: List[int],
+#     lsp_context: LspContext,
+#     # Should be ranked (higher probability first)
+#     considered_token_ids: List[int],
+#     top_k: int,
+#     completion_overhead: List[float]
+# ) -> List[int]:
+#     print("RUNNING feasibility check")
+#     # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
+#     # NOTE: do not do it now. Just evaluate on both
+#     # if idx == 0 and random.random() < 0.1:
+#     #     exists_satsified_token = True
+#     #     new_index = idx
+#     #     break
+#     analyzer = lsp_context.analyzer
+#     text_file = lsp_context.text_file
+#     # analyzer.client.stop()
+#     result: List[int] = []
+#     denied = utils.Trie()
+#     # all_feasible_tokens = Trie()
+#     # all_possible_completions = Trie()
+#     done = False
+#     count = 0
+#     for token_id in considered_token_ids:
+#         count += 1
+#         if len(result) == top_k:
+#             break
+#         if done:
+#             result.append(token_id)
+#             continue
+#         # if token_id == 32098 or token_id == CODET5_INFERENCE_CONFIG.end_id:
+#         #     try:
+#         #         javalang.parse.parse(text_file.content)
+#         #     except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
+#         #         # breakpoint()
+#         #         continue
+#         token = token_map[token_id]
+#         # token_rstrip = token.rstrip()
+#         # rspace_len = len(token) - len(token_rstrip)
+#         # dot_token = token_rstrip.endswith('.')
+#         # print(CHART_11)
+#         # try:
+#         # if not dot_token:
+#             # id_token = get_id_token(generated_tokens + [token_rstrip])
+#         if CHART_11 and (token in 'PathIterator'):
+#             result.append(token_id)
+#         elif memoized_result is not None and memoized_result[token_id]:
+#             result.append(token_id)
+#         # # Opt: reduce analysis times (assuming id_token = some st
+#         # # - if s is denied, st is denied (find s in `denied` using trie)
+#         # # - if c is all possible completions for s, st should be a prefix of one completion in c
+#         # #   (find s in `all_feasible_tokens` using trie; find st in c using trie)
+#         # # - if id_token is one of the possible completion, then it is feasible!
+#         # # TODO: make string search faster
+#         # elif not dot_token and next(denied.prefixes(id_token), None) is not None:
+#         # # any(filter(partial(str.startswith, id_token), denied)):
+#         #     # breakpoint()
+#         #     pass
+#         # elif not dot_token and ((x := all_possible_completions.has_node(id_token)) == Trie.HAS_SUBTRIE or x == Trie.HAS_VALUE):
+#         #     result.append(token_id)
+#         # elif not dot_token and next(all_feasible_tokens.prefixes(id_token), None) is not None:
+#         #     # Assertion!
+#         #     # assert (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE
+#         #     denied[id_token] = None
+#             # else:
+#             # (x := kv[1].has_node(id_token)) != Trie.HAS_SUBTRIE and x != Trie.HAS_VALUE):
+#         # any(filter(
+#         #     lambda kv: id_token.startswith(kv[0]) and id_token not in kv[1], # type: ignore # noqa
+#         #     all_feasible_tokens.items()
+#         # )):
+#         elif len(token) > 0 and not (
+#             token[-1].isalnum()
+#             or token[-1] in ['.', '_', '$']
+#         ):
+#             result.append(token_id)
+#         elif denied.is_prefix_of(token):
+#             pass
+#         else:
+#             # No exception afterwards
+#             text_file.add(token)
+#             analyzer.change(text_file)
+#             pos = text_file.get_position(text_file.cursor)
+#             # print(''.join(generated_tokens + [token]))
+#             if feasible(
+#                 generation_log,
+#                 generated_ids,
+#                 generated_tokens,
+#                 analyzer,
+#                 text_file.path.as_uri(),
+#                 token_id,
+#                 token,
+#                 pos,
+#                 completion_overhead
+#             ):
+#                 # or (dot_token
+#                 # and any(map(lambda s: True if s not in ['cast', 'var'] else False,
+#                 # (x := list(get_completions(analyzer, text_file.path.as_uri(), pos)))))):
+#                 result.append(token_id)
+#                 # if id_token == 'numerator':
+#                 #     breakpoint()
+#                 # if not dot_token:
+#                 #     plausible_completions = Trie(filtered_completions)
+#                 #     all_feasible_tokens[id_token] = plausible_completions
+#                 #     all_possible_completions.merge(plausible_completions)
+#             else:
+#                 denied.insert(token)
+#             #     # if dot_token:
+#             #     #     breakpoint()
+#             #     if not dot_token:
+#             #         denied[id_token] = None
+#             text_file.delete(len(token))
+#             analyzer.change(text_file)
+#         # if count == 20:
+#         #     done = True
+#         # except IDTokenError:
+#         #     result.append(token_id)
+#     return result
