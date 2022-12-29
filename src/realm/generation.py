@@ -268,9 +268,9 @@ class Realm:
         input_state = pickle.dumps(generated_ids)
         denied_trie = self.mem.denied_tokens.setdefault(input_state, utils.Trie())
 
-        # Ensures that all tokens tried are feasible
         feasible_indices = self.mem.feasible_token_ids.setdefault(input_state, set())
         infeasible_indices = self.mem.infeasible_token_ids.setdefault(input_state, [])
+        # Ensures that all tokens tried are feasible
         probs[infeasible_indices] = 0.
         while True:
             # `probs` will change each iteration (some entries will be assigned 0.)

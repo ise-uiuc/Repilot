@@ -18,6 +18,7 @@ from realm.lsp import TextFile
 #         return impl
 #     return decorator
 
+
 class JdtLspAnalyzer:
     """Jdt LSP based Java program analyzer leveraging whole-project information.
     Now assume only one active file for diagnosis"""

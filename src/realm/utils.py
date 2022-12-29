@@ -134,3 +134,11 @@ def common_prefix(strings: List[str]) -> Optional[str]:
             break
 
     return common if len(common) > 0 else None
+
+
+class Meaningless:
+    def __call__(self, *args, **kwds):
+        return self
+
+    def __getattribute__(self, __name: str):
+        return self

@@ -97,7 +97,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         bug.proj_path,
         cast(str, os.getenv('JAVA8_HOME')),
         verbose=False
-    )
+    ) if os.getenv('PLAIN') is None else cast(JdtLspAnalyzer, utils.Meaningless())
 
     analyzer.init_client()
     analyzer.init()
