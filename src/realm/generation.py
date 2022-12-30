@@ -136,7 +136,7 @@ class Realm:
         self,
         lm_context: LMContext,
         lsp_context: LspContext,
-        use_memorization: bool = True,
+        use_memorization: bool = os.getenv('NO_MEM') is None,
     ) -> None:
         # Constants
         self.model = lm_context.model
