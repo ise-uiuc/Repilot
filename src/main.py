@@ -190,6 +190,14 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     text_file,
                     analyzer
                 )
+                if os.getenv('DRY') is not None:
+                    # How to calculate batch size?
+                    batch_size = int(os.getenv('BATCH_SIZE')) # type: ignore # noqa
+                    samples = gen.MODEL.generate(gen.MODEL.encode(prefix, suffix).repeat(batch_size, 1), max_new_tokens=50, temperature=1.0, )
+                    for sample in samples:
+                        print(sample)
+                    generation_successful = False
+                    continue
 
                 repairer = gen.Realm(lm_context, lsp_context)
                 repairer.mem = mem
@@ -541,7 +549,8 @@ if __name__ == '__main__':
         #     continue
         print(bug_id)
         gen.CHART_11 = bug_id == 'Chart-11'
-        patch_groups = repair_proj(result_dir, bug_id, bug, 200)
+        n_samples = 200 if (n_samples_str := os.getenv('N_SAMPLES')) is None else int(n_samples_str)
+        patch_groups = repair_proj(result_dir, bug_id, bug, n_samples)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):
         #     if validate_proj(bug_id, bug, patch_group):

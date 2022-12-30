@@ -136,7 +136,7 @@ class Realm:
         self,
         lm_context: LMContext,
         lsp_context: LspContext,
-        use_memorization: bool = False,
+        use_memorization: bool = True,
     ) -> None:
         # Constants
         self.model = lm_context.model
@@ -412,125 +412,14 @@ class Realm:
             probs = nn.functional.softmax(scores, dim=-1)
             assert len(probs.shape) == 1
 
-            completion: Optional[str] = None
             if os.getenv('PLAIN') is not None or CHART_11:  # or count > 10:
                 # shape: (1)
                 next_token_ids = self.plain_decode(gen_context, probs)
             else:
-                if os.getenv('ACTIVE') is not None:
-                    # Active completion
-                    self.analyzer.change(self.text_file)
-                    # assert text_file.content[text_file.cursor-idx] == '.'
-                    # print(gen_tokens)
-                    # completion_result = analyzer.client.textDocument_completion({
-                    #     'textDocument': {
-                    #         'uri': text_file.path.as_uri()
-                    #     },
-                    #     'position': text_file.get_position(text_file.cursor)
-                    # })
-                    # breakpoint()
-                    input_ids_list = input_ids[0].tolist()
-                    input_state = pickle.dumps(gen_context.generated_ids)
-                    if input_state in self.mem.completions:
-                        continuations = self.mem.completions[input_state]
-                    else:
-                        continuations = get_completions(self.analyzer, self.text_file.path.as_uri(
-                        ), self.text_file.get_position(self.text_file.cursor))
-                        self.mem.completions[input_state] = continuations
-                    if continuations is not None:
-                        continuations = [item if not (item := target[len(source):]).endswith(
-                            '(') else item[:-1] for c in continuations if (target := c['target']).startswith(source := c['source'])]
-                        # continuations = [item for item in continuations if len(item) > 0]
-                        completion = utils.common_prefix(continuations)
-
-                        # if completion is not None:
-                        #     breakpoint()
-                        # if len(continuations) == 1:
-                        #     completion = continuations[0]
-                        # elif len(continuations) < top_k:
-                        #     warpers = LogitsProcessorList()
-                        #     warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
-                        #     next_token_scores = warpers(input_ids, next_token_scores)
-                        #     assert len(next_token_scores) == 1
-                        #     scores = next_token_scores[0]
-                        #     considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
-                        #     assert len(considered_next_token_ids.shape) == 1
-                        #     considered_next_token_ids = considered_next_token_ids[
-                        #         scores[considered_next_token_ids] > -float('inf')]
-                        #     considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
-                        #     considered_next_tokens = [model.token_map[id] for id in considered_next_token_ids_list]
-                        #     for possible_next_token in considered_next_tokens:
-                        #         for continuation in continuations:
-                        #             if continuation.startswith(possible_next_token):
-                        #                 completion = continuation
-                        #                 breakpoint()
-                        #                 break
-                        #         if completion is not None:
-                        #             break
-                    else:
-                        completion = None
-                    # Directly use completion to continue the code
-                    if os.getenv('COMPLETION') is not None:
-                        N_COMPLETION = 5
-                        if completion is None and continuations is not None and len(continuations) > 0 and len(continuations) <= N_COMPLETION:
-                            if os.getenv('NO_RAND') is None:
-                                completion = choice if (choice := random.choice(
-                                    continuations)) != '' else None
-                                print(completion)
-                            else:
-                                # if completion is not None:
-                                scores = next_token_scores[0]
-                                probs = nn.functional.softmax(scores, dim=-1)
-                                considered_next_token_ids: torch.Tensor = torch.argsort(
-                                    scores, descending=True)
-                                assert len(
-                                    considered_next_token_ids.shape) == 1
-                                considered_next_token_ids = considered_next_token_ids[
-                                    scores[considered_next_token_ids] > -float('inf')]
-
-                                assert len(input_ids) == 1
-                                considered_next_token_ids_list = considered_next_token_ids.tolist()[
-                                    :top_k]
-
-                                cont_probs = [
-                                    0 for _ in range(len(continuations))]
-                                for idx, cont in enumerate(continuations):
-                                    for id in considered_next_token_ids_list:
-                                        token = model.token_map[id]
-                                        prob = probs[id]
-                                        if cont.startswith(token) or token.startswith(cont):
-                                            cont_probs[idx] += prob.item()
-
-                                try:
-                                    completion = choice if (choice := random.choices(
-                                        continuations, weights=cont_probs, k=1)[0]) != '' else None
-                                except ValueError:
-                                    completion = random.choice(continuations)
-                                    if completion == '':
-                                        completion = None
-                if completion is not None:
-                    pass
-                else:
-                    try:
-                        next_token_ids = self.pruned_decode(gen_context, probs)
-                    except RuntimeError:
-                        return completion_overhead, [], None, generation_log
-
-            if completion is None:
-                pass
-            else:
-                next_token = completion
-                next_token_ids_list = model.tokenizer.encode(
-                    completion, add_special_tokens=False)
-                next_token_ids = torch.LongTensor(
-                    next_token_ids_list).to(utils.DEVICE)
-                next_token_id_item = -1
-
-            # if not self.model.is_special_token(next_token):
-            #     self.text_file.add(next_token)
-            #     gen_context.generated_ids.extend(next_token_ids_list)
-            #     gen_context.generated_tokens.extend(
-            #         [model.token_map[idx] for idx in next_token_ids_list])
+                try:
+                    next_token_ids = self.pruned_decode(gen_context, probs)
+                except RuntimeError:
+                    return completion_overhead, [], None, generation_log
 
             # update generated ids, model inputs, and length for next step
             # NOTE: originally next_token_ids[:, None] because for each batch it generate 'one' token;
@@ -979,3 +868,114 @@ class Realm:
 # else:
 #     is_complete = False
 #     break
+
+# ACTIVE
+# if os.getenv('ACTIVE') is not None:
+#     # Active completion
+#     self.analyzer.change(self.text_file)
+#     # assert text_file.content[text_file.cursor-idx] == '.'
+#     # print(gen_tokens)
+#     # completion_result = analyzer.client.textDocument_completion({
+#     #     'textDocument': {
+#     #         'uri': text_file.path.as_uri()
+#     #     },
+#     #     'position': text_file.get_position(text_file.cursor)
+#     # })
+#     # breakpoint()
+#     input_ids_list = input_ids[0].tolist()
+#     input_state = pickle.dumps(gen_context.generated_ids)
+#     if input_state in self.mem.completions:
+#         continuations = self.mem.completions[input_state]
+#     else:
+#         continuations = get_completions(self.analyzer, self.text_file.path.as_uri(
+#         ), self.text_file.get_position(self.text_file.cursor))
+#         self.mem.completions[input_state] = continuations
+#     if continuations is not None:
+#         continuations = [item if not (item := target[len(source):]).endswith(
+#             '(') else item[:-1] for c in continuations if (target := c['target']).startswith(source := c['source'])]
+#         # continuations = [item for item in continuations if len(item) > 0]
+#         completion = utils.common_prefix(continuations)
+
+#         # if completion is not None:
+#         #     breakpoint()
+#         # if len(continuations) == 1:
+#         #     completion = continuations[0]
+#         # elif len(continuations) < top_k:
+#         #     warpers = LogitsProcessorList()
+#         #     warpers.append(TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1))
+#         #     next_token_scores = warpers(input_ids, next_token_scores)
+#         #     assert len(next_token_scores) == 1
+#         #     scores = next_token_scores[0]
+#         #     considered_next_token_ids: torch.Tensor = torch.argsort(scores, descending=True)
+#         #     assert len(considered_next_token_ids.shape) == 1
+#         #     considered_next_token_ids = considered_next_token_ids[
+#         #         scores[considered_next_token_ids] > -float('inf')]
+#         #     considered_next_token_ids_list = considered_next_token_ids.tolist()[:top_k]
+#         #     considered_next_tokens = [model.token_map[id] for id in considered_next_token_ids_list]
+#         #     for possible_next_token in considered_next_tokens:
+#         #         for continuation in continuations:
+#         #             if continuation.startswith(possible_next_token):
+#         #                 completion = continuation
+#         #                 breakpoint()
+#         #                 break
+#         #         if completion is not None:
+#         #             break
+#     else:
+#         completion = None
+#     # Directly use completion to continue the code
+#     if os.getenv('COMPLETION') is not None:
+#         N_COMPLETION = 5
+#         if completion is None and continuations is not None and len(continuations) > 0 and len(continuations) <= N_COMPLETION:
+#             if os.getenv('NO_RAND') is None:
+#                 completion = choice if (choice := random.choice(
+#                     continuations)) != '' else None
+#                 print(completion)
+#             else:
+#                 # if completion is not None:
+#                 scores = next_token_scores[0]
+#                 probs = nn.functional.softmax(scores, dim=-1)
+#                 considered_next_token_ids: torch.Tensor = torch.argsort(
+#                     scores, descending=True)
+#                 assert len(
+#                     considered_next_token_ids.shape) == 1
+#                 considered_next_token_ids = considered_next_token_ids[
+#                     scores[considered_next_token_ids] > -float('inf')]
+
+#                 assert len(input_ids) == 1
+#                 considered_next_token_ids_list = considered_next_token_ids.tolist()[
+#                     :top_k]
+
+#                 cont_probs = [
+#                     0 for _ in range(len(continuations))]
+#                 for idx, cont in enumerate(continuations):
+#                     for id in considered_next_token_ids_list:
+#                         token = model.token_map[id]
+#                         prob = probs[id]
+#                         if cont.startswith(token) or token.startswith(cont):
+#                             cont_probs[idx] += prob.item()
+
+#                 try:
+#                     completion = choice if (choice := random.choices(
+#                         continuations, weights=cont_probs, k=1)[0]) != '' else None
+#                 except ValueError:
+#                     completion = random.choice(continuations)
+#                     if completion == '':
+#                         completion = None
+# if completion is not None:
+#     pass
+# else:
+#     try:
+#         next_token_ids = self.pruned_decode(gen_context, probs)
+#     except RuntimeError:
+#         return completion_overhead, [], None, generation_log
+# else:
+
+# if completion is None:
+#     pass
+# else:
+#     next_token = completion
+#     next_token_ids_list = model.tokenizer.encode(
+#         completion, add_special_tokens=False)
+#     next_token_ids = torch.LongTensor(
+#         next_token_ids_list).to(utils.DEVICE)
+#     next_token_id_item = -1
