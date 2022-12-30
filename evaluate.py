@@ -56,6 +56,21 @@ def get_data_for_bug(bug_meta: dict, avg_gen_time: float) -> List[DataPoint]:
         result.append(datapoint)
     return result
 
+def get_times(folder: Path) -> dict:
+    result: dict = {'detailed': {}, 'general': {}}
+    for proj_dir in filter(Path.is_dir, folder.iterdir()):
+        all_bugs = list(filter(Path.is_dir, proj_dir.iterdir()))
+        all_bugs.sort(key=lambda bug: int(bug.name))
+        proj_name = proj_dir.name
+        result['general'][proj_name] = []
+        for bug in all_bugs:
+            detailed = result['detailed'].setdefault(proj_name, {})
+            with open(bug / 'time.json') as f:
+                gen_time_meta = json.load(f)
+            times = gen_time_meta['times']
+            detailed[bug.name] = times
+            result['general'][proj_name].extend(times)
+    return result
 
 def get_data(folder: Path) -> dict:
     result: dict = {'detailed': {}, 'general': {}}
@@ -83,6 +98,7 @@ def get_data(folder: Path) -> dict:
                 continue
             bug_meta = val_meta[bug_id]
             # TODO: do not use average (use dict instead of list to store generation times)
+            # and calculate only time for unique patchs
             avg_gen_time = sum(
                 gen_time_meta['times']) / len(gen_time_meta['times'])
             datapoints = get_data_for_bug(bug_meta, avg_gen_time)
@@ -201,6 +217,12 @@ def plot_datapoints(datapoints: List[DataPoint], axs: plt.Axes, label: str):
     plot(axs[1, 1], times, n_plausible, 'Total time consumed', y_label)
     plot(axs[1, 2], gen_times, n_plausible, 'Generation time', y_label)
 
+def plot_times(times: List[float], label: str):
+    plt.title(make_label('Generation speed'))
+    plt.xlabel(make_label('Generation time (seconds)'))
+    plt.ylabel(make_label('Number of generated patches (non-unique)'))
+    plt.plot([sum(times[:i + 1]) for i in range(len(times))], range(1, len(times) + 1), label=label)
+    plt.legend()
 
 def make_label(text: str) -> str:
     return f'\\textbf{{{text}}}'
@@ -223,6 +245,14 @@ if __name__ == '__main__':
 
     folders = list(map(Path, args.folders))
     all_details: dict = {}
+
+    for folder in folders:
+        _, times_data = next(iter(get_times(folder)['general'].items()))
+        plot_times(times_data, folder.name)
+        # TODO: detailed times
+        # for bug_id, times in times_data['details'].items():
+        #     plot_times(times, bug_id)
+    plt.savefig(result_folder / 'time.png')
 
     fig, axs = plt.subplots(2, 3, figsize=(18, 10))
     first_folder = True
