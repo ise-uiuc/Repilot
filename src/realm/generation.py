@@ -136,6 +136,7 @@ class Realm:
         self,
         lm_context: LMContext,
         lsp_context: LspContext,
+        use_memorization: bool = False,
     ) -> None:
         # Constants
         self.model = lm_context.model
@@ -144,8 +145,10 @@ class Realm:
         self.analyzer = lsp_context.analyzer
         self.text_file = lsp_context.text_file
 
-        # Memorizatiions
-        self.mem = Memorization.init()
+        # Memorizations
+        self.use_mem = use_memorization
+        if use_memorization:
+            self.mem = Memorization.init()
 
     def repair(self) -> Generation:
         return self.generate(
@@ -184,7 +187,7 @@ class Realm:
         #     print("HIT")
         #     return self.memorization.infeasible_token_ids[input_state]
         input_state = pickle.dumps(generated_ids + [token_id])
-        if input_state in self.mem.completions:
+        if self.use_mem and input_state in self.mem.completions:
             # Due to memorization, each input_state be called on this function only once
             # => token_id in self.mem.(in)feasible_token_ids[state of generated_ids]
             assert False
@@ -266,12 +269,12 @@ class Realm:
         tokens) and returns the 'real' generation"""
         generated_ids = gen_context.generated_ids
         input_state = pickle.dumps(generated_ids)
-        denied_trie = self.mem.denied_tokens.setdefault(input_state, utils.Trie())
-
-        feasible_indices = self.mem.feasible_token_ids.setdefault(input_state, set())
-        infeasible_indices = self.mem.infeasible_token_ids.setdefault(input_state, [])
-        # Ensures that all tokens tried are feasible
-        probs[infeasible_indices] = 0.
+        if self.use_mem:
+            denied_trie = self.mem.denied_tokens.setdefault(input_state, utils.Trie())
+            feasible_indices = self.mem.feasible_token_ids.setdefault(input_state, set())
+            infeasible_indices = self.mem.infeasible_token_ids.setdefault(input_state, [])
+            # Ensures that all tokens tried are feasible
+            probs[infeasible_indices] = 0.
         while True:
             # `probs` will change each iteration (some entries will be assigned 0.)
             try:
@@ -281,13 +284,14 @@ class Realm:
                 assert isinstance(trying_token_id_item, int)
             except RuntimeError as e:
                 # Sum of probabilities < 0
-                if len(generated_ids) > 0:
+                if self.use_mem and len(generated_ids) > 0:
                     prev_state = pickle.dumps(generated_ids[:-1])
                     last_token_id = generated_ids[-1]
                     self.mem.infeasible_token_ids[prev_state].append(last_token_id)
                 raise e
             # All trying tokens are feasible
-            assert trying_token_id_item not in infeasible_indices
+            if self.use_mem:
+                assert trying_token_id_item not in infeasible_indices
             trying_token = self.model.token_map[trying_token_id_item]
 
             def update_gen():
@@ -300,9 +304,9 @@ class Realm:
                 self.text_file.add(trying_token)
                 update_gen()
                 return trying_token_id
-            elif denied_trie.is_prefix_of(trying_token):
+            elif self.use_mem and denied_trie.is_prefix_of(trying_token):
                 pass
-            elif trying_token_id_item in feasible_indices:
+            elif self.use_mem and trying_token_id_item in feasible_indices:
                 self.text_file.add(trying_token)
                 update_gen()
                 return trying_token_id
@@ -320,7 +324,8 @@ class Realm:
                     pos,
                     []
                 ):
-                    feasible_indices.add(trying_token_id_item)
+                    if self.use_mem:
+                        feasible_indices.add(trying_token_id_item)
                     update_gen()
                     return trying_token_id
                 else:
@@ -328,8 +333,9 @@ class Realm:
             # Token is infeasible if the program runs to this line
             # By setting the probability to 0.0, this token will not be selected.
             probs[trying_token_id_item] = 0.
-            infeasible_indices.append(trying_token_id_item)
-            denied_trie.insert(trying_token)
+            if self.use_mem:
+                infeasible_indices.append(trying_token_id_item)
+                denied_trie.insert(trying_token)
 
     @typing.no_type_check
     def sample(

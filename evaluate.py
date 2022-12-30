@@ -246,6 +246,7 @@ if __name__ == '__main__':
     folders = list(map(Path, args.folders))
     all_details: dict = {}
 
+    plt.figure(figsize=(8, 6))
     for folder in folders:
         _, times_data = next(iter(get_times(folder)['general'].items()))
         plot_times(times_data, folder.name)
@@ -266,6 +267,7 @@ if __name__ == '__main__':
             if first_folder:
                 all_details[bug_id] = []
             else:
+                # TODO: allow ploting when bug_ids are not aligned 
                 assert bug_id in all_details
             all_details[bug_id].append((folder.name, datapoints))
 
