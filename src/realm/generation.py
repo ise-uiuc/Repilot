@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from realm import utils
 from realm.lsp.text import TextFile
 from realm.lsp import spec
-from realm.model import CodeT5ForRealm, CodeT5Large
 from realm.analyze.jdt_lsp import JdtLspAnalyzer
+from realm.model import CodeT5ForRealm, CodeT5Large
+from realm.analyze.jdt_lsp import Message
+from multiprocessing.connection import Connection
 from torch import nn
 import torch
 import os
@@ -80,20 +82,14 @@ class LMContext(NamedTuple):
 class LspContext(NamedTuple):
     # for analysis
     text_file: TextFile
-    analyzer: JdtLspAnalyzer
-
-    def copy(self) -> 'LspContext':
-        return LspContext(
-            self.text_file.copy(),
-            self.analyzer.copy()
-        )
+    analyzer: Connection
 
 
 MODEL = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
 INFERENCE_CONFIG = LMInferenceConfig(1.0, 50, 50, 2)
 
 
-def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> Optional[List[dict]]:
+def get_completions(analyzer: Connection, uri: str, pos: spec.Position) -> Optional[List[dict]]:
     # completion_result = analyzer.client.textDocument_completion({
     #     'textDocument': {
     #         'uri': uri
@@ -103,12 +99,14 @@ def get_completions(analyzer: JdtLspAnalyzer, uri: str, pos: spec.Position) -> O
     # old_timeout = analyzer.client.timeout
     # analyzer.client.timeout = 0.5
     # try:
-    new_completion_result = analyzer.client.newCompletion({
+    analyzer.send(Message(True, JdtLspAnalyzer.completion.__name__, {
         'textDocument': {
             'uri': uri
         },
         'position': pos,
-    })
+    }))
+    new_completion_result: dict = analyzer.recv()
+ 
     # except TimeoutError:
     #     return None
     # finally:
@@ -312,7 +310,7 @@ class Realm:
                 return trying_token_id
             else:
                 self.text_file.add(trying_token)
-                self.analyzer.change(self.text_file)
+                self.analyzer.send(Message(False, JdtLspAnalyzer.change.__name__, self.text_file))
                 pos = self.text_file.get_cursor_position()
                 if self.feasible(
                     [],

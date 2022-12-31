@@ -1,8 +1,9 @@
 import itertools
-import json
+from multiprocessing import Process
+from multiprocessing.connection import Connection
 from os import PathLike
 from pathlib import Path
-from typing import Dict, List, cast
+from typing import Dict, List, cast, Any, Optional
 from realm.lsp import LSPClient, spec
 import subprocess
 from realm.lsp import TextFile
@@ -18,37 +19,63 @@ from realm.lsp import TextFile
 #         return impl
 #     return decorator
 
+class Message:
+    def __init__(self, return_result: bool, method: str, *args: Any, **kwargs: Any) -> None:
+        self.return_result = return_result
+        self.method = method
+        self.args = args
+        self.kwargs = kwargs
+    
+    def __str__(self) -> str:
+        return str((self.return_result, self.method, self.args, self.kwargs))
+    
+    def __repr__(self) -> str:
+        return repr((self.return_result, self.method, self.args, self.kwargs))
 
-class JdtLspAnalyzer:
+class JdtLspAnalyzer(Process):
     """Jdt LSP based Java program analyzer leveraging whole-project information.
     Now assume only one active file for diagnosis"""
-    counter = itertools.count(0)
+    # counter = itertools.count(0)
 
-    def stop(self):
-        self.process.terminate()
-    
-    def copy(self) -> 'JdtLspAnalyzer':
-        return JdtLspAnalyzer(
-            self.server_cmd,
-            self.proj_path,
-            self.java_home,
-            self.verbose
-        )
-
-    def __init__(self, server_cmd: List[str], proj_path: PathLike, java_home: str, verbose: bool = False) -> None:
+    def __init__(self, conn: Connection, server_cmd: List[str], proj_path: PathLike, java_home: str, verbose: bool = False) -> None:
+        super().__init__()
+        self.conn = conn
         self.server_cmd = server_cmd
         self.proj_path = proj_path
         self.java_home = java_home
         self.verbose = verbose
+        self.counter = itertools.count(0)
+
+    def init_lsp(self):
         self.process = subprocess.Popen(
             self.server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
         assert self.process.stdin is not None and self.process.stdout is not None
-    
-    def init_client(self):
         self.client = LSPClient(
             self.process.stdin, self.process.stdout, self.verbose, 120)
         self.client.start()
 
+    def stop_lsp(self):
+        self.process.terminate()
+        self.client.stop()
+        self.client.shutdown(None)
+        self.client.exit(None)
+        self.process.terminate()
+    
+    def run(self) -> None:
+        # Start the thread
+        self.init_lsp()
+        while True: 
+            message: Optional[Message] = self.conn.recv()
+            # print('RECEIVED:', message)
+            if message is None:
+                break
+            assert isinstance(message, Message)
+            result = getattr(self, message.method)(*message.args, **message.kwargs)
+            if message.return_result:
+                # print('RESULT:', result)
+                self.conn.send(result)
+        self.stop_lsp()
+        print('Analyzer terminated')
 
     def init(self):
         # self.active_text: Optional[TextDocument] = None
@@ -768,6 +795,9 @@ class JdtLspAnalyzer:
                 'text': text.content,
             }]
         })
+    
+    def completion(self, params: spec.CompletionParams) -> spec.ResponseMessage:
+        return self.client.newCompletion(params)
 
     def save(self):
         self.client.textDocument_didSave({

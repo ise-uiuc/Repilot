@@ -1,42 +1,39 @@
-from realm.lsp import TextDocument
-from realm.syntax import reduce
+import argparse
+import difflib
+import hashlib
+import io
+import json
+import os
+import random
+import shlex
+import shutil
+import subprocess
+import time
+import uuid
+from enum import Enum
+from multiprocessing import Pipe
+from multiprocessing.connection import Connection
+from pathlib import Path
+from typing import Dict, List, Set, Tuple, cast
+
+import git
+import javalang
+import regex as re
+import torch
+from joblib import Parallel, delayed
+
+from datasets import d4j
+from init import data
 from realm import utils
-from typing import Optional
+from realm.analyze.jdt_lsp import JdtLspAnalyzer, Message
+from realm.lsp import spec
+from realm.lsp.text import TextFile
 
 # doc = TextDocument(r'System.out.println("Hello " + "world")')
 # reduce(doc, raise_unexpected_exc=True)
 # print(doc)
 # exit()
 
-import sys
-import difflib
-import multiprocessing as mp
-from enum import Enum
-import uuid
-from joblib import Parallel, delayed
-import regex as re
-import time
-import torch
-import random
-import os
-import shlex
-from pathlib import Path
-import shutil
-import subprocess
-from realm.analyze.jdt_lsp import JdtLspAnalyzer
-from realm.lsp import TextDocument, client, spec
-import json
-from typing import Dict, Generator, List, Set, Tuple, cast
-from init import data
-from unidiff import PatchSet
-import git
-import hashlib
-import io
-from realm.lsp.spec import TextChange
-from realm.lsp.text import MutableTextDocument, TextFile
-from datasets import d4j
-import argparse
-import javalang
 
 assert shutil.which('defects4j')
 
@@ -53,6 +50,7 @@ assert shutil.which('defects4j')
 
 def str_hash(s: str) -> int:
     return int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**8
+
 
 JDT_LS_REPO = '/home/yuxiang/fastd/Developer/eclipse.jdt.ls/'
 D4J_REPO = '/home/yuxiang/Developer/defects4j'
@@ -92,15 +90,18 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     except GitCommandError:
         pass
 
+    analyzer_conn, realm_conn = cast(
+        Tuple[Connection, Connection], Pipe(duplex=True))
     analyzer = JdtLspAnalyzer(
+        analyzer_conn,
         server_cmd(bug_id),
         bug.proj_path,
         cast(str, os.getenv('JAVA8_HOME')),
         verbose=False
     ) if os.getenv('PLAIN') is None else cast(JdtLspAnalyzer, utils.Meaningless())
+    analyzer.start()
 
-    analyzer.init_client()
-    analyzer.init()
+    realm_conn.send(Message(False, JdtLspAnalyzer.init.__name__))
 
     patch_groups: List[List[TextFile]] = []
     time_completion: List[float] = []
@@ -119,7 +120,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             # TODO: refactor textfile
             for buggy_file in bug.buggy_files:
                 text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
-                analyzer.change(text_file)
+                realm_conn.send(
+                    Message(False, JdtLspAnalyzer.change.__name__, text_file))
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
 
@@ -128,7 +130,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         for buggy_file_idx, buggy_file in enumerate(bug.buggy_files):
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
             if idx == 0:
-                analyzer.open(text_file)
+                realm_conn.send(
+                    Message(False, JdtLspAnalyzer.open.__name__, text_file))
             print(len(buggy_file.changes))
             print(buggy_file.path)
             print([(c.start, len(c.removed_lines))
@@ -188,12 +191,13 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
                 lsp_context = gen.LspContext(
                     text_file,
-                    analyzer
+                    realm_conn
                 )
                 if os.getenv('DRY') is not None:
                     # How to calculate batch size?
-                    batch_size = int(os.getenv('BATCH_SIZE')) # type: ignore # noqa
-                    samples = gen.MODEL.generate(gen.MODEL.encode(prefix, suffix).repeat(batch_size, 1), max_new_tokens=50, temperature=1.0, )
+                    batch_size = int(os.getenv('BATCH_SIZE'))  # type: ignore # noqa
+                    samples = gen.MODEL.generate(gen.MODEL.encode(prefix, suffix).repeat(
+                        batch_size, 1), max_new_tokens=50, temperature=1.0, )
                     for sample in samples:
                         print(sample)
                     generation_successful = False
@@ -219,7 +223,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 memoized[mem_id] = repairer.mem
                 # This is always True
 
-                assert (lhs := ''.join(output)) == (rhs := text_file.content[start_cursor:text_file.cursor]), (lhs, rhs)
+                assert (lhs := ''.join(output)) == (
+                    rhs := text_file.content[start_cursor:text_file.cursor]), (lhs, rhs)
                 print('Success')
                 print(''.join(output))
                 # breakpoint()
@@ -268,12 +273,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             'times': times,
         }, f, indent=2)
 
-    # TODO: still buggy (because when analyzer.stop() the process terminates,
-    # but the client is still in the while loop)
-    analyzer.client.stop()
-    analyzer.client.shutdown(None)
-    analyzer.client.exit(None)
-    analyzer.process.terminate()
+    realm_conn.send(Message(False, JdtLspAnalyzer.stop_lsp.__name__))
     return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
@@ -469,6 +469,7 @@ def validate_all_bugs(all_bugs: dict, proj_dir: Path):
         with open(proj_dir / proj_dir.with_suffix('.json').name, 'w') as f:
             json.dump(ret, f, indent=2)
 
+
 def log_repo(f: io.TextIOBase, tag: str, repo: git.Repo):
     f.write(f'{tag} GIT HASH: {repo.head.object.hexsha}\n')
     f.write(f'{tag} GIT STATUS: ')
@@ -478,9 +479,12 @@ def log_repo(f: io.TextIOBase, tag: str, repo: git.Repo):
     f.write(
         '\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\n')
 
+
 parser = argparse.ArgumentParser('REALM program repair')
-parser.add_argument('-d', '--dir', required=False, default=None, help='The directory to store generated data')
-parser.add_argument('-b', '--bug', required=False, default=None, help='The bug to repair')
+parser.add_argument('-d', '--dir', required=False, default=None,
+                    help='The directory to store generated data')
+parser.add_argument('-b', '--bug', required=False,
+                    default=None, help='The bug to repair')
 args = parser.parse_args()
 
 if __name__ == '__main__':
@@ -502,7 +506,8 @@ if __name__ == '__main__':
     from realm import generation as gen
     torch.manual_seed(0)
     random.seed(0)
-    result_dir = Path(f'results-{uuid.uuid4()}' if args.dir is None else args.dir)
+    result_dir = Path(
+        f'results-{uuid.uuid4()}' if args.dir is None else args.dir)
     if os.getenv('DEBUG') is not None:
         result_dir = Path('../results') / 'temp' / result_dir
     result_dir.mkdir(exist_ok=False, parents=True)
@@ -519,7 +524,6 @@ if __name__ == '__main__':
     #         change = changes[0]
     #     else:
     #         return False
-
 
     # Get single hunk bugs
     all_bugs = dataset.all_bugs()
@@ -549,7 +553,8 @@ if __name__ == '__main__':
         #     continue
         print(bug_id)
         gen.CHART_11 = bug_id == 'Chart-11'
-        n_samples = 200 if (n_samples_str := os.getenv('N_SAMPLES')) is None else int(n_samples_str)
+        n_samples = 200 if (n_samples_str := os.getenv(
+            'N_SAMPLES')) is None else int(n_samples_str)
         patch_groups = repair_proj(result_dir, bug_id, bug, n_samples)
         # candidate_patch_groups: List[int] = []
         # for idx, patch_group in enumerate(patch_groups):

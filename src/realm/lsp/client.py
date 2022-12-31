@@ -107,6 +107,7 @@ class LSPClient(Thread):
                     condition.acquire()
                     condition.notify()
                     condition.release()
+        print('LSP client terminated.')
             # else:
             #     print(server_response)
             #     assert False, server_response

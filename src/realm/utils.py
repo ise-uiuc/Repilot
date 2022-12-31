@@ -1,8 +1,9 @@
 import itertools
 import pickle
-from typing import Callable, Iterable, Iterator, List, Tuple, TypeVar, Optional
+from typing import Callable, Iterable, Iterator, List, Tuple, TypeVar, Optional, Any
 from unidiff.patch import Line
 from pathlib import Path
+from multiprocessing.connection import Connection
 import torch
 
 T = TypeVar('T')
@@ -142,3 +143,16 @@ class Meaningless:
 
     def __getattribute__(self, __name: str):
         return self
+
+class ConnectionWrapper:
+    def __init__(self, conn: Connection) -> None:
+        self.conn = conn
+    
+    def send(self, obj: Any) -> None:
+        self.conn.send(obj)
+
+    def send_call(self, method: str, *args: Any, **kwargs: Any) -> None:
+        self.conn.send((method, args, kwargs))
+
+    def recv(self) -> Any:
+        return self.conn.recv()
