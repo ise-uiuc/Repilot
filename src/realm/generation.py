@@ -20,6 +20,16 @@ import pickle
 import typing
 import time
 
+JAVA_KEYWORDS = {'abstract', 'continue', 'for', 'new', 'switch',
+                 'assert', 'default', 'goto', 'package', 'synchronized',
+                 'boolean', 'do', 'if', 'private', 'this',
+                 'break', 'double', 'implements', 'protected', 'throw',
+                 'byte', 'else', 'import', 'public', 'throws',
+                 'case', 'enum', 'instanceof', 'return', 'transient',
+                 'catch', 'extends', 'int', 'short', 'try',
+                 'char', 'final', 'interface', 'static', 'void',
+                 'class', 'finally', 'long', 'strictfp', 'volatile',
+                 'const' 'float', 'native', 'super', 'while'}
 
 # self.memorization.infeasible_token_ids: Dict[bytes, List[int]] = {}
 # COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
@@ -91,9 +101,9 @@ def get_completions(analyzer: Connection, uri: str, pos: spec.Position) -> Optio
     return new_completion_result['result']
 
 
-# def char_may_trigger_completion(c: str) -> bool:
-#     assert len(c) == 1
-#     return c.isalnum() or (c in ['.', '_', '$'])
+def char_may_trigger_completion(c: str) -> bool:
+    assert len(c) == 1
+    return c.isalnum() or (c in ['.', '_', '$'])
 
 
 class Realm:
@@ -117,6 +127,7 @@ class Realm:
         self.use_mem = use_memorization
         if use_memorization:
             self.mems = [Memorization.init() for _ in range(self.batch_size)]
+            self.mem = Memorization.init()
         
         # Others
         # self.all_ids = torch.tensor(range(self.model.vocab_size)).to(utils.DEVICE).repeat(self.batch_size, 1)
@@ -212,13 +223,13 @@ class Realm:
     #         # self.memorization.infeasible_token_ids[input_state] = False
     #         return False
 
-    # # def trivially_feasible(self, token: str) -> bool:
-    # #     if len(token) > 0 and not char_may_trigger_completion(token[-1]):
-    # #         return True
-    # #     elif token.strip() in JAVA_KEYWORDS:
-    # #         return True
-    # #     else:
-    # #         return False
+    def trivially_feasible(self, token: str) -> bool:
+        if len(token) > 0 and not char_may_trigger_completion(token[-1]):
+            return True
+        elif token.strip() in JAVA_KEYWORDS:
+            return True
+        else:
+            return False
     
     def plain_decode(self, gen_contexts: List[GenerationContext], probs: torch.Tensor) -> torch.LongTensor:
         next_token_ids = cast(torch.LongTensor, torch.multinomial(probs, num_samples=1).squeeze(1))
@@ -257,14 +268,28 @@ class Realm:
         # Batches remain to be checked
         next_token_ids = torch.zeros(self.batch_size, dtype=torch.long).to(utils.DEVICE)
         batch_needs_to_process = [True] * self.batch_size
+
+        def update_batch_state(batch_idx: int, next_token_id: int):
+            lsp_context = self.lsp_contexts[batch_idx]
+            text_file = lsp_context.text_file
+            gen_context = gen_contexts[batch_idx]
+            batch_needs_to_process[batch_idx] = False
+            next_token_ids[batch_idx] = next_token_id
+            next_token = self.model.token_map[next_token_id]
+            if not self.model.is_special_token(next_token):
+                text_file.add(next_token)
+                gen_context.generated_ids.append(next_token_id)
+                gen_context.generated_tokens.append(next_token)
+
         while any(batch_needs_to_process):
             trying_token_ids = torch.multinomial(probs[batch_needs_to_process], num_samples=1).squeeze(1)
+            trying_token_ids_map: List[bool] = []
             assert trying_token_ids.dtype == torch.long
             assert len(trying_token_ids) == sum(batch_needs_to_process)
-            for trying_token_ids_idx, batch_idx in (batches_to_process := list(enumerate(filter(
+            for trying_token_ids_idx, batch_idx in enumerate(filter(
                 batch_needs_to_process.__getitem__,
                 range(self.batch_size)
-            )))):
+            )):
                 assert batch_needs_to_process[batch_idx]
                 lsp_context = self.lsp_contexts[batch_idx]
                 text_file = lsp_context.text_file
@@ -273,31 +298,37 @@ class Realm:
                 trying_token_id = trying_token_ids[trying_token_ids_idx]
                 trying_token_id_item = cast(int, trying_token_id.item())
                 trying_token = self.model.token_map[trying_token_id_item]
-                realm_conn.send((Message(
-                    True,
-                    JdtLspAnalyzer.pruned_decode.__name__,
-                    text_file,
-                    gen_context,
-                    trying_token_id_item,
-                    trying_token,
-                )))
-            for trying_token_ids_idx, batch_idx in batches_to_process:
+                if self.model.is_special_token(trying_token) or self.trivially_feasible(trying_token):
+                    update_batch_state(batch_idx, trying_token_id_item)
+                    trying_token_ids_map.append(False)
+                else:
+                    realm_conn.send((Message(
+                        True,
+                        JdtLspAnalyzer.pruned_decode.__name__,
+                        text_file,
+                        gen_context,
+                        trying_token_id_item,
+                        trying_token,
+                    )))
+                    trying_token_ids_map.append(True)
+            trying_token_ids = trying_token_ids[trying_token_ids_map]
+            assert len(trying_token_ids) == sum(batch_needs_to_process)
+            for trying_token_ids_idx, batch_idx in enumerate(filter(
+                batch_needs_to_process.__getitem__,
+                range(self.batch_size)
+            )):
                 assert batch_needs_to_process[batch_idx]
                 lsp_context = self.lsp_contexts[batch_idx]
                 text_file = lsp_context.text_file
                 realm_conn = lsp_context.analyzer
                 gen_context = gen_contexts[batch_idx]
                 trying_token_id = trying_token_ids[trying_token_ids_idx]
+                trying_token_id_item = cast(int, trying_token_id.item())
                 success: bool = realm_conn.recv()
                 if success:
-                    batch_needs_to_process[batch_idx] = False
-                    next_token_ids[batch_idx] = trying_token_id
-                    next_token_id = cast(int, trying_token_id.item())
-                    next_token = self.model.token_map[next_token_id]
-                    if not self.model.is_special_token(next_token):
-                        text_file.add(next_token)
-                        gen_context.generated_ids.append(next_token_id)
-                        gen_context.generated_tokens.append(next_token)
+                    update_batch_state(batch_idx, trying_token_id_item)
+                else:
+                    probs[batch_idx][trying_token_id_item] = 0.
         return cast(torch.LongTensor, next_token_ids)
 
         # considered_token_ids: torch.Tensor = probs.nonzero(as_tuple=True)[1].unique()
