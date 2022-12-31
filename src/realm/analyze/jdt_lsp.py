@@ -1,4 +1,5 @@
 import itertools
+import time
 from multiprocessing import Process
 from multiprocessing.connection import Connection
 from os import PathLike
@@ -806,21 +807,24 @@ class JdtLspAnalyzer(Process):
             },
             'text': self.active_text.content
         })
+    
+    def is_free(self, timeout: float = 2.0) -> bool:
+        return self.client.is_free(timeout)
 
-    # TODO: opt return type
-    # TODO: this implementation not gonna work
-    def diagnose(self, timeout: float = 0.5) -> List[dict]:
-        self.save()
-        while True:
-            try:
-                diagnostics = self.client.try_recv(timeout)
-                if 'method' in diagnostics and (diagnostics := cast(
-                    spec.RequestMessage,
-                    diagnostics
-                ))['method'] == 'textDocument/publishDiagnostics' and \
-                        cast(Dict[str, str], diagnostics['params'])['uri'] == self.active_text.path.as_uri():
-                    # TODO: diagnostics LSP spec type
-                    return diagnostics['params']['diagnostics']  # type: ignore # noqa
-                # print(diagnostics)
-            except TimeoutError:
-                return None  # type: ignore
+    # # TODO: opt return type
+    # # TODO: this implementation not gonna work
+    # def diagnose(self, timeout: float = 0.5) -> List[dict]:
+    #     self.save()
+    #     while True:
+    #         try:
+    #             diagnostics = self.client.try_recv(timeout)
+    #             if 'method' in diagnostics and (diagnostics := cast(
+    #                 spec.RequestMessage,
+    #                 diagnostics
+    #             ))['method'] == 'textDocument/publishDiagnostics' and \
+    #                     cast(Dict[str, str], diagnostics['params'])['uri'] == self.active_text.path.as_uri():
+    #                 # TODO: diagnostics LSP spec type
+    #                 return diagnostics['params']['diagnostics']  # type: ignore # noqa
+    #             # print(diagnostics)
+    #         except TimeoutError:
+    #             return None  # type: ignore

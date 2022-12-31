@@ -75,6 +75,14 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration {JDT_REPO}/config_linux \
         -data .lsp_data/{uuid.uuid4()}")
 
+def wait_until_analyzer_is_free(realm_conn: Connection):
+    max_waiting_time = time.time() + 10
+    while time.time() < max_waiting_time:
+        realm_conn.send(Message(True, JdtLspAnalyzer.is_free.__name__))
+        is_analyzer_free = realm_conn.recv()
+        if is_analyzer_free:
+            break
+
 
 def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int = 1) -> List[List[TextFile]]:
     proj, id_str = bug_id.split('-')
@@ -115,13 +123,15 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     memoized: Dict[Tuple[int, int], gen.Memorization] = dict()
     for idx in range(n_patch_groups):
         print('Repair:', idx)
-        if idx != 0:
-            # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
-            # TODO: refactor textfile
-            for buggy_file in bug.buggy_files:
-                text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
-                realm_conn.send(
-                    Message(False, JdtLspAnalyzer.change.__name__, text_file))
+        # There is no writing, so it's not needed
+        # if idx != 0:
+        #     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
+        #     # TODO: refactor textfile
+        #     for buggy_file in bug.buggy_files:
+        #         text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
+        #         realm_conn.send(
+        #             Message(False, JdtLspAnalyzer.change.__name__, text_file))
+        #     # wait_until_analyzer_is_free(realm_conn)
         text_files: List[TextFile] = []
         # For each file, generated a patch for each change (in reversed order relative to change)
 
@@ -132,6 +142,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             if idx == 0:
                 realm_conn.send(
                     Message(False, JdtLspAnalyzer.open.__name__, text_file))
+                wait_until_analyzer_is_free(realm_conn)
             print(len(buggy_file.changes))
             print(buggy_file.path)
             print([(c.start, len(c.removed_lines))

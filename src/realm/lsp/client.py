@@ -94,6 +94,8 @@ class LSPClient(Thread):
     def run(self) -> None:
         while not self.stopped:
             server_response = self.recv()
+            if self.verbose:
+                print("THREAD received", str(server_response)[:50])
             if 'method' in server_response and 'id' in server_response:
                 # print(server_response)
                 server_response = cast(spec.RequestMessage, server_response)
@@ -155,17 +157,22 @@ class LSPClient(Thread):
         content = json.dumps(message)
         content = add_header(content)
         if self.verbose:
-            print('SEND:', message)
+            print('SEND:', str(message)[:50])
         with self.write_lock:
             # print(content)
             self.stdin.write(content.encode())
             self.stdin.flush()
 
-    def try_recv(self, timeout: float) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
+    def is_free(self, timeout: float) -> bool:
+        """Returns True if the thread loop is blocking for `timeout` seconds"""
         reader, _, _ = select([self.stdout], [], [], timeout)
-        if len(reader) == 0:
-            raise TimeoutError
-        return self.recv()
+        return len(reader) == 0
+
+    # def try_recv(self, timeout: float) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
+    #     reader, _, _ = select([self.stdout], [], [], timeout)
+    #     if len(reader) == 0:
+    #         raise TimeoutError
+    #     return self.recv()
 
     def recv(self) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
         with self.read_lock:
@@ -209,7 +216,7 @@ class LSPClient(Thread):
             response = self.stdout.read(content_len).decode()
             # if 'textDocument/publishDiagnostics' in response:
         if self.verbose:
-            print(response)
+            print(str(response)[:50])
         return json.loads(response)
 
     initialize = d_call('initialize', spec.InitializeParams)
