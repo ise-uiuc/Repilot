@@ -863,13 +863,13 @@ class JdtLspAnalyzer(Process):
         self,
         text_file: TextFile,
         gen_context: GenerationContext,
-        considered_probs: torch.Tensor,
-        considered_token_ids: torch.LongTensor,
+        trying_token_id: int,
+        trying_token: str,
     ) -> int:
         """Stateful method that updates the generated token ids and tokens (excluding special
         tokens) and returns the 'real' generation"""
-        generated_ids = gen_context.generated_ids
-        input_state = pickle.dumps(generated_ids)
+        # generated_ids = gen_context.generated_ids
+        # input_state = pickle.dumps(generated_ids)
         # if self.use_mem:
         #     # TODO: this needs to be fixed.. DON't use mem for now
         #     denied_trie = self.mem.denied_tokens.setdefault(
@@ -880,48 +880,64 @@ class JdtLspAnalyzer(Process):
         #         input_state, [])
         #     # Ensures that all tokens tried are feasible
         #     considered_probs[infeasible_indices] = 0.
-        # print('Start')
-        while True:
-            # `probs` will change each iteration (some entries will be assigned 0.)
-            try:
-                trying_token_indirect_id = cast(int, torch.multinomial(considered_probs, num_samples=1).item())
-                trying_token_id = considered_token_ids[trying_token_indirect_id]
-                assert trying_token_id.dtype == torch.long
-                trying_token_id_item = cast(int, trying_token_id.item())
-                assert isinstance(trying_token_id_item, int)
-            except RuntimeError as e:
-                return 2
-                # Sum of probabilities < 0
-                # if self.use_mem and len(generated_ids) > 0:
-                #     prev_state = pickle.dumps(generated_ids[:-1])
-                #     last_token_id = generated_ids[-1]
-                #     self.mem.infeasible_token_ids[prev_state].append(
-                #         last_token_id)
-                # TODO: handle this exception
-                # raise e
-            # All trying tokens are feasible
-            # if self.use_mem:
-            #     assert trying_token_id_item not in infeasible_indices
-            trying_token = self.model.token_map[trying_token_id_item]
-            if self.model.is_special_token(trying_token) or self.trivially_feasible(trying_token):
-                return trying_token_id_item
-            else:
-                text_file.add(trying_token)
-                self.change(text_file)
-                pos = text_file.get_cursor_position()
-                if self.feasible(
-                    gen_context.generated_ids,
-                    gen_context.generated_tokens,
-                    text_file.path.as_uri(),
-                    trying_token_id_item,
-                    trying_token,
-                    pos,
-                ):
-                    return trying_token_id_item
-                else:
-                    text_file.delete(len(trying_token))
-                    # By setting the probability to 0.0, this token will not be selected.
-                    considered_probs[trying_token_indirect_id] = 0.
+        # # print('Start')
+        # while True:
+        #     # `probs` will change each iteration (some entries will be assigned 0.)
+        #     try:
+        #         trying_token_indirect_id = cast(int, torch.multinomial(considered_probs, num_samples=1).item())
+        #         trying_token_id = considered_token_ids[trying_token_indirect_id]
+        #         assert trying_token_id.dtype == torch.long
+        #         trying_token_id_item = cast(int, trying_token_id.item())
+        #         assert isinstance(trying_token_id_item, int)
+        #     except RuntimeError as e:
+        #         return 0
+        #         # Sum of probabilities < 0
+        #         # if self.use_mem and len(generated_ids) > 0:
+        #         #     prev_state = pickle.dumps(generated_ids[:-1])
+        #         #     last_token_id = generated_ids[-1]
+        #         #     self.mem.infeasible_token_ids[prev_state].append(
+        #         #         last_token_id)
+        #         # TODO: handle this exception
+        #         # raise e
+        #     # All trying tokens are feasible
+        #     if self.use_mem:
+        #         assert trying_token_id_item not in infeasible_indices
+        #     trying_token = self.model.token_map[trying_token_id_item]
+        #     # print(trying_token)
+
+        if self.model.is_special_token(trying_token):
+            assert False
+        elif self.trivially_feasible(trying_token):
+            assert False
+        # elif self.use_mem and denied_trie.is_prefix_of(trying_token):
+        #     pass
+        # elif self.use_mem and trying_token_id_item in feasible_indices:
+        #     return trying_token_id_item
+        else:
+            text_file.add(trying_token)
+            self.change(text_file)
+            pos = text_file.get_cursor_position()
+            if self.feasible(
+                gen_context.generated_ids,
+                gen_context.generated_tokens,
+                text_file.path.as_uri(),
+                trying_token_id,
+                trying_token,
+                pos,
+            ):
+                return True
+            #     if self.use_mem:
+            #         feasible_indices.add(trying_token_id_item)
+            #     return trying_token_id_item
+            # else:
+            #     text_file.delete(len(trying_token))
+        return False
+        # Token is infeasible if the program runs to this line
+        # By setting the probability to 0.0, this token will not be selected.
+        # considered_probs[trying_token_indirect_id] = 0.
+        # if self.use_mem:
+        #     infeasible_indices.append(trying_token_id_item)
+        #     denied_trie.insert(trying_token)
 
     def trivially_feasible(self, token: str) -> bool:
         if len(token) > 0 and not char_may_trigger_completion(token[-1]):
@@ -944,8 +960,7 @@ class JdtLspAnalyzer(Process):
     ) -> bool:
         """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
         input_state = pickle.dumps(generated_ids + [token_id])
-        if False:
-        # if self.use_mem and input_state in self.mem.completions:
+        if self.use_mem and input_state in self.mem.completions:
             # Due to memorization, each input_state be called on this function only once
             # => token_id in self.mem.(in)feasible_token_ids[state of generated_ids]
             assert False, (generated_ids, token_id, token)

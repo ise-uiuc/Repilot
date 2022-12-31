@@ -241,39 +241,95 @@ class Realm:
     ) -> torch.LongTensor:
         """Stateful method that updates the generated token ids and tokens (excluding special
         tokens) and returns the 'real' generation"""
-        next_token_id_list: List[int] = []
-        assert len(self.lsp_contexts) == len(gen_contexts) == len(probs)
+        # if self.use_mem:
+        #     # TODO: this needs to be fixed.. DON't use mem for now
+        #     for batch_idx, mem in enumerate(self.mems):
+        #         input_state = pickle.dumps(lsp_context[batch_idx].generated_ids)
+        #         denied_trie = self.denied_tokens.setdefault(
+        #             input_state, utils.Trie())
+        #         feasible_indices = self.feasible_token_ids.setdefault(
+        #             input_state, set())
+        #         infeasible_indices = self.infeasible_token_ids.setdefault(
+        #             input_state, [])
+        #         # Ensures that all tokens tried are feasible
+        #         probs[batch_idx, infeasible_indices] = 0.
+        # print('Start')
+        # Batches remain to be checked
+        next_token_ids = torch.zeros(self.batch_size, dtype=torch.long).to(utils.DEVICE)
+        batch_needs_to_process = [True] * self.batch_size
+        while any(batch_needs_to_process):
+            trying_token_ids = torch.multinomial(probs[batch_needs_to_process], num_samples=1).squeeze(1)
+            assert trying_token_ids.dtype == torch.long
+            assert len(trying_token_ids) == sum(batch_needs_to_process)
+            for trying_token_ids_idx, batch_idx in (batches_to_process := list(enumerate(filter(
+                batch_needs_to_process.__getitem__,
+                range(self.batch_size)
+            )))):
+                assert batch_needs_to_process[batch_idx]
+                lsp_context = self.lsp_contexts[batch_idx]
+                text_file = lsp_context.text_file
+                realm_conn = lsp_context.analyzer
+                gen_context = gen_contexts[batch_idx]
+                trying_token_id = trying_token_ids[trying_token_ids_idx]
+                trying_token_id_item = cast(int, trying_token_id.item())
+                trying_token = self.model.token_map[trying_token_id_item]
+                realm_conn.send((Message(
+                    True,
+                    JdtLspAnalyzer.pruned_decode.__name__,
+                    text_file,
+                    gen_context,
+                    trying_token_id_item,
+                    trying_token,
+                )))
+            for trying_token_ids_idx, batch_idx in batches_to_process:
+                assert batch_needs_to_process[batch_idx]
+                lsp_context = self.lsp_contexts[batch_idx]
+                text_file = lsp_context.text_file
+                realm_conn = lsp_context.analyzer
+                gen_context = gen_contexts[batch_idx]
+                trying_token_id = trying_token_ids[trying_token_ids_idx]
+                success: bool = realm_conn.recv()
+                if success:
+                    batch_needs_to_process[batch_idx] = False
+                    next_token_ids[batch_idx] = trying_token_id
+                    next_token_id = cast(int, trying_token_id.item())
+                    next_token = self.model.token_map[next_token_id]
+                    if not self.model.is_special_token(next_token):
+                        text_file.add(next_token)
+                        gen_context.generated_ids.append(next_token_id)
+                        gen_context.generated_tokens.append(next_token)
+        return cast(torch.LongTensor, next_token_ids)
 
-        considered_token_ids: torch.Tensor = probs.nonzero(as_tuple=True)[1].unique()
-        considered_probs = probs.index_select(1, considered_token_ids)
-        assert considered_probs.shape[1] == considered_token_ids.shape[0]
-        # assert considered_probs.shape[1] <= self.inference_config.top_k
+        # considered_token_ids: torch.Tensor = probs.nonzero(as_tuple=True)[1].unique()
+        # considered_probs = probs.index_select(1, considered_token_ids)
+        # assert considered_probs.shape[1] == considered_token_ids.shape[0]
+        # # assert considered_probs.shape[1] <= self.inference_config.top_k
 
-        for gen_context, (text_file, realm_conn), probs_batch in zip(
-            gen_contexts,
-            self.lsp_contexts,
-            considered_probs,
-        ):
-            # TODO: check mem hit here in advance
-            realm_conn.send(Message(
-                True,
-                JdtLspAnalyzer.pruned_decode.__name__,
-                text_file,
-                gen_context,
-                probs_batch.cpu(),
-                considered_token_ids.cpu(),
-            ))
-        for batch_idx, (text_file, realm_conn) in enumerate(self.lsp_contexts):
-            next_token_id_item = realm_conn.recv()
-            next_token_id_list.append(next_token_id_item)
-            assert isinstance(next_token_id_item, int)
-            next_token = self.model.token_map[next_token_id_item]
-            if not self.model.is_special_token(next_token):
-                text_file.add(next_token)
-                gen_contexts[batch_idx].generated_ids.append(next_token_id_item)
-                gen_contexts[batch_idx].generated_tokens.append(next_token)
-        assert len(next_token_id_list) == self.batch_size
-        return torch.LongTensor(next_token_id_list).to(utils.DEVICE)
+        # for gen_context, (text_file, realm_conn), probs_batch in zip(
+        #     gen_contexts,
+        #     self.lsp_contexts,
+        #     considered_probs,
+        # ):
+        #     # TODO: check mem hit here in advance
+        #     realm_conn.send(Message(
+        #         True,
+        #         JdtLspAnalyzer.pruned_decode.__name__,
+        #         text_file,
+        #         gen_context,
+        #         probs_batch.cpu(),
+        #         considered_token_ids.cpu(),
+        #     ))
+        # for batch_idx, (text_file, realm_conn) in enumerate(self.lsp_contexts):
+        #     next_token_id_item = realm_conn.recv()
+        #     next_token_id_list.append(next_token_id_item)
+        #     assert isinstance(next_token_id_item, int)
+        #     next_token = self.model.token_map[next_token_id_item]
+        #     if not self.model.is_special_token(next_token):
+        #         text_file.add(next_token)
+        #         gen_contexts[batch_idx].generated_ids.append(next_token_id_item)
+        #         gen_contexts[batch_idx].generated_tokens.append(next_token)
+        # assert len(next_token_id_list) == self.batch_size
+        # return torch.LongTensor(next_token_id_list).to(utils.DEVICE)
 
         # generated_ids = gen_context.generated_ids
         # input_state = pickle.dumps(generated_ids)
