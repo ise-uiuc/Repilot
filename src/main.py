@@ -273,7 +273,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             'times': times,
         }, f, indent=2)
 
-    realm_conn.send(Message(False, JdtLspAnalyzer.stop_lsp.__name__))
+    realm_conn.send(None)
     return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
