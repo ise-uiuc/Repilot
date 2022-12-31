@@ -11,6 +11,7 @@ import subprocess
 import time
 import uuid
 from enum import Enum
+import multiprocessing as mp
 from multiprocessing import Pipe
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -25,7 +26,7 @@ from joblib import Parallel, delayed
 from datasets import d4j
 from init import data
 from realm import utils
-from realm.analyze.jdt_lsp import JdtLspAnalyzer, Message
+from realm.jdt_lsp import JdtLspAnalyzer, Message
 from realm.lsp import spec
 from realm.lsp.text import TextFile
 
@@ -33,7 +34,6 @@ from realm.lsp.text import TextFile
 # reduce(doc, raise_unexpected_exc=True)
 # print(doc)
 # exit()
-
 
 assert shutil.which('defects4j')
 
@@ -75,6 +75,7 @@ def server_cmd(bug_id: str) -> List[str]:
         -configuration {JDT_REPO}/config_linux \
         -data .lsp_data/{uuid.uuid4()}")
 
+
 def wait_until_analyzer_is_free(realm_conn: Connection):
     max_waiting_time = time.time() + 10
     while time.time() < max_waiting_time:
@@ -98,18 +99,30 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
     except GitCommandError:
         pass
 
-    analyzer_conn, realm_conn = cast(
-        Tuple[Connection, Connection], Pipe(duplex=True))
-    analyzer = JdtLspAnalyzer(
+    if os.getenv('PLAIN') is None:
+        connection_pairs = cast(
+            list[tuple[Connection, Connection]],
+            [Pipe(duplex=True) for _ in range(GEN_BATCH_SIZE)]
+        )
+    # analyzer_conn, realm_conn = cast(
+    #     Tuple[Connection, Connection], Pipe(duplex=True))
+    meaning_less = utils.Meaningless()
+    connection_analyzer_pairs = [(realm_conn, JdtLspAnalyzer(
         analyzer_conn,
         server_cmd(bug_id),
         bug.proj_path,
         cast(str, os.getenv('JAVA8_HOME')),
         verbose=False
-    ) if os.getenv('PLAIN') is None else cast(JdtLspAnalyzer, utils.Meaningless())
-    analyzer.start()
+    )) for analyzer_conn, realm_conn in connection_pairs] if os.getenv('PLAIN') is None else [
+        (cast(Connection, meaning_less), cast(JdtLspAnalyzer, meaning_less))
+        for _ in range(GEN_BATCH_SIZE)
+    ]
 
-    realm_conn.send(Message(False, JdtLspAnalyzer.init.__name__))
+    for _, analyzer in connection_analyzer_pairs:
+        analyzer.start()
+
+    for _realm_conn, _ in connection_analyzer_pairs:
+        _realm_conn.send(Message(False, JdtLspAnalyzer.init.__name__))
 
     patch_groups: List[List[TextFile]] = []
     time_completion: List[float] = []
@@ -139,10 +152,12 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         generation_successful = True
         for buggy_file_idx, buggy_file in enumerate(bug.buggy_files):
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
-            if idx == 0:
-                realm_conn.send(
-                    Message(False, JdtLspAnalyzer.open.__name__, text_file))
-                wait_until_analyzer_is_free(realm_conn)
+            if idx == 0 and os.getenv('PLAIN') is None:
+                for _realm_conn, _ in connection_analyzer_pairs:
+                    _realm_conn.send(
+                        Message(False, JdtLspAnalyzer.open.__name__, text_file))
+                for _realm_conn, _ in connection_analyzer_pairs:
+                    wait_until_analyzer_is_free(_realm_conn)
             print(len(buggy_file.changes))
             print(buggy_file.path)
             print([(c.start, len(c.removed_lines))
@@ -187,6 +202,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 assert text_file.content[text_file.cursor - 1] == '\n'
                 assert text_file.content[text_file.cursor] == '\n'
 
+                text_file_batch = [text_file.copy()
+                              for _ in range(GEN_BATCH_SIZE - 1)] + [text_file]
                 # lm_context = gen.LMContext(
                 #     gen.CODET5,
                 #     gen.CODET5_TOKENIZER,
@@ -194,55 +211,64 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 #     gen.CODET5_INFERENCE_CONFIG,
                 # )
                 lm_context = gen.LMContext(
-                    gen.MODEL,
+                    MODEL,
                     prefix,
                     suffix,
                     gen.INFERENCE_CONFIG
                 )
 
-                lsp_context = gen.LspContext(
+                lsp_contexts = [gen.LspContext(
                     text_file,
-                    realm_conn
-                )
+                    realm_conn 
+                ) for text_file, (realm_conn, _) in zip(
+                    text_file_batch,
+                    connection_analyzer_pairs
+                )]
+
                 if os.getenv('DRY') is not None:
                     # How to calculate batch size?
-                    batch_size = int(os.getenv('BATCH_SIZE'))  # type: ignore # noqa
-                    samples = gen.MODEL.generate(gen.MODEL.encode(prefix, suffix).repeat(
-                        batch_size, 1), max_new_tokens=50, temperature=1.0, )
+                    samples = MODEL.generate(MODEL.encode(prefix, suffix).repeat(
+                        GEN_BATCH_SIZE, 1), max_new_tokens=50, temperature=1.0, )
                     for sample in samples:
                         print(sample)
                     generation_successful = False
                     continue
 
-                repairer = gen.Realm(lm_context, lsp_context)
-                repairer.mem = mem
+                repairer = gen.Realm(lm_context, lsp_contexts, GEN_BATCH_SIZE)
+                # repairer.mem = mem
                 start_time = time.time()
                 try:
-                    completion_overhead, _, output, generation_log = repairer.repair()
+                    completion_overhead, contexts, generation_log = repairer.repair()
                 except TimeoutError:
                     print('Fatal timeout error')
                     with open('timeout-error', 'a') as f:
                         f.write("TIMEOUT\n")
-                    output = None
                     completion_overhead = []
-                if output is None:
-                    generation_successful = False
-                    break
+                    continue
+                # if output is None:
+                #     generation_successful = False
+                #     break
                 end_time = time.time()
                 times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
-                memoized[mem_id] = repairer.mem
+                # memoized[mem_id] = repairer.mem
                 # This is always True
 
-                assert (lhs := ''.join(output)) == (
-                    rhs := text_file.content[start_cursor:text_file.cursor]), (lhs, rhs)
+                # TODO: change
+                # assert (lhs := ''.join(output)) == (
+                #     rhs := text_file.content[start_cursor:text_file.cursor]), (lhs, rhs)
                 print('Success')
-                print(''.join(output))
+                assert len(contexts) == GEN_BATCH_SIZE
+                for context in contexts:
+                    print(''.join(context.generated_tokens))
+                    print()
+                # print(''.join(output))
                 # breakpoint()
                 print([f'{t:.2f}' for t in times])
             # text_file.write()
             if not generation_successful:
                 break
+            # TODO: change
             text_files.append(text_file)
             logs.append(generation_log)
         if not generation_successful:
@@ -284,7 +310,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             'times': times,
         }, f, indent=2)
 
-    realm_conn.send(None)
+    for realm_conn, _ in connection_analyzer_pairs:
+        realm_conn.send(None)
     return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
@@ -463,17 +490,18 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
     return result
 
 
-BATCH_SIZE = 3
+VAL_BATCH_SIZE = int(os.getenv('VAL_BATCH_SIZE', 3))
+GEN_BATCH_SIZE = int(os.getenv('GEN_BATCH_SIZE', 1))
 
 
 def validate_all_bugs(all_bugs: dict, proj_dir: Path):
     ret: dict = {}
     bug_dirs: List[Path] = sorted(
         list(filter(Path.is_dir, proj_dir.iterdir())), key=lambda p: int(str(p.stem)))
-    for bug_dir_batch in utils.chunked(BATCH_SIZE, bug_dirs):
+    for bug_dir_batch in utils.chunked(VAL_BATCH_SIZE, bug_dirs):
         params_list = [(bug_dir, (bug_id := proj_dir.stem + '-' + bug_dir.stem),
                         all_bugs[bug_id]) for bug_dir in bug_dir_batch]
-        results: List[dict] = Parallel(n_jobs=BATCH_SIZE)(
+        results: List[dict] = Parallel(n_jobs=VAL_BATCH_SIZE)(
             delayed(do_validation)(*params) for params in params_list)
         for (_, bug_id, _), result in zip(params_list, results):
             ret[bug_id] = result
@@ -513,8 +541,11 @@ if __name__ == '__main__':
             validate_all_bugs(all_bugs, proj_dir)
             # all_results = dict(all_results, **result)
         exit()
+    
+    # mp.set_start_method('spawn')
 
     from realm import generation as gen
+    from realm.generation_defs import MODEL
     torch.manual_seed(0)
     random.seed(0)
     result_dir = Path(

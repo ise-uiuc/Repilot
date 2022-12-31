@@ -1,14 +1,31 @@
 import itertools
-import time
+import pickle
+import subprocess
 from multiprocessing import Process
 from multiprocessing.connection import Connection
+import os
 from os import PathLike
 from pathlib import Path
-from typing import Dict, List, cast, Any, Optional
-from realm.lsp import LSPClient, spec
-import subprocess
-from realm.lsp import TextFile
+from typing import Any, Dict, List, Optional, cast
 
+import torch
+
+from realm.generation_defs import GenerationContext, Memorization
+from realm.lsp import LSPClient, TextFile, spec
+from realm.model import CodeT5Large
+from realm.generation_defs import MODEL
+from realm import utils
+
+JAVA_KEYWORDS = {'abstract', 'continue', 'for', 'new', 'switch',
+                 'assert', 'default', 'goto', 'package', 'synchronized',
+                 'boolean', 'do', 'if', 'private', 'this',
+                 'break', 'double', 'implements', 'protected', 'throw',
+                 'byte', 'else', 'import', 'public', 'throws',
+                 'case', 'enum', 'instanceof', 'return', 'transient',
+                 'catch', 'extends', 'int', 'short', 'try',
+                 'char', 'final', 'interface', 'static', 'void',
+                 'class', 'finally', 'long', 'strictfp', 'volatile',
+                 'const' 'float', 'native', 'super', 'while'}
 
 # def post_process(get_client: Callable[[C], LSPClient], rpc: Callable[Concatenate[LSPClient, P], Msg]) \
 #         -> Callable[[Callable[[Msg], T]], Callable[Concatenate[C, P], T]]:
@@ -20,25 +37,42 @@ from realm.lsp import TextFile
 #         return impl
 #     return decorator
 
+
+def char_may_trigger_completion(c: str) -> bool:
+    assert len(c) == 1
+    return c.isalnum() or (c in ['.', '_', '$'])
+
+
 class Message:
     def __init__(self, return_result: bool, method: str, *args: Any, **kwargs: Any) -> None:
         self.return_result = return_result
         self.method = method
         self.args = args
         self.kwargs = kwargs
-    
+
     def __str__(self) -> str:
         return str((self.return_result, self.method, self.args, self.kwargs))
-    
+
     def __repr__(self) -> str:
         return repr((self.return_result, self.method, self.args, self.kwargs))
+
 
 class JdtLspAnalyzer(Process):
     """Jdt LSP based Java program analyzer leveraging whole-project information.
     Now assume only one active file for diagnosis"""
     # counter = itertools.count(0)
 
-    def __init__(self, conn: Connection, server_cmd: List[str], proj_path: PathLike, java_home: str, verbose: bool = False) -> None:
+    def __init__(
+        self,
+        conn: Connection,
+        server_cmd: List[str],
+        proj_path: PathLike,
+        java_home: str,
+        model: CodeT5Large = MODEL,
+        n_hunks: int = 1,
+        use_mem: bool = os.getenv('NO_MEM') is None,
+        verbose: bool = False
+    ) -> None:
         super().__init__()
         self.conn = conn
         self.server_cmd = server_cmd
@@ -46,6 +80,19 @@ class JdtLspAnalyzer(Process):
         self.java_home = java_home
         self.verbose = verbose
         self.counter = itertools.count(0)
+
+        self.model = model
+        self.use_mem = use_mem
+        self.n_hunks = n_hunks
+        self.mems = [Memorization.init() for _ in range(n_hunks)]
+        self.active_hunk = 0
+
+    @property
+    def mem(self) -> Memorization:
+        return self.mems[self.active_hunk]
+
+    def set_active_hunk(self, new_hunk_idx: int):
+        self.active_hunk = new_hunk_idx
 
     def init_lsp(self):
         self.process = subprocess.Popen(
@@ -61,17 +108,18 @@ class JdtLspAnalyzer(Process):
         self.client.shutdown(None)
         self.client.exit(None)
         self.process.terminate()
-    
+
     def run(self) -> None:
         # Start the thread
         self.init_lsp()
-        while True: 
+        while True:
             message: Optional[Message] = self.conn.recv()
-            # print('RECEIVED:', message)
             if message is None:
                 break
+            # print('RECEIVED:', message.method)
             assert isinstance(message, Message)
-            result = getattr(self, message.method)(*message.args, **message.kwargs)
+            result = getattr(self, message.method)(
+                *message.args, **message.kwargs)
             if message.return_result:
                 # print('RESULT:', result)
                 self.conn.send(result)
@@ -796,7 +844,7 @@ class JdtLspAnalyzer(Process):
                 'text': text.content,
             }]
         })
-    
+
     def completion(self, params: spec.CompletionParams) -> spec.ResponseMessage:
         return self.client.newCompletion(params)
 
@@ -807,9 +855,158 @@ class JdtLspAnalyzer(Process):
             },
             'text': self.active_text.content
         })
-    
+
     def is_free(self, timeout: float = 2.0) -> bool:
         return self.client.is_free(timeout)
+
+    def pruned_decode(
+        self,
+        text_file: TextFile,
+        gen_context: GenerationContext,
+        considered_probs: torch.Tensor,
+        considered_token_ids: torch.LongTensor,
+    ) -> int:
+        """Stateful method that updates the generated token ids and tokens (excluding special
+        tokens) and returns the 'real' generation"""
+        generated_ids = gen_context.generated_ids
+        input_state = pickle.dumps(generated_ids)
+        # if self.use_mem:
+        #     # TODO: this needs to be fixed.. DON't use mem for now
+        #     denied_trie = self.mem.denied_tokens.setdefault(
+        #         input_state, utils.Trie())
+        #     feasible_indices = self.mem.feasible_token_ids.setdefault(
+        #         input_state, set())
+        #     infeasible_indices = self.mem.infeasible_token_ids.setdefault(
+        #         input_state, [])
+        #     # Ensures that all tokens tried are feasible
+        #     considered_probs[infeasible_indices] = 0.
+        # print('Start')
+        while True:
+            # `probs` will change each iteration (some entries will be assigned 0.)
+            try:
+                trying_token_indirect_id = cast(int, torch.multinomial(considered_probs, num_samples=1).item())
+                trying_token_id = considered_token_ids[trying_token_indirect_id]
+                assert trying_token_id.dtype == torch.long
+                trying_token_id_item = cast(int, trying_token_id.item())
+                assert isinstance(trying_token_id_item, int)
+            except RuntimeError as e:
+                return 2
+                # Sum of probabilities < 0
+                # if self.use_mem and len(generated_ids) > 0:
+                #     prev_state = pickle.dumps(generated_ids[:-1])
+                #     last_token_id = generated_ids[-1]
+                #     self.mem.infeasible_token_ids[prev_state].append(
+                #         last_token_id)
+                # TODO: handle this exception
+                # raise e
+            # All trying tokens are feasible
+            # if self.use_mem:
+            #     assert trying_token_id_item not in infeasible_indices
+            trying_token = self.model.token_map[trying_token_id_item]
+            if self.model.is_special_token(trying_token) or self.trivially_feasible(trying_token):
+                return trying_token_id_item
+            else:
+                text_file.add(trying_token)
+                self.change(text_file)
+                pos = text_file.get_cursor_position()
+                if self.feasible(
+                    gen_context.generated_ids,
+                    gen_context.generated_tokens,
+                    text_file.path.as_uri(),
+                    trying_token_id_item,
+                    trying_token,
+                    pos,
+                ):
+                    return trying_token_id_item
+                else:
+                    text_file.delete(len(trying_token))
+                    # By setting the probability to 0.0, this token will not be selected.
+                    considered_probs[trying_token_indirect_id] = 0.
+
+    def trivially_feasible(self, token: str) -> bool:
+        if len(token) > 0 and not char_may_trigger_completion(token[-1]):
+            return True
+        elif token.strip() in JAVA_KEYWORDS:
+            return True
+        else:
+            return False
+
+    def feasible(
+        self,
+        # generation_log: GenerationLog,
+        generated_ids: List[int],
+        generated_tokens: List[str],
+        uri: str,
+        token_id: int,
+        token: str,
+        pos: spec.Position,
+        # completion_overhead: List[float],
+    ) -> bool:
+        """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
+        input_state = pickle.dumps(generated_ids + [token_id])
+        if False:
+        # if self.use_mem and input_state in self.mem.completions:
+            # Due to memorization, each input_state be called on this function only once
+            # => token_id in self.mem.(in)feasible_token_ids[state of generated_ids]
+            assert False, (generated_ids, token_id, token)
+            completions = self.mem.completions[input_state]
+        else:
+            completions = self.get_completions(uri, pos)
+            self.mem.completions[input_state] = completions
+            # completion_overhead.append(time.time() - start_time)
+        context = {
+            'ids': [id for id in generated_ids],
+            'text': ''.join(generated_tokens),
+            'new_token': token
+        }
+        print(context)
+        if completions is None:
+            # generation_log.append({
+            #     'context': context,
+            #     'result': None,
+            # })
+            print('UNKNOWN:', token)
+            # breakpoint()
+            return True
+        filtered_completions = [
+            c for c in completions if c['target'].startswith(c['source'])]
+        # else:
+        #     print(uri)
+        #     print(completion_result['error'])
+        #     print(completion_result['error']['data'])
+        #     raise RuntimeError
+        if len(filtered_completions) > 0:
+            # generation_log.append({
+            #     'context': context,
+            #     'result': filtered_completions,
+            # })
+            # , token, completions)
+            print('Accepted:', token,
+                  f"{filtered_completions[0]['source']} -> {filtered_completions[0]['target']}")
+            # if 'lastFraction' in completions:
+            #     breakpoint()
+            # print("Yes!")
+            # print(completions)
+            # self.memorization.infeasible_token_ids[input_state] = True
+            return True
+        else:
+            # generation_log.append({
+            #     'context': context,
+            #     'result': [],
+            # })
+            # print('=======================DENIED============================')
+            print('Denied', token)  # , token, completions)
+            # self.memorization.infeasible_token_ids[input_state] = False
+            return False
+
+    def get_completions(self, uri: str, pos: spec.Position) -> Optional[List[dict]]:
+        new_completion_result = self.completion({
+            'textDocument': {
+                'uri': uri
+            },
+            'position': pos,
+        })
+        return new_completion_result['result']  # type: ignore # noqa
 
     # # TODO: opt return type
     # # TODO: this implementation not gonna work
