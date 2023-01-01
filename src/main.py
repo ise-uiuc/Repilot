@@ -235,7 +235,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                     continue
 
                 repairer = gen.Realm(lm_context, lsp_contexts, GEN_BATCH_SIZE)
-                # repairer.mem = mem
+                repairer.mem = mem
                 start_time = time.time()
                 try:
                     completion_overhead, contexts, generation_log = repairer.repair()
@@ -251,7 +251,8 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 end_time = time.time()
                 times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
-                # memoized[mem_id] = repairer.mem
+                # TODO: make this inside the repairer
+                memoized[mem_id] = repairer.mem
                 # This is always True
 
                 # TODO: change

@@ -226,6 +226,7 @@ class Realm:
     def trivially_feasible(self, token: str) -> bool:
         if len(token) > 0 and not char_may_trigger_completion(token[-1]):
             return True
+        # TODO: Can further optimize (preprocessing token_map)
         elif token.strip() in JAVA_KEYWORDS:
             return True
         else:
@@ -282,8 +283,32 @@ class Realm:
                 gen_context.generated_tokens.append(next_token)
 
         while any(batch_needs_to_process):
+            # all_infeasible_indices: List[Tuple[int, int]] = []
+            if self.use_mem:
+                mem_infeasible_token_ids: List[List[int]] = []
+                mem_feasible_token_ids: List[Set[int]] = []
+                # mem_completions: List[Optional[List[dict]]] = []
+                mem_denied_tokens: List[utils.Trie] = []
+                for batch_idx in range(self.batch_size):
+                    gen_context = gen_contexts[batch_idx]
+                    input_state = pickle.dumps(gen_context.generated_ids)
+
+                    denied_trie = self.mem.denied_tokens.setdefault(input_state, utils.Trie())
+                    feasible_indices = self.mem.feasible_token_ids.setdefault(input_state, set())
+                    infeasible_indices = self.mem.infeasible_token_ids.setdefault(input_state, [])
+
+                    mem_denied_tokens.append(denied_trie)
+                    mem_feasible_token_ids.append(feasible_indices)
+                    mem_infeasible_token_ids.append(infeasible_indices)
+
+                    probs[batch_idx, infeasible_indices] = 0.
+                    # Ensures that all tokens tried are feasible
+                assert probs.shape == torch.Size([self.batch_size, self.model.vocab_size])
+                # probs[all_infeasible_indices] = 0.
+            # TODO: chances are that certain rows accumulated probabilities <= 0 and remember to join subprocesses
             trying_token_ids = torch.multinomial(probs[batch_needs_to_process], num_samples=1).squeeze(1)
             trying_token_ids_map: List[bool] = []
+            skipped_batches = [False] * self.batch_size
             assert trying_token_ids.dtype == torch.long
             assert len(trying_token_ids) == sum(batch_needs_to_process)
             for trying_token_ids_idx, batch_idx in enumerate(filter(
@@ -298,9 +323,17 @@ class Realm:
                 trying_token_id = trying_token_ids[trying_token_ids_idx]
                 trying_token_id_item = cast(int, trying_token_id.item())
                 trying_token = self.model.token_map[trying_token_id_item]
-                if self.model.is_special_token(trying_token) or self.trivially_feasible(trying_token):
+                if (
+                    self.model.is_special_token(trying_token)
+                    or self.trivially_feasible(trying_token)
+                    or (self.use_mem and trying_token_id_item in mem_feasible_token_ids[batch_idx])
+                ):
                     update_batch_state(batch_idx, trying_token_id_item)
+                    skipped_batches[batch_idx] = True
                     trying_token_ids_map.append(False)
+                elif self.use_mem and mem_denied_tokens[batch_idx].is_prefix_of(trying_token):
+                    skipped_batches[batch_idx] = True
+                    mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
                 else:
                     realm_conn.send((Message(
                         True,
@@ -317,6 +350,8 @@ class Realm:
                 batch_needs_to_process.__getitem__,
                 range(self.batch_size)
             )):
+                if skipped_batches[batch_idx]:
+                    continue
                 assert batch_needs_to_process[batch_idx]
                 lsp_context = self.lsp_contexts[batch_idx]
                 text_file = lsp_context.text_file
@@ -327,8 +362,12 @@ class Realm:
                 success: bool = realm_conn.recv()
                 if success:
                     update_batch_state(batch_idx, trying_token_id_item)
+                    if self.use_mem:
+                        mem_feasible_token_ids[batch_idx].add(trying_token_id_item)
                 else:
-                    probs[batch_idx][trying_token_id_item] = 0.
+                    probs[batch_idx, trying_token_id_item] = 0.
+                    if self.use_mem:
+                        mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
         return cast(torch.LongTensor, next_token_ids)
 
         # considered_token_ids: torch.Tensor = probs.nonzero(as_tuple=True)[1].unique()
@@ -511,10 +550,10 @@ class Realm:
                 # shape: (1)
                 next_token_ids = self.plain_decode(gen_contexts, probs)
             else:
-                try:
+                # try:
                     next_token_ids = self.pruned_decode(gen_contexts, probs)
-                except RuntimeError:
-                    return completion_overhead, [], None, generation_log
+                # except RuntimeError:
+                #     return completion_overhead, [], None, generation_log
 
 
             # finished sentences should have their next token be a padding token
