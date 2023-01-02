@@ -83,7 +83,7 @@ def get_completions(analyzer: Connection, uri: str, pos: spec.Position) -> Optio
         'position': pos,
     }))
     new_completion_result: dict = analyzer.recv()
- 
+
     # except TimeoutError:
     #     return None
     # finally:
@@ -107,6 +107,8 @@ def char_may_trigger_completion(c: str) -> bool:
 
 
 class Realm:
+    """Used only for one time generation now"""
+
     def __init__(
         self,
         lm_context: LMContext,
@@ -118,7 +120,8 @@ class Realm:
         self.model = lm_context.model
         self.inference_config = lm_context.inference_config
         self.batch_size = batch_size
-        self.inputs = self.model.encode(lm_context.prefix, lm_context.suffix).repeat(batch_size, 1)
+        self.inputs = self.model.encode(
+            lm_context.prefix, lm_context.suffix).repeat(batch_size, 1)
         self.lsp_contexts = lsp_contexts
         # self.analyzer = lsp_context.analyzer
         # self.text_file = lsp_context.text_file
@@ -126,10 +129,10 @@ class Realm:
         # Memorizations
         self.use_mem = use_memorization
         if use_memorization:
-            self.mems = [Memorization.init() for _ in range(self.batch_size)]
             self.mem = Memorization.init()
-        
+
         # Others
+        self.batch_is_failed = [False] * self.batch_size
         # self.all_ids = torch.tensor(range(self.model.vocab_size)).to(utils.DEVICE).repeat(self.batch_size, 1)
 
     def repair(self) -> Generation:
@@ -231,9 +234,10 @@ class Realm:
             return True
         else:
             return False
-    
+
     def plain_decode(self, gen_contexts: List[GenerationContext], probs: torch.Tensor) -> torch.LongTensor:
-        next_token_ids = cast(torch.LongTensor, torch.multinomial(probs, num_samples=1).squeeze(1))
+        next_token_ids = cast(torch.LongTensor, torch.multinomial(
+            probs, num_samples=1).squeeze(1))
         assert next_token_ids.dtype == torch.long
         assert next_token_ids.shape == torch.Size((self.batch_size,))
         for batch_idx, next_token_id in enumerate(next_token_ids):
@@ -242,7 +246,8 @@ class Realm:
             next_token = self.model.token_map[next_token_id_item]
             if not self.model.is_special_token(next_token):
                 self.lsp_contexts[batch_idx].text_file.add(next_token)
-                gen_contexts[batch_idx].generated_ids.append(next_token_id_item)
+                gen_contexts[batch_idx].generated_ids.append(
+                    next_token_id_item)
                 gen_contexts[batch_idx].generated_tokens.append(next_token)
         return next_token_ids
 
@@ -253,9 +258,18 @@ class Realm:
     ) -> torch.LongTensor:
         """Stateful method that updates the generated token ids and tokens (excluding special
         tokens) and returns the 'real' generation"""
-        next_token_ids = torch.zeros(self.batch_size, dtype=torch.long).to(utils.DEVICE)
+        special_value = self.model.vocab_size
+        next_token_ids = torch.full(
+            (self.batch_size,),
+            special_value,
+            dtype=torch.long
+        ).to(utils.DEVICE)
+        # TODO: change the hard coded `2`
+        next_token_ids[self.batch_is_failed] = 2
         # Keeps track of batches whose next token is not determined
-        batch_needs_to_process = [True] * self.batch_size
+        batch_needs_to_process = [
+            not failed for failed in self.batch_is_failed]
+        assert len(batch_needs_to_process) == self.batch_size
 
         # The next token of batch `batch_idx` is set to `next_token_id`
         def update_batch_state(batch_idx: int, next_token_id: int):
@@ -267,6 +281,7 @@ class Realm:
                 gen_contexts[batch_idx].generated_ids.append(next_token_id)
                 gen_contexts[batch_idx].generated_tokens.append(next_token)
 
+        # Invariant: not batch_needs_to_process[idx] === next_token_ids[idx] is determined
         while any(batch_needs_to_process):
             # all_infeasible_indices: List[Tuple[int, int]] = []
             if self.use_mem:
@@ -278,9 +293,12 @@ class Realm:
                     gen_context = gen_contexts[batch_idx]
                     input_state = pickle.dumps(gen_context.generated_ids)
 
-                    denied_trie = self.mem.denied_tokens.setdefault(input_state, utils.Trie())
-                    feasible_indices = self.mem.feasible_token_ids.setdefault(input_state, set())
-                    infeasible_indices = self.mem.infeasible_token_ids.setdefault(input_state, [])
+                    denied_trie = self.mem.denied_tokens.setdefault(
+                        input_state, utils.Trie())
+                    feasible_indices = self.mem.feasible_token_ids.setdefault(
+                        input_state, set())
+                    infeasible_indices = self.mem.infeasible_token_ids.setdefault(
+                        input_state, [])
 
                     mem_denied_tokens.append(denied_trie)
                     mem_feasible_token_ids.append(feasible_indices)
@@ -288,11 +306,34 @@ class Realm:
 
                     # Ensures that all tokens tried are feasible
                     probs[batch_idx, infeasible_indices] = 0.
-                assert probs.shape == torch.Size([self.batch_size, self.model.vocab_size])
-            
+
+            assert probs.shape == torch.Size(
+                [self.batch_size, self.model.vocab_size])
             # TODO: chances are that certain rows accumulated probabilities <= 0 and remember to join subprocesses
             # The sampled ids corresponding to the batches that need to process
-            trying_token_ids = torch.multinomial(probs[batch_needs_to_process], num_samples=1).squeeze(1)
+            zero_prob_batches = (probs.sum(dim=-1) == 0.).nonzero().squeeze(1)
+            assert len(zero_prob_batches.shape) == 1
+            for batch_idx_tensor in zero_prob_batches:
+                batch_idx = batch_idx_tensor.item()
+                assert isinstance(batch_idx, int)
+                if not self.batch_is_failed[batch_idx]:
+                    self.batch_is_failed[batch_idx] = True
+                    if batch_needs_to_process[batch_idx]:
+                        batch_needs_to_process[batch_idx] = False
+                        generated_ids = gen_contexts[batch_idx].generated_ids
+                        # Make the current state infeasible
+                        if self.use_mem and len(generated_ids) > 0:
+                            prev_state = pickle.dumps(generated_ids[:-1])
+                            last_token_id = generated_ids[-1]
+                            self.mem.infeasible_token_ids[prev_state].append(
+                                last_token_id)
+                        # TODO: change hard coded value
+                        next_token_ids[batch_idx] = 2
+            if not any(batch_needs_to_process):
+                break
+            probs_to_process = probs[batch_needs_to_process]
+            trying_token_ids = torch.multinomial(
+                probs_to_process, num_samples=1).squeeze(1)
             assert trying_token_ids.dtype == torch.long
             assert len(trying_token_ids) == sum(batch_needs_to_process)
 
@@ -301,7 +342,8 @@ class Realm:
                 batch_is_denied = [False] * self.batch_size
 
             # The map from batch_idx to trying_token_ids_idx
-            trying_token_ids_idx_given_batch: List[int | bytes] = [b''] * self.batch_size
+            trying_token_ids_idx_given_batch: List[int | bytes] = [
+                b''] * self.batch_size
 
             # Use memorization to do preprocessing and prepare for parallel checking
             # `trying_token_ids_idx`s are the rank position of each `batch_idx` where `batch_needs_to_process[batch_idx]`
@@ -321,7 +363,8 @@ class Realm:
                 ):
                     update_batch_state(batch_idx, trying_token_id_item)
                 elif self.use_mem and mem_denied_tokens[batch_idx].is_prefix_of(trying_token):
-                    mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
+                    mem_infeasible_token_ids[batch_idx].append(
+                        trying_token_id_item)
                     batch_is_denied[batch_idx] = True
                 else:
                     lsp_context = self.lsp_contexts[batch_idx]
@@ -340,7 +383,8 @@ class Realm:
                 assert batch_needs_to_process[batch_idx]
                 if self.use_mem and batch_is_denied[batch_idx]:
                     continue
-                trying_token_ids_idx = cast(int, trying_token_ids_idx_given_batch[batch_idx])
+                trying_token_ids_idx = cast(
+                    int, trying_token_ids_idx_given_batch[batch_idx])
                 assert isinstance(trying_token_ids_idx, int)
                 trying_token_id = trying_token_ids[trying_token_ids_idx]
                 trying_token_id_item = cast(int, trying_token_id.item())
@@ -348,12 +392,15 @@ class Realm:
                 if success:
                     update_batch_state(batch_idx, trying_token_id_item)
                     if self.use_mem:
-                        mem_feasible_token_ids[batch_idx].add(trying_token_id_item)
+                        mem_feasible_token_ids[batch_idx].add(
+                            trying_token_id_item)
                 else:
                     probs[batch_idx, trying_token_id_item] = 0.
                     if self.use_mem:
-                        mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
+                        mem_infeasible_token_ids[batch_idx].append(
+                            trying_token_id_item)
                         mem_denied_tokens[batch_idx].insert(trying_token)
+        assert (next_token_ids == special_value).sum().item() == 0
         return cast(torch.LongTensor, next_token_ids)
 
         # considered_token_ids: torch.Tensor = probs.nonzero(as_tuple=True)[1].unique()
@@ -523,30 +570,33 @@ class Realm:
             if temperature != 1.0:
                 next_token_scores = TemperatureLogitsWarper(
                     temperature)(input_ids, next_token_scores)
-            next_token_scores = TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1)(input_ids, next_token_scores)
+            next_token_scores = TopKLogitsWarper(
+                top_k=top_k, min_tokens_to_keep=1)(input_ids, next_token_scores)
             # next_token_scores = logits_warper(input_ids, next_token_scores)
             # assert len(next_token_scores) == 1
             # scores = next_token_scores[0]
             # BATCH_SIZE * TOKEN_MAP_SIZE
             probs = nn.functional.softmax(next_token_scores, dim=-1)
             assert len(probs.shape) == 2
-            assert probs.shape == torch.Size((self.batch_size, model.vocab_size))
+            assert probs.shape == torch.Size(
+                (self.batch_size, model.vocab_size))
 
             if os.getenv('PLAIN') is not None or CHART_11:  # or count > 10:
                 # shape: (1)
                 next_token_ids = self.plain_decode(gen_contexts, probs)
             else:
                 # try:
-                    next_token_ids = self.pruned_decode(gen_contexts, probs)
+                next_token_ids = self.pruned_decode(gen_contexts, probs)
                 # except RuntimeError:
                 #     return completion_overhead, [], None, generation_log
-
 
             # finished sentences should have their next token be a padding token
             if eos_token_id is not None:
                 if pad_token_id is None:
-                    raise ValueError("If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
-                next_token_ids = next_token_ids * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
+                    raise ValueError(
+                        "If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
+                next_token_ids = next_token_ids * unfinished_sequences + \
+                    pad_token_id * (1 - unfinished_sequences)
 
             # update generated ids, model inputs, and length for next step
             # TODO: modify use_cache for active completion
@@ -563,8 +613,11 @@ class Realm:
 
             # if eos_token was found in one sentence, set sentence to finished
             if eos_token_id is not None:
-                unfinished_sequences = unfinished_sequences.mul((next_token_ids != eos_token_id).long())
-                unfinished_sequences = unfinished_sequences.mul((next_token_ids != 32098).long())
+                # TODO: change hard coded values
+                unfinished_sequences = unfinished_sequences.mul(
+                    (next_token_ids != eos_token_id).long())
+                unfinished_sequences = unfinished_sequences.mul(
+                    (next_token_ids != 32098).long())
 
             # stop when each sentence is finished, or if we exceed the maximum length
             if unfinished_sequences.max() == 0 or len(input_ids[0]) == max_length:
