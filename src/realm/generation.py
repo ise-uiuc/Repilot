@@ -284,6 +284,8 @@ class Realm:
         # Invariant: not batch_needs_to_process[idx] === next_token_ids[idx] is determined
         while any(batch_needs_to_process):
             # all_infeasible_indices: List[Tuple[int, int]] = []
+            start = time.perf_counter()
+            probs_assign = 0.
             if self.use_mem:
                 mem_infeasible_token_ids: List[List[int]] = []
                 mem_feasible_token_ids: List[Set[int]] = []
@@ -305,13 +307,19 @@ class Realm:
                     mem_infeasible_token_ids.append(infeasible_indices)
 
                     # Ensures that all tokens tried are feasible
+                    _start = time.perf_counter()
                     probs[batch_idx, infeasible_indices] = 0.
+                    probs_assign += time.perf_counter() - _start
+            print('Mem first preprocess:', time.perf_counter() - start)
+            print('Probability assigning:', probs_assign)
 
+            start = time.perf_counter()
             assert probs.shape == torch.Size(
                 [self.batch_size, self.model.vocab_size])
             # TODO: chances are that certain rows accumulated probabilities <= 0 and remember to join subprocesses
             # The sampled ids corresponding to the batches that need to process
             zero_prob_batches = (probs.sum(dim=-1) == 0.).nonzero().squeeze(1)
+            print('Batch zeroing:', time.perf_counter() - start)
             assert len(zero_prob_batches.shape) == 1
             for batch_idx_tensor in zero_prob_batches:
                 batch_idx = batch_idx_tensor.item()
@@ -329,6 +337,8 @@ class Realm:
                                 last_token_id)
                         # TODO: change hard coded value
                         next_token_ids[batch_idx] = 2
+            
+            start = time.perf_counter()
             if not any(batch_needs_to_process):
                 break
             probs_to_process = probs[batch_needs_to_process]
@@ -344,28 +354,41 @@ class Realm:
             # The map from batch_idx to trying_token_ids_idx
             trying_token_ids_idx_given_batch: List[int | bytes] = [
                 b''] * self.batch_size
+            
+            print('Decoding:', time.perf_counter() - start)
 
             # Use memorization to do preprocessing and prepare for parallel checking
             # `trying_token_ids_idx`s are the rank position of each `batch_idx` where `batch_needs_to_process[batch_idx]`
+
+            start = time.perf_counter()
+            gpu_time = 0.
+            infeasible_time = 0.
+            batch_time = 0.
             for trying_token_ids_idx, batch_idx in enumerate(filter(
                 batch_needs_to_process.__getitem__,
                 range(self.batch_size)
             )):
                 trying_token_ids_idx_given_batch[batch_idx] = trying_token_ids_idx
                 assert batch_needs_to_process[batch_idx]
+                _start = time.perf_counter()
                 trying_token_id = trying_token_ids[trying_token_ids_idx]
                 trying_token_id_item = cast(int, trying_token_id.item())
                 trying_token = self.model.token_map[trying_token_id_item]
+                gpu_time += time.perf_counter() - _start
                 if (
                     self.model.is_special_token(trying_token)
                     or self.trivially_feasible(trying_token)
                     or (self.use_mem and trying_token_id_item in mem_feasible_token_ids[batch_idx])
                 ):
+                    _start = time.perf_counter()
                     update_batch_state(batch_idx, trying_token_id_item)
+                    batch_time += time.perf_counter() - _start
                 elif self.use_mem and mem_denied_tokens[batch_idx].is_prefix_of(trying_token):
+                    _start = time.perf_counter()
                     mem_infeasible_token_ids[batch_idx].append(
                         trying_token_id_item)
                     batch_is_denied[batch_idx] = True
+                    infeasible_time += time.perf_counter() - _start
                 else:
                     lsp_context = self.lsp_contexts[batch_idx]
                     lsp_context.analyzer.send((Message(
@@ -376,6 +399,11 @@ class Realm:
                         trying_token_id_item,
                         trying_token,
                     )))
+            print('Real Initialization:', time.perf_counter() - start)
+            print('GPU time in real init:', gpu_time)
+            print('Infeasible checking time in real init:', infeasible_time)
+            print('Batch time in real init:', batch_time)
+            start = time.perf_counter()
             for batch_idx in filter(
                 batch_needs_to_process.__getitem__,
                 range(self.batch_size)
@@ -400,6 +428,7 @@ class Realm:
                         mem_infeasible_token_ids[batch_idx].append(
                             trying_token_id_item)
                         mem_denied_tokens[batch_idx].insert(trying_token)
+            print('Checking:', time.perf_counter() - start)
         assert (next_token_ids == special_value).sum().item() == 0
         return cast(torch.LongTensor, next_token_ids)
 
@@ -583,10 +612,14 @@ class Realm:
 
             if os.getenv('PLAIN') is not None or CHART_11:  # or count > 10:
                 # shape: (1)
+                start = time.perf_counter()
                 next_token_ids = self.plain_decode(gen_contexts, probs)
             else:
                 # try:
+                start = time.perf_counter()
                 next_token_ids = self.pruned_decode(gen_contexts, probs)
+                print('Time:', time.perf_counter() - start)
+                # breakpoint()
                 # except RuntimeError:
                 #     return completion_overhead, [], None, generation_log
 

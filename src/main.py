@@ -72,12 +72,21 @@ def server_cmd(bug_id: str) -> List[str]:
         -data .lsp_data/{uuid.uuid4()}")
 
 
-def wait_until_analyzer_is_free(realm_conn: Connection):
-    max_waiting_time = time.perf_counter() + 10
-    while time.perf_counter() < max_waiting_time:
-        realm_conn.send(Message(True, JdtLspAnalyzer.is_free.__name__))
-        is_analyzer_free = realm_conn.recv()
-        if is_analyzer_free:
+def wait_until_all_analyzers_free(realm_conns: List[Connection], max_waiting_time: float = 20, free_check_time: float = 1.0):
+    batch_is_free = [False] * len(realm_conns)
+    start_time = time.perf_counter()
+    print('Waiting until all analyzers are free...')
+    while time.perf_counter() < start_time + max_waiting_time:
+        for idx, realm_conn in enumerate(realm_conns):
+            if not batch_is_free[idx]:
+                realm_conn.send(Message(True, JdtLspAnalyzer.is_free.__name__, free_check_time))
+        
+        for idx, realm_conn in enumerate(realm_conns):
+            if not batch_is_free[idx]:
+                is_free = realm_conn.recv()
+                batch_is_free[idx] = is_free
+        if all(batch_is_free):
+            print('All analyzers are free:', time.perf_counter() - start_time)
             break
 
 
@@ -113,6 +122,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         (cast(Connection, meaning_less), cast(JdtLspAnalyzer, meaning_less))
         for _ in range(GEN_BATCH_SIZE)
     ]
+    connections = [_realm_conn for _realm_conn, _ in connection_analyzer_pairs]
 
     for _, analyzer in connection_analyzer_pairs:
         analyzer.start()
@@ -134,6 +144,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         print('Repair:', idx)
         # There is no writing, so it's not needed
         # if idx != 0:
+        #     wait_until_all_analyzers_free(connections, 5, 0.5)
         #     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
         #     # TODO: refactor textfile
         #     for buggy_file in bug.buggy_files:
@@ -148,12 +159,12 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
         generation_successful = True
         for buggy_file_idx, buggy_file in enumerate(bug.buggy_files):
             text_file = TextFile(Path(bug.proj_path) / buggy_file.path)
+            original_text_file = text_file.copy()
             if idx == 0 and os.getenv('PLAIN') is None:
                 for _realm_conn, _ in connection_analyzer_pairs:
                     _realm_conn.send(
                         Message(False, JdtLspAnalyzer.open.__name__, text_file))
-                for _realm_conn, _ in connection_analyzer_pairs:
-                    wait_until_analyzer_is_free(_realm_conn)
+                wait_until_all_analyzers_free(connections)
             print(len(buggy_file.changes))
             print(buggy_file.path)
             print([(c.start, len(c.removed_lines))
@@ -262,6 +273,9 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 # print(''.join(output))
                 # breakpoint()
                 print([f'{t:.2f}' for t in times])
+                for _realm_conn, _ in connection_analyzer_pairs:
+                    _realm_conn.send(
+                        Message(False, JdtLspAnalyzer.change.__name__, original_text_file))
             # text_file.write()
             if not generation_successful:
                 break

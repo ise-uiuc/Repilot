@@ -224,7 +224,7 @@ class JdtLspAnalyzer(Process):
                 },
                 "textDocument": {
                     "publishDiagnostics": {
-                        "relatedInformation": True,
+                        "relatedInformation": False,
                         "versionSupport": False,
                         "tagSupport": {
                             "valueSet": [
@@ -232,8 +232,8 @@ class JdtLspAnalyzer(Process):
                                 2
                             ]
                         },
-                        "codeDescriptionSupport": True,
-                        "dataSupport": True
+                        "codeDescriptionSupport": False,
+                        "dataSupport": False
                     },
                     "synchronization": {
                         "dynamicRegistration": True,
@@ -507,13 +507,13 @@ class JdtLspAnalyzer(Process):
                 "window": {
                     "showMessage": {
                         "messageActionItem": {
-                            "additionalPropertiesSupport": True
+                            "additionalPropertiesSupport": False
                         }
                     },
                     "showDocument": {
-                        "support": True
+                        "support": False
                     },
-                    "workDoneProgress": True
+                    "workDoneProgress": False
                 },
                 "general": {
                     "staleRequestSupport": {
@@ -703,10 +703,10 @@ class JdtLspAnalyzer(Process):
                             ]
                         },
                         "foldingRange": {
-                            "enabled": True
+                            "enabled": False
                         },
                         "progressReports": {
-                            "enabled": True
+                            "enabled": False
                         },
                         "codeGeneration": {
                             "hashCodeEquals": {
@@ -728,7 +728,7 @@ class JdtLspAnalyzer(Process):
                             "enabled": True
                         },
                         "showBuildStatusOnStart": {
-                            "enabled": "notification"
+                            "enabled": False
                         },
                         "server": {
                             "launchMode": "Hybrid"
@@ -856,7 +856,7 @@ class JdtLspAnalyzer(Process):
             'text': self.active_text.content
         })
 
-    def is_free(self, timeout: float = 2.0) -> bool:
+    def is_free(self, timeout) -> bool:
         return self.client.is_free(timeout)
 
     def pruned_decode(
