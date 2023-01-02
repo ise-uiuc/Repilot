@@ -30,11 +30,7 @@ from realm.jdt_lsp import JdtLspAnalyzer, Message
 from realm.lsp import spec
 from realm.lsp.text import TextFile
 
-# doc = TextDocument(r'System.out.println("Hello " + "world")')
-# reduce(doc, raise_unexpected_exc=True)
-# print(doc)
-# exit()
-
+os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 assert shutil.which('defects4j')
 
 # print(Repairer.tokenizer.encode("<s> </s> <pad> <extra_id_0> <extra_id_1> <unk> <mask>", add_special_tokens=False))
@@ -77,8 +73,8 @@ def server_cmd(bug_id: str) -> List[str]:
 
 
 def wait_until_analyzer_is_free(realm_conn: Connection):
-    max_waiting_time = time.time() + 10
-    while time.time() < max_waiting_time:
+    max_waiting_time = time.perf_counter() + 10
+    while time.perf_counter() < max_waiting_time:
         realm_conn.send(Message(True, JdtLspAnalyzer.is_free.__name__))
         is_analyzer_free = realm_conn.recv()
         if is_analyzer_free:
@@ -236,7 +232,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
 
                 repairer = gen.Realm(lm_context, lsp_contexts, GEN_BATCH_SIZE)
                 repairer.mem = mem
-                start_time = time.time()
+                start_time = time.perf_counter()
                 try:
                     completion_overhead, contexts, generation_log = repairer.repair()
                 except TimeoutError:
@@ -248,7 +244,7 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
                 # if output is None:
                 #     generation_successful = False
                 #     break
-                end_time = time.time()
+                end_time = time.perf_counter()
                 times.append(end_time - start_time)
                 time_completion.extend(completion_overhead)
                 # TODO: make this inside the repairer
@@ -311,8 +307,9 @@ def repair_proj(result_dir: Path, bug_id: str, bug: d4j.Bug, n_patch_groups: int
             'times': times,
         }, f, indent=2)
 
-    for realm_conn, _ in connection_analyzer_pairs:
+    for realm_conn, analyzer in connection_analyzer_pairs:
         realm_conn.send(None)
+        analyzer.join()
     return patch_groups
 
     # repo.git.execute(['git', 'checkout', 'HEAD', '-f', '.'])
@@ -436,9 +433,9 @@ def do_validation(bug_dir: Path, bug_id: str, bug: d4j.Bug) -> dict:
             # print(bug_id, idx, 'is duplicated')
             result['dup_succeeded'].append(int(idx))
             continue
-        start_time = time.time()
+        start_time = time.perf_counter()
         val_result, stdout, stderr = validate_proj(bug_id, bug, patch_group)
-        cost = time.time() - start_time
+        cost = time.perf_counter() - start_time
         result['times'][idx] = cost
         result['stdout'][idx] = stdout
         result['stderr'][idx] = stderr
