@@ -91,13 +91,15 @@ class Reporter:
     def save(self):
         for bug_id, hunk_dict in self.result_dict.items():
             proj, id_str = Defects4J.split_bug_id(bug_id)
-            for _, tagged_results in hunk_dict.items():
+            for hunk_idx, tagged_results in hunk_dict.items():
                 idx = 0
                 for tagged_result in tagged_results:
+                    result_batch = tagged_result.synthesis_result_batch
                     if tagged_result.is_dumpped:
-                        idx += len(tagged_result.synthesis_result_batch.results)
+                        idx += len(result_batch.results)
                         continue
-                    for result in tagged_result.synthesis_result_batch.results:
+                    avg_time = result_batch.time_cost / len(result_batch.results)
+                    for result in result_batch.results:
                         idx += 1
                         save_dir = self.root / proj / id_str / str(idx)
                         save_dir.mkdir(exist_ok=True, parents=True)
@@ -127,6 +129,8 @@ class Reporter:
                                     {
                                         "path": str(result.patch.path.absolute()),
                                         "content": result.patch.content,
+                                        "time": avg_time,
+                                        "hunk": hunk_idx,
                                     },
                                     f,
                                     indent=2,

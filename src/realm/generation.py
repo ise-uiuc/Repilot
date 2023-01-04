@@ -240,23 +240,24 @@ class Synthesizer:
         for batch_idx in range(self.batch_size):
             if self.gen_state.batch_is_failed[batch_idx]:
                 results.append(PrunedHalfway())
-            if self.gen_state.batch_is_unfinished[batch_idx]:
+            elif self.gen_state.batch_is_unfinished[batch_idx]:
                 results.append(Unfinished())
-            gen_context = self.gen_state.gen_contexts[batch_idx]
-            lsp_context = self.lsp_contexts[batch_idx]
-            patch_file = lsp_context.text_file
-            start_index = self.hunk_start_cursor
-            end_index = patch_file.cursor
-            hunk = "".join(gen_context.generated_tokens)
-            assert patch_file.content[start_index:end_index] == hunk
-            results.append(
-                SynthesisSuccessful(
-                    patch_file,
-                    start_index,
-                    end_index,
-                    hunk,
+            else:
+                gen_context = self.gen_state.gen_contexts[batch_idx]
+                lsp_context = self.lsp_contexts[batch_idx]
+                patch_file = lsp_context.text_file
+                start_index = self.hunk_start_cursor
+                end_index = patch_file.cursor
+                hunk = "".join(gen_context.generated_tokens)
+                assert patch_file.content[start_index:end_index] == hunk
+                results.append(
+                    SynthesisSuccessful(
+                        patch_file,
+                        start_index,
+                        end_index,
+                        hunk,
+                    )
                 )
-            )
 
         cost = time.perf_counter() - start_time
         return SynthesisResultBatch(results, cost)
