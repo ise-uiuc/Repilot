@@ -12,8 +12,7 @@ import torch
 
 from realm.generation_defs import GenerationContext, Memorization
 from realm.lsp import LSPClient, TextFile, spec
-from realm.model import CodeT5Large
-from realm.generation_defs import MODEL
+from realm.model import CodeT5ForRealm
 from realm import utils
 
 JAVA_KEYWORDS = {'abstract', 'continue', 'for', 'new', 'switch',
@@ -67,32 +66,18 @@ class JdtLspAnalyzer(Process):
         conn: Connection,
         server_cmd: List[str],
         proj_path: PathLike,
-        java_home: str,
-        model: CodeT5Large = MODEL,
-        n_hunks: int = 1,
-        use_mem: bool = os.getenv('NO_MEM') is None,
+        model: CodeT5ForRealm,
         verbose: bool = False
     ) -> None:
         super().__init__()
         self.conn = conn
         self.server_cmd = server_cmd
         self.proj_path = proj_path
-        self.java_home = java_home
+        # TODO: change this using config
+        self.java8_home = cast(str, os.getenv('JAVA8_HOME'))
         self.verbose = verbose
         self.counter = itertools.count(0)
-
         self.model = model
-        self.use_mem = use_mem
-        self.n_hunks = n_hunks
-        self.mems = [Memorization.init() for _ in range(n_hunks)]
-        self.active_hunk = 0
-
-    @property
-    def mem(self) -> Memorization:
-        return self.mems[self.active_hunk]
-
-    def set_active_hunk(self, new_hunk_idx: int):
-        self.active_hunk = new_hunk_idx
 
     def init_lsp(self):
         self.process = subprocess.Popen(
@@ -142,99 +127,99 @@ class JdtLspAnalyzer(Process):
             "rootPath": str(path.absolute()),
             "rootUri": path.as_uri(),
             "capabilities": spec.ClientCapabilities({
-                "workspace": {
-                    "applyEdit": True,
-                    "workspaceEdit": {
-                        "documentChanges": True,
-                        "resourceOperations": [
-                            "create",
-                            "rename",
-                            "delete"
-                        ],
-                        "failureHandling": "textOnlyTransactional",
-                        "normalizesLineEndings": True,
-                        "changeAnnotationSupport": {
-                            "groupsOnLabel": True
-                        }
-                    },
-                    "didChangeConfiguration": {
-                        "dynamicRegistration": True
-                    },
-                    "didChangeWatchedFiles": {
-                        "dynamicRegistration": True
-                    },
-                    "symbol": {
-                        "dynamicRegistration": True,
-                        "symbolKind": {
-                            "valueSet": [
-                                1,
-                                2,
-                                3,
-                                4,
-                                5,
-                                6,
-                                7,
-                                8,
-                                9,
-                                10,
-                                11,
-                                12,
-                                13,
-                                14,
-                                15,
-                                16,
-                                17,
-                                18,
-                                19,
-                                20,
-                                21,
-                                22,
-                                23,
-                                24,
-                                25,
-                                26
-                            ]
-                        },
-                        "tagSupport": {
-                            "valueSet": [
-                                1
-                            ]
-                        }
-                    },
-                    "codeLens": {
-                        "refreshSupport": True
-                    },
-                    "executeCommand": {
-                        "dynamicRegistration": True
-                    },
-                    "configuration": True,
-                    "workspaceFolders": True,
-                    "semanticTokens": {
-                        "refreshSupport": True
-                    },
-                    "fileOperations": {
-                        "dynamicRegistration": True,
-                        "didCreate": True,
-                        "didRename": True,
-                        "didDelete": True,
-                        "willCreate": True,
-                        "willRename": True,
-                        "willDelete": True
-                    }
-                },
+                # "workspace": {
+                #     "applyEdit": True,
+                #     "workspaceEdit": {
+                #         "documentChanges": True,
+                #         "resourceOperations": [
+                #             "create",
+                #             "rename",
+                #             "delete"
+                #         ],
+                #         "failureHandling": "textOnlyTransactional",
+                #         "normalizesLineEndings": True,
+                #         "changeAnnotationSupport": {
+                #             "groupsOnLabel": True
+                #         }
+                #     },
+                #     "didChangeConfiguration": {
+                #         "dynamicRegistration": True
+                #     },
+                #     "didChangeWatchedFiles": {
+                #         "dynamicRegistration": True
+                #     },
+                #     "symbol": {
+                #         "dynamicRegistration": True,
+                #         "symbolKind": {
+                #             "valueSet": [
+                #                 1,
+                #                 2,
+                #                 3,
+                #                 4,
+                #                 5,
+                #                 6,
+                #                 7,
+                #                 8,
+                #                 9,
+                #                 10,
+                #                 11,
+                #                 12,
+                #                 13,
+                #                 14,
+                #                 15,
+                #                 16,
+                #                 17,
+                #                 18,
+                #                 19,
+                #                 20,
+                #                 21,
+                #                 22,
+                #                 23,
+                #                 24,
+                #                 25,
+                #                 26
+                #             ]
+                #         },
+                #         "tagSupport": {
+                #             "valueSet": [
+                #                 1
+                #             ]
+                #         }
+                #     },
+                #     "codeLens": {
+                #         "refreshSupport": True
+                #     },
+                #     "executeCommand": {
+                #         "dynamicRegistration": True
+                #     },
+                #     "configuration": True,
+                #     "workspaceFolders": True,
+                #     "semanticTokens": {
+                #         "refreshSupport": True
+                #     },
+                #     "fileOperations": {
+                #         "dynamicRegistration": True,
+                #         "didCreate": True,
+                #         "didRename": True,
+                #         "didDelete": True,
+                #         "willCreate": True,
+                #         "willRename": True,
+                #         "willDelete": True
+                #     }
+                # },
                 "textDocument": {
-                    "publishDiagnostics": {
-                        "relatedInformation": False,
-                        "versionSupport": False,
-                        "tagSupport": {
-                            "valueSet": [
-                                1,
-                                2
-                            ]
-                        },
-                        "codeDescriptionSupport": False,
-                        "dataSupport": False
-                    },
+                    # "publishDiagnostics": {
+                    #     "relatedInformation": True,
+                    #     "versionSupport": False,
+                    #     "tagSupport": {
+                    #         "valueSet": [
+                    #             1,
+                    #             2
+                    #         ]
+                    #     },
+                    #     "codeDescriptionSupport": True,
+                    #     "dataSupport": True
+                    # },
                     "synchronization": {
                         "dynamicRegistration": True,
                         "willSave": True,
@@ -305,234 +290,234 @@ class JdtLspAnalyzer(Process):
                             ]
                         }
                     },
-                    "hover": {
-                        "dynamicRegistration": True,
-                        "contentFormat": [
-                            "markdown",
-                            "plaintext"
-                        ]
-                    },
-                    "signatureHelp": {
-                        "dynamicRegistration": True,
-                        "signatureInformation": {
-                            "documentationFormat": [
-                                "markdown",
-                                "plaintext"
-                            ],
-                            "parameterInformation": {
-                                "labelOffsetSupport": True
-                            },
-                            "activeParameterSupport": True
-                        },
-                        "contextSupport": True
-                    },
-                    "definition": {
-                        "dynamicRegistration": True,
-                        "linkSupport": True
-                    },
-                    "references": {
-                        "dynamicRegistration": True
-                    },
-                    "documentHighlight": {
-                        "dynamicRegistration": True
-                    },
-                    "documentSymbol": {
-                        "dynamicRegistration": True,
-                        "symbolKind": {
-                            "valueSet": [
-                                1,
-                                2,
-                                3,
-                                4,
-                                5,
-                                6,
-                                7,
-                                8,
-                                9,
-                                10,
-                                11,
-                                12,
-                                13,
-                                14,
-                                15,
-                                16,
-                                17,
-                                18,
-                                19,
-                                20,
-                                21,
-                                22,
-                                23,
-                                24,
-                                25,
-                                26
-                            ]
-                        },
-                        "hierarchicalDocumentSymbolSupport": True,
-                        "tagSupport": {
-                            "valueSet": [
-                                1
-                            ]
-                        },
-                        "labelSupport": True
-                    },
-                    "codeAction": {
-                        "dynamicRegistration": True,
-                        "isPreferredSupport": True,
-                        "disabledSupport": True,
-                        "dataSupport": True,
-                        "resolveSupport": {
-                            "properties": [
-                                "edit"
-                            ]
-                        },
-                        "codeActionLiteralSupport": {
-                            "codeActionKind": {
-                                "valueSet": [
-                                    "",
-                                    "quickfix",
-                                    "refactor",
-                                    "refactor.extract",
-                                    "refactor.inline",
-                                    "refactor.rewrite",
-                                    "source",
-                                    "source.organizeImports"
-                                ]
-                            }
-                        },
-                        "honorsChangeAnnotations": False
-                    },
-                    "codeLens": {
-                        "dynamicRegistration": True
-                    },
-                    "formatting": {
-                        "dynamicRegistration": True
-                    },
-                    "rangeFormatting": {
-                        "dynamicRegistration": True
-                    },
-                    "onTypeFormatting": {
-                        "dynamicRegistration": True
-                    },
-                    "rename": {
-                        "dynamicRegistration": True,
-                        "prepareSupport": True,
-                        "prepareSupportDefaultBehavior": 1,
-                        "honorsChangeAnnotations": True
-                    },
-                    "documentLink": {
-                        "dynamicRegistration": True,
-                        "tooltipSupport": True
-                    },
-                    "typeDefinition": {
-                        "dynamicRegistration": True,
-                        "linkSupport": True
-                    },
-                    "implementation": {
-                        "dynamicRegistration": True,
-                        "linkSupport": True
-                    },
-                    "colorProvider": {
-                        "dynamicRegistration": True
-                    },
-                    "foldingRange": {
-                        "dynamicRegistration": True,
-                        "rangeLimit": 5000,
-                        "lineFoldingOnly": True
-                    },
-                    "declaration": {
-                        "dynamicRegistration": True,
-                        "linkSupport": True
-                    },
-                    "selectionRange": {
-                        "dynamicRegistration": True
-                    },
-                    "callHierarchy": {
-                        "dynamicRegistration": True
-                    },
-                    "semanticTokens": {
-                        "dynamicRegistration": True,
-                        "tokenTypes": [
-                            "namespace",
-                            "type",
-                            "class",
-                            "enum",
-                            "interface",
-                            "struct",
-                            "typeParameter",
-                            "parameter",
-                            "variable",
-                            "property",
-                            "enumMember",
-                            "event",
-                            "function",
-                            "method",
-                            "macro",
-                            "keyword",
-                            "modifier",
-                            "comment",
-                            "string",
-                            "number",
-                            "regexp",
-                            "operator"
-                        ],
-                        "tokenModifiers": [
-                            "declaration",
-                            "definition",
-                            "readonly",
-                            "static",
-                            "deprecated",
-                            "abstract",
-                            "async",
-                            "modification",
-                            "documentation",
-                            "defaultLibrary"
-                        ],
-                        "formats": [
-                            "relative"
-                        ],
-                        "requests": {
-                            "range": True,
-                            "full": {
-                                "delta": True
-                            }
-                        },
-                        "multilineTokenSupport": False,
-                        "overlappingTokenSupport": False
-                    },
-                    "linkedEditingRange": {
-                        "dynamicRegistration": True
-                    }
+                    # "hover": {
+                    #     "dynamicRegistration": True,
+                    #     "contentFormat": [
+                    #         "markdown",
+                    #         "plaintext"
+                    #     ]
+                    # },
+                    # "signatureHelp": {
+                    #     "dynamicRegistration": True,
+                    #     "signatureInformation": {
+                    #         "documentationFormat": [
+                    #             "markdown",
+                    #             "plaintext"
+                    #         ],
+                    #         "parameterInformation": {
+                    #             "labelOffsetSupport": True
+                    #         },
+                    #         "activeParameterSupport": True
+                    #     },
+                    #     "contextSupport": True
+                    # },
+                    # "definition": {
+                    #     "dynamicRegistration": True,
+                    #     "linkSupport": True
+                    # },
+                    # "references": {
+                    #     "dynamicRegistration": True
+                    # },
+                    # "documentHighlight": {
+                    #     "dynamicRegistration": True
+                    # },
+                    # "documentSymbol": {
+                    #     "dynamicRegistration": True,
+                    #     "symbolKind": {
+                    #         "valueSet": [
+                    #             1,
+                    #             2,
+                    #             3,
+                    #             4,
+                    #             5,
+                    #             6,
+                    #             7,
+                    #             8,
+                    #             9,
+                    #             10,
+                    #             11,
+                    #             12,
+                    #             13,
+                    #             14,
+                    #             15,
+                    #             16,
+                    #             17,
+                    #             18,
+                    #             19,
+                    #             20,
+                    #             21,
+                    #             22,
+                    #             23,
+                    #             24,
+                    #             25,
+                    #             26
+                    #         ]
+                    #     },
+                    #     "hierarchicalDocumentSymbolSupport": True,
+                    #     "tagSupport": {
+                    #         "valueSet": [
+                    #             1
+                    #         ]
+                    #     },
+                    #     "labelSupport": True
+                    # },
+                    # "codeAction": {
+                    #     "dynamicRegistration": True,
+                    #     "isPreferredSupport": True,
+                    #     "disabledSupport": True,
+                    #     "dataSupport": True,
+                    #     "resolveSupport": {
+                    #         "properties": [
+                    #             "edit"
+                    #         ]
+                    #     },
+                    #     "codeActionLiteralSupport": {
+                    #         "codeActionKind": {
+                    #             "valueSet": [
+                    #                 "",
+                    #                 "quickfix",
+                    #                 "refactor",
+                    #                 "refactor.extract",
+                    #                 "refactor.inline",
+                    #                 "refactor.rewrite",
+                    #                 "source",
+                    #                 "source.organizeImports"
+                    #             ]
+                    #         }
+                    #     },
+                    #     "honorsChangeAnnotations": False
+                    # },
+                    # "codeLens": {
+                    #     "dynamicRegistration": True
+                    # },
+                    # "formatting": {
+                    #     "dynamicRegistration": True
+                    # },
+                    # "rangeFormatting": {
+                    #     "dynamicRegistration": True
+                    # },
+                    # "onTypeFormatting": {
+                    #     "dynamicRegistration": True
+                    # },
+                    # "rename": {
+                    #     "dynamicRegistration": True,
+                    #     "prepareSupport": True,
+                    #     "prepareSupportDefaultBehavior": 1,
+                    #     "honorsChangeAnnotations": True
+                    # },
+                    # "documentLink": {
+                    #     "dynamicRegistration": True,
+                    #     "tooltipSupport": True
+                    # },
+                    # "typeDefinition": {
+                    #     "dynamicRegistration": True,
+                    #     "linkSupport": True
+                    # },
+                    # "implementation": {
+                    #     "dynamicRegistration": True,
+                    #     "linkSupport": True
+                    # },
+                    # "colorProvider": {
+                    #     "dynamicRegistration": True
+                    # },
+                    # "foldingRange": {
+                    #     "dynamicRegistration": True,
+                    #     "rangeLimit": 5000,
+                    #     "lineFoldingOnly": True
+                    # },
+                    # "declaration": {
+                    #     "dynamicRegistration": True,
+                    #     "linkSupport": True
+                    # },
+                    # "selectionRange": {
+                    #     "dynamicRegistration": True
+                    # },
+                    # "callHierarchy": {
+                    #     "dynamicRegistration": True
+                    # },
+                    # "semanticTokens": {
+                    #     "dynamicRegistration": True,
+                    #     "tokenTypes": [
+                    #         "namespace",
+                    #         "type",
+                    #         "class",
+                    #         "enum",
+                    #         "interface",
+                    #         "struct",
+                    #         "typeParameter",
+                    #         "parameter",
+                    #         "variable",
+                    #         "property",
+                    #         "enumMember",
+                    #         "event",
+                    #         "function",
+                    #         "method",
+                    #         "macro",
+                    #         "keyword",
+                    #         "modifier",
+                    #         "comment",
+                    #         "string",
+                    #         "number",
+                    #         "regexp",
+                    #         "operator"
+                    #     ],
+                    #     "tokenModifiers": [
+                    #         "declaration",
+                    #         "definition",
+                    #         "readonly",
+                    #         "static",
+                    #         "deprecated",
+                    #         "abstract",
+                    #         "async",
+                    #         "modification",
+                    #         "documentation",
+                    #         "defaultLibrary"
+                    #     ],
+                    #     "formats": [
+                    #         "relative"
+                    #     ],
+                    #     "requests": {
+                    #         "range": True,
+                    #         "full": {
+                    #             "delta": True
+                    #         }
+                    #     },
+                    #     "multilineTokenSupport": False,
+                    #     "overlappingTokenSupport": False
+                    # },
+                    # "linkedEditingRange": {
+                    #     "dynamicRegistration": True
+                    # }
                 },
-                "window": {
-                    "showMessage": {
-                        "messageActionItem": {
-                            "additionalPropertiesSupport": False
-                        }
-                    },
-                    "showDocument": {
-                        "support": False
-                    },
-                    "workDoneProgress": False
-                },
-                "general": {
-                    "staleRequestSupport": {
-                        "cancel": True,
-                        "retryOnContentModified": [
-                            "textDocument/semanticTokens/full",
-                            "textDocument/semanticTokens/range",
-                            "textDocument/semanticTokens/full/delta"
-                        ]
-                    },
-                    "regularExpressions": {
-                        "engine": "ECMAScript",
-                        "version": "ES2020"
-                    },
-                    "markdown": {
-                        "parser": "marked",
-                        "version": "1.1.0"
-                    }
-                }
+                # "window": {
+                #     "showMessage": {
+                #         "messageActionItem": {
+                #             "additionalPropertiesSupport": True
+                #         }
+                #     },
+                #     "showDocument": {
+                #         "support": True
+                #     },
+                #     "workDoneProgress": True
+                # },
+                # "general": {
+                #     "staleRequestSupport": {
+                #         "cancel": True,
+                #         "retryOnContentModified": [
+                #             "textDocument/semanticTokens/full",
+                #             "textDocument/semanticTokens/range",
+                #             "textDocument/semanticTokens/full/delta"
+                #         ]
+                #     },
+                #     "regularExpressions": {
+                #         "engine": "ECMAScript",
+                #         "version": "ES2020"
+                #     },
+                #     "markdown": {
+                #         "parser": "marked",
+                #         "version": "1.1.0"
+                #     }
+                # }
             }),
             "initializationOptions": {
                 "bundles": [],
@@ -541,7 +526,7 @@ class JdtLspAnalyzer(Process):
                 ],
                 "settings": {
                     "java": {
-                        # "home": java_home,
+                        # "home": java8_home,
                         "jdt": {
                             "ls": {
                                 "java": {
@@ -570,13 +555,13 @@ class JdtLspAnalyzer(Process):
                             "runtimes": [
                                 {
                                     "name": "JavaSE-1.8",
-                                    "path": self.java_home,
+                                    "path": self.java8_home,
                                     "default": True,
                                 },
                             ]
                         },
                         "trace": {
-                            "server": "verbose"
+                            "server": "off"
                         },
                         "import": {
                             "maven": {
@@ -728,7 +713,7 @@ class JdtLspAnalyzer(Process):
                             "enabled": True
                         },
                         "showBuildStatusOnStart": {
-                            "enabled": False
+                            "enabled": "off"
                         },
                         "server": {
                             "launchMode": "Hybrid"
@@ -866,66 +851,19 @@ class JdtLspAnalyzer(Process):
         trying_token_id: int,
         trying_token: str,
     ) -> int:
-        """Stateful method that updates the generated token ids and tokens (excluding special
-        tokens) and returns the 'real' generation"""
-        # generated_ids = gen_context.generated_ids
-        # input_state = pickle.dumps(generated_ids)
-        # if self.use_mem:
-        #     # TODO: this needs to be fixed.. DON't use mem for now
-        #     denied_trie = self.mem.denied_tokens.setdefault(
-        #         input_state, utils.Trie())
-        #     feasible_indices = self.mem.feasible_token_ids.setdefault(
-        #         input_state, set())
-        #     infeasible_indices = self.mem.infeasible_token_ids.setdefault(
-        #         input_state, [])
-        #     # Ensures that all tokens tried are feasible
-        #     considered_probs[infeasible_indices] = 0.
-        # # print('Start')
-        # while True:
-        #     # `probs` will change each iteration (some entries will be assigned 0.)
-        #     try:
-        #         trying_token_indirect_id = cast(int, torch.multinomial(considered_probs, num_samples=1).item())
-        #         trying_token_id = considered_token_ids[trying_token_indirect_id]
-        #         assert trying_token_id.dtype == torch.long
-        #         trying_token_id_item = cast(int, trying_token_id.item())
-        #         assert isinstance(trying_token_id_item, int)
-        #     except RuntimeError as e:
-        #         return 0
-        #         # Sum of probabilities < 0
-        #         # if self.use_mem and len(generated_ids) > 0:
-        #         #     prev_state = pickle.dumps(generated_ids[:-1])
-        #         #     last_token_id = generated_ids[-1]
-        #         #     self.mem.infeasible_token_ids[prev_state].append(
-        #         #         last_token_id)
-        #         # TODO: handle this exception
-        #         # raise e
-        #     # All trying tokens are feasible
-        #     if self.use_mem:
-        #         assert trying_token_id_item not in infeasible_indices
-        #     trying_token = self.model.token_map[trying_token_id_item]
-        #     # print(trying_token)
-
-        if self.model.is_special_token(trying_token):
-            assert False
-        elif self.trivially_feasible(trying_token):
-            assert False
-        # elif self.use_mem and denied_trie.is_prefix_of(trying_token):
-        #     pass
-        # elif self.use_mem and trying_token_id_item in feasible_indices:
-        #     return trying_token_id_item
-        else:
-            text_file.add(trying_token)
-            self.change(text_file)
-            pos = text_file.get_cursor_position()
-            if self.feasible(
-                gen_context.generated_ids,
-                gen_context.generated_tokens,
-                text_file.path.as_uri(),
-                trying_token_id,
-                trying_token,
-                pos,
-            ):
-                return True
+        """Use language server to check validity"""
+        text_file.add(trying_token)
+        self.change(text_file)
+        pos = text_file.get_cursor_position()
+        if self.feasible(
+            gen_context.generated_ids,
+            gen_context.generated_tokens,
+            text_file.path.as_uri(),
+            trying_token_id,
+            trying_token,
+            pos,
+        ):
+            return True
             #     if self.use_mem:
             #         feasible_indices.add(trying_token_id_item)
             #     return trying_token_id_item
@@ -939,14 +877,6 @@ class JdtLspAnalyzer(Process):
         #     infeasible_indices.append(trying_token_id_item)
         #     denied_trie.insert(trying_token)
 
-    def trivially_feasible(self, token: str) -> bool:
-        if len(token) > 0 and not char_may_trigger_completion(token[-1]):
-            return True
-        elif token.strip() in JAVA_KEYWORDS:
-            return True
-        else:
-            return False
-
     def feasible(
         self,
         # generation_log: GenerationLog,
@@ -959,15 +889,16 @@ class JdtLspAnalyzer(Process):
         # completion_overhead: List[float],
     ) -> bool:
         """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
-        input_state = pickle.dumps(generated_ids + [token_id])
-        if self.use_mem and input_state in self.mem.completions:
-            # Due to memorization, each input_state be called on this function only once
-            # => token_id in self.mem.(in)feasible_token_ids[state of generated_ids]
-            assert False, (generated_ids, token_id, token)
-            completions = self.mem.completions[input_state]
-        else:
-            completions = self.get_completions(uri, pos)
-            self.mem.completions[input_state] = completions
+        # input_state = pickle.dumps(generated_ids + [token_id])
+        # if self.use_mem and input_state in self.mem.completions:
+        #     # Due to memorization, each input_state be called on this function only once
+        #     # => token_id in self.mem.(in)feasible_token_ids[state of generated_ids]
+        #     assert False, (generated_ids, token_id, token)
+        #     completions = self.mem.completions[input_state]
+        # else:
+        # TODO: memorize completions
+        completions = self.get_completions(uri, pos)
+            # self.mem.completions[input_state] = completions
             # completion_overhead.append(time.time() - start_time)
         context = {
             'ids': [id for id in generated_ids],
@@ -1022,21 +953,3 @@ class JdtLspAnalyzer(Process):
             'position': pos,
         })
         return new_completion_result['result']  # type: ignore # noqa
-
-    # # TODO: opt return type
-    # # TODO: this implementation not gonna work
-    # def diagnose(self, timeout: float = 0.5) -> List[dict]:
-    #     self.save()
-    #     while True:
-    #         try:
-    #             diagnostics = self.client.try_recv(timeout)
-    #             if 'method' in diagnostics and (diagnostics := cast(
-    #                 spec.RequestMessage,
-    #                 diagnostics
-    #             ))['method'] == 'textDocument/publishDiagnostics' and \
-    #                     cast(Dict[str, str], diagnostics['params'])['uri'] == self.active_text.path.as_uri():
-    #                 # TODO: diagnostics LSP spec type
-    #                 return diagnostics['params']['diagnostics']  # type: ignore # noqa
-    #             # print(diagnostics)
-    #         except TimeoutError:
-    #             return None  # type: ignore

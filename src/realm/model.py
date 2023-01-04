@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 import os
 
-Self = TypeVar('Self')
+Self = TypeVar("Self")
 
 
 class CodeT5ForRealm(T5ForConditionalGeneration):
@@ -19,23 +19,38 @@ class CodeT5ForRealm(T5ForConditionalGeneration):
         super().__init__(config)
         self.tokenizer = tokenizer
         self.vocab_size: int = self.config.vocab_size  # type: ignore # noqa
-        self.token_map: List[str] = utils.load_and_cache_data(Path('codet5_token_map.pkl'), [
-            tokenizer.decode(
-                id,
-                skip_special_tokens=False,
-                clean_up_tokenization_spaces=False
-            ) for id in range(self.vocab_size)
-        ])
-        self.sep_id = 32099
-        self.sep = self.token_map[self.sep_id]
-        assert self.sep == "<extra_id_0>"
-        self.max_tokens: int = self.config.to_dict()['n_positions']  # type: ignore # noqa
+        self.token_map: List[str] = utils.load_and_cache_data(
+            Path(f"codet5_token_map.pkl"),
+            lambda: [
+                tokenizer.decode(
+                    id, skip_special_tokens=False, clean_up_tokenization_spaces=False
+                )
+                for id in range(self.vocab_size)
+            ],
+        )
+        self.max_tokens: int = self.config.to_dict()["n_positions"]  # type: ignore # noqa
         self.model_args = model_args
+
+    @property
+    def end_id(self) -> int:
+        raise NotImplementedError
+
+    @property
+    def end_ids(self) -> List[int]:
+        raise NotImplementedError
+
+    @property
+    def sep_id(self) -> int:
+        raise NotImplementedError
+
+    @property
+    def sep(self) -> str:
+        return self.token_map[self.sep_id]
 
     @classmethod
     def init(cls: type[Self]) -> Self:
         """The real init method"""
-        return cls.t5_from_pretrained(cls.model_name()) # type: ignore # noqa
+        return cls.t5_from_pretrained(cls.model_name())  # type: ignore # noqa
 
     @classmethod
     def model_name(cls) -> str:
@@ -46,22 +61,25 @@ class CodeT5ForRealm(T5ForConditionalGeneration):
         raise NotImplementedError
 
     @classmethod
-    def t5_from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], *model_args, **kwargs):
-        tokenizer = AutoTokenizer.from_pretrained(
-            pretrained_model_name_or_path)
+    def t5_from_pretrained(
+        cls,
+        pretrained_model_name_or_path: Optional[Union[str, os.PathLike]],
+        *model_args,
+        **kwargs,
+    ):
+        tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path)
         model = cls.from_pretrained(
-            pretrained_model_name_or_path, tokenizer, *model_args, **kwargs)
+            pretrained_model_name_or_path, tokenizer, *model_args, **kwargs
+        )
         return model
 
     def context(self, prefix: str, suffix: str) -> str:
         return prefix + self.sep + suffix
 
-    def is_end(self, id: int) -> bool:
-        return id == 32098 or id == 2
-
     def encode(self, prefix: str, suffix: str) -> torch.Tensor:
-        context = self.tokenizer.encode(self.context(
-            prefix, suffix), return_tensors='pt').to(utils.DEVICE)
+        context = self.tokenizer.encode(
+            self.context(prefix, suffix), return_tensors="pt"
+        ).to(utils.DEVICE)
         index = (context[0] == self.sep_id).nonzero()[0]
         half_token_limit = self.max_tokens // 2
         prefix_tensor = context[:, :index]
@@ -72,28 +90,57 @@ class CodeT5ForRealm(T5ForConditionalGeneration):
             result = torch.cat((prefix_tensor, suffix_tensor), dim=1)
         elif prefix_len >= half_token_limit and suffix_len >= half_token_limit:
             result = torch.cat(
-                (prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit]), dim=1)
+                (
+                    prefix_tensor[:, -half_token_limit:],
+                    suffix_tensor[:, :half_token_limit],
+                ),
+                dim=1,
+            )
         elif prefix_len < half_token_limit and suffix_len >= half_token_limit:
-            n_more = min(half_token_limit - prefix_len,
-                         suffix_len - half_token_limit)
+            n_more = min(half_token_limit - prefix_len, suffix_len - half_token_limit)
             result = torch.cat(
-                (prefix_tensor[:, -half_token_limit:], suffix_tensor[:, :half_token_limit + n_more]), dim=1)
+                (
+                    prefix_tensor[:, -half_token_limit:],
+                    suffix_tensor[:, : half_token_limit + n_more],
+                ),
+                dim=1,
+            )
         elif prefix_len >= half_token_limit and suffix_len < half_token_limit:
-            n_more = min(half_token_limit - suffix_len,
-                         prefix_len - half_token_limit)
+            n_more = min(half_token_limit - suffix_len, prefix_len - half_token_limit)
             result = torch.cat(
-                (prefix_tensor[:, -half_token_limit - n_more:], suffix_tensor[:, :half_token_limit]), dim=1)
+                (
+                    prefix_tensor[:, -half_token_limit - n_more :],
+                    suffix_tensor[:, :half_token_limit],
+                ),
+                dim=1,
+            )
         # print(CODET5_TOKENIZER.batch_decode(result))
         # breakpoint()
         assert result.shape[1] <= self.max_tokens
         return result
 
 
+CODET5_LARGE_SPECIAL_TOKENS = {"<s>", "</s>", "<pad>", "<mask>", "<unk>"}
+CODET5_LARGE_END_IDS = [2, 32098]
+
+
 class CodeT5Large(CodeT5ForRealm):
     @classmethod
     def model_name(cls) -> str:
-        return 'Salesforce/codet5-large'
+        return "Salesforce/codet5-large"
+
+    @property
+    def end_id(self) -> int:
+        return 2
+
+    @property
+    def end_ids(self) -> List[int]:
+        return CODET5_LARGE_END_IDS
+
+    @property
+    def sep_id(self) -> int:
+        return 32099
 
     @classmethod
     def is_special_token(cls, token: str) -> bool:
-        return (token in {'<s>', '</s>', '<pad>', '<mask>', '<unk>'}) or token.startswith('<extra_id_')
+        return (token in CODET5_LARGE_SPECIAL_TOKENS) or token.startswith("<extra_id_")

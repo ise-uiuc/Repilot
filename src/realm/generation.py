@@ -1,15 +1,40 @@
 from transformers.tokenization_utils import logger
 from transformers.generation_beam_constraints import Constraint
-from transformers.generation_logits_process import LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper
+from transformers.generation_logits_process import (
+    LogitsProcessorList,
+    TemperatureLogitsWarper,
+    TopKLogitsWarper,
+)
 from transformers.generation_stopping_criteria import StoppingCriteriaList
-from typing import Dict, List, Optional, Tuple, NamedTuple, Union, Iterable, Callable, cast, Set
+from typing import (
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    NamedTuple,
+    Union,
+    Iterable,
+    Callable,
+    cast,
+    Set,
+)
 from dataclasses import dataclass
 from realm import utils
 from realm.lsp.text import TextFile
 from realm.lsp import spec
 from realm.jdt_lsp import JdtLspAnalyzer, Message
 from realm.model import CodeT5ForRealm
-from realm.generation_defs import Memorization, GenerationContext
+from realm.generation_defs import (
+    Memorization,
+    GenerationContext,
+    LMInferenceConfig,
+    PrunedHalfway,
+    Unfinished,
+    SynthesisSuccessful,
+    SynthesisResult,
+    SynthesisResultBatch,
+)
+from realm.config import SynthesisMethod
 from multiprocessing.connection import Connection
 from torch import nn
 import torch
@@ -20,33 +45,75 @@ import pickle
 import typing
 import time
 
-JAVA_KEYWORDS = {'abstract', 'continue', 'for', 'new', 'switch',
-                 'assert', 'default', 'goto', 'package', 'synchronized',
-                 'boolean', 'do', 'if', 'private', 'this',
-                 'break', 'double', 'implements', 'protected', 'throw',
-                 'byte', 'else', 'import', 'public', 'throws',
-                 'case', 'enum', 'instanceof', 'return', 'transient',
-                 'catch', 'extends', 'int', 'short', 'try',
-                 'char', 'final', 'interface', 'static', 'void',
-                 'class', 'finally', 'long', 'strictfp', 'volatile',
-                 'const' 'float', 'native', 'super', 'while'}
+JAVA_KEYWORDS = {
+    "abstract",
+    "continue",
+    "for",
+    "new",
+    "switch",
+    "assert",
+    "default",
+    "goto",
+    "package",
+    "synchronized",
+    "boolean",
+    "do",
+    "if",
+    "private",
+    "this",
+    "break",
+    "double",
+    "implements",
+    "protected",
+    "throw",
+    "byte",
+    "else",
+    "import",
+    "public",
+    "throws",
+    "case",
+    "enum",
+    "instanceof",
+    "return",
+    "transient",
+    "catch",
+    "extends",
+    "int",
+    "short",
+    "try",
+    "char",
+    "final",
+    "interface",
+    "static",
+    "void",
+    "class",
+    "finally",
+    "long",
+    "strictfp",
+    "volatile",
+    "const" "float",
+    "native",
+    "super",
+    "while",
+}
 
-# self.memorization.infeasible_token_ids: Dict[bytes, List[int]] = {}
-# COMPLETE_MEMOIZED: Dict[bytes, List[int]] = {}
-# self.memorization.completions: Dict[bytes, Optional[List[dict]]] = {}
-# self.memorization.denied_tokens: Dict[bytes, utils.Trie] = {}
+# JDT.LS on Chart-11 is buggy
 CHART_11 = True
 
 
-GenerationLog = List[dict]
-Generation = Tuple[List[float], List[GenerationContext], GenerationLog]
+@dataclass
+class GenerationState:
+    gen_contexts: List[GenerationContext]
+    batch_is_failed: List[bool]
+    batch_is_unfinished: List[bool]
 
-
-class LMInferenceConfig(NamedTuple):
-    temperature: float
-    top_k: int
-    max_new_tokens: int
-    end_id: int
+    @staticmethod
+    def init(batch_size: int) -> "GenerationState":
+        return GenerationState(
+            [GenerationContext([], []) for _ in range(batch_size)],
+            [False] * batch_size,
+            [False] * batch_size,
+        )
 
 
 class LMContext(NamedTuple):
@@ -63,10 +130,12 @@ class LspContext(NamedTuple):
     analyzer: Connection
 
 
-INFERENCE_CONFIG = LMInferenceConfig(1.0, 50, 50, 2)
+# INFERENCE_CONFIG = LMInferenceConfig(1, 1.0, 50, 50)
 
 
-def get_completions(analyzer: Connection, uri: str, pos: spec.Position) -> Optional[List[dict]]:
+def get_completions(
+    analyzer: Connection, uri: str, pos: spec.Position
+) -> Optional[List[dict]]:
     # completion_result = analyzer.client.textDocument_completion({
     #     'textDocument': {
     #         'uri': uri
@@ -76,12 +145,16 @@ def get_completions(analyzer: Connection, uri: str, pos: spec.Position) -> Optio
     # old_timeout = analyzer.client.timeout
     # analyzer.client.timeout = 0.5
     # try:
-    analyzer.send(Message(True, JdtLspAnalyzer.completion.__name__, {
-        'textDocument': {
-            'uri': uri
-        },
-        'position': pos,
-    }))
+    analyzer.send(
+        Message(
+            True,
+            JdtLspAnalyzer.completion.__name__,
+            {
+                "textDocument": {"uri": uri},
+                "position": pos,
+            },
+        )
+    )
     new_completion_result: dict = analyzer.recv()
 
     # except TimeoutError:
@@ -98,133 +171,95 @@ def get_completions(analyzer: Connection, uri: str, pos: spec.Position) -> Optio
     #     else item['insertText']  # type: ignore # noqa
     #     for item in new_completion_result['result']  # type: ignore # noqa
     # )
-    return new_completion_result['result']
+    return new_completion_result["result"]
 
 
 def char_may_trigger_completion(c: str) -> bool:
     assert len(c) == 1
-    return c.isalnum() or (c in ['.', '_', '$'])
+    return c.isalnum() or (c in [".", "_", "$"])
 
 
-class Realm:
-    """Used only for one time generation now"""
+class Synthesizer:
+    """This object can only call `synthesize` once. To make multiple calls, init multiple times"""
 
     def __init__(
         self,
         lm_context: LMContext,
         lsp_contexts: List[LspContext],
-        batch_size: int,
-        use_memorization: bool = os.getenv('NO_MEM') is None,
+        gen_method: SynthesisMethod,
     ) -> None:
         # Constants
         self.model = lm_context.model
+        self.end_ids_tensor = torch.tensor(self.model.end_ids).to(utils.DEVICE)
         self.inference_config = lm_context.inference_config
-        self.batch_size = batch_size
-        self.inputs = self.model.encode(
-            lm_context.prefix, lm_context.suffix).repeat(batch_size, 1)
+        self.inputs = self.model.encode(lm_context.prefix, lm_context.suffix).repeat(
+            self.batch_size, 1
+        )
         self.lsp_contexts = lsp_contexts
-        # self.analyzer = lsp_context.analyzer
-        # self.text_file = lsp_context.text_file
+        assert len(self.lsp_contexts) > 0
+
+        # Constant
+        self.hunk_start_cursor = self.lsp_contexts[0].text_file.cursor
+        for text_file in map(lambda ctx: ctx.text_file, self.lsp_contexts):
+            assert text_file.cursor == self.hunk_start_cursor
 
         # Memorizations
-        self.use_mem = use_memorization
-        if use_memorization:
+        self.gen_method = gen_method
+        if self.use_mem:
             self.mem = Memorization.init()
 
-        # Others
-        self.batch_is_failed = [False] * self.batch_size
+        # This is initialized everytime calling `synthesize``
+        self.gen_state: Optional[GenerationState] = None
         # self.all_ids = torch.tensor(range(self.model.vocab_size)).to(utils.DEVICE).repeat(self.batch_size, 1)
 
-    def repair(self) -> Generation:
-        return self.generate(
+    @property
+    def use_mem(self) -> bool:
+        return self.gen_method.use_mem()
+
+    @property
+    def is_plain(self) -> bool:
+        return self.gen_method.is_plain()
+
+    @property
+    def batch_size(self) -> int:
+        return self.inference_config.batch_size
+
+    def synthesize(self) -> SynthesisResultBatch:
+        start_time = time.perf_counter()
+
+        self.gen_state = GenerationState.init(self.batch_size)
+        self.generate(
             do_sample=True,
             max_new_tokens=self.inference_config.max_new_tokens,
             top_k=self.inference_config.top_k,
             temperature=self.inference_config.temperature,
         )
+        assert len(self.gen_state.gen_contexts) == self.batch_size
+        assert len(self.gen_state.batch_is_failed) == self.batch_size
+        results: List[SynthesisResult] = []
+        for batch_idx in range(self.batch_size):
+            if self.gen_state.batch_is_failed[batch_idx]:
+                results.append(PrunedHalfway())
+            if self.gen_state.batch_is_unfinished[batch_idx]:
+                results.append(Unfinished())
+            gen_context = self.gen_state.gen_contexts[batch_idx]
+            lsp_context = self.lsp_contexts[batch_idx]
+            patch_file = lsp_context.text_file
+            start_index = self.hunk_start_cursor
+            end_index = patch_file.cursor
+            hunk = "".join(gen_context.generated_tokens)
+            assert patch_file.content[start_index:end_index] == hunk
+            results.append(
+                SynthesisSuccessful(
+                    patch_file,
+                    start_index,
+                    end_index,
+                    hunk,
+                )
+            )
 
-    # # TODO: rewrite the logic
-    # def feasible(
-    #     self,
-    #     generation_log: GenerationLog,
-    #     generated_ids: List[int],
-    #     generated_tokens: List[str],
-    #     uri: str,
-    #     token_id: int,
-    #     token: str,
-    #     pos: spec.Position,
-    #     completion_overhead: List[float],
-    # ) -> bool:
-    #     """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
-    #     # if regex.match('^([a-zA-Z_][a-zA-Z\\d_]*)$', token) is None:
-    #     #     warning(
-    #     #         f'Cannot recognize {token} as an identifier, probabily unicode.')
-    #     # assert token not in JAVA_KEYWORDS
-    #     start_time = time.time()
-    #     # if is_special_token(token) or token.strip() in JAVA_KEYWORDS:
-    #     #     return True
-    #     # if len(token) > 0 and not (
-    #     #     token[-1].isalnum()
-    #     #     or token[-1] in ['.', '_', '$']
-    #     # ):
-    #     #     return True
-    #     # if input_state in self.memorization.infeasible_token_ids:
-    #     #     print("HIT")
-    #     #     return self.memorization.infeasible_token_ids[input_state]
-    #     input_state = pickle.dumps(generated_ids + [token_id])
-    #     if self.use_mem and input_state in self.mem.completions:
-    #         # Due to memorization, each input_state be called on this function only once
-    #         # => token_id in self.mem.(in)feasible_token_ids[state of generated_ids]
-    #         assert False
-    #         completions = self.mem.completions[input_state]
-    #     else:
-    #         completions = get_completions(self.analyzer, uri, pos)
-    #         self.mem.completions[input_state] = completions
-    #         completion_overhead.append(time.time() - start_time)
-    #     context = {
-    #         'ids': [id for id in generated_ids],
-    #         'text': ''.join(generated_tokens),
-    #         'new_token': token
-    #     }
-    #     print(context)
-    #     if completions is None:
-    #         generation_log.append({
-    #             'context': context,
-    #             'result': None,
-    #         })
-    #         print('UNKNOWN:', token)
-    #         # breakpoint()
-    #         return True
-    #     filtered_completions = [
-    #         c for c in completions if c['target'].startswith(c['source'])]
-    #     # else:
-    #     #     print(uri)
-    #     #     print(completion_result['error'])
-    #     #     print(completion_result['error']['data'])
-    #     #     raise RuntimeError
-    #     if len(filtered_completions) > 0:
-    #         generation_log.append({
-    #             'context': context,
-    #             'result': filtered_completions,
-    #         })
-    #         # , token, completions)
-    #         print('Accepted:', token,
-    #               f"{filtered_completions[0]['source']} -> {filtered_completions[0]['target']}")
-    #         # if 'lastFraction' in completions:
-    #         #     breakpoint()
-    #         # print("Yes!")
-    #         # print(completions)
-    #         # self.memorization.infeasible_token_ids[input_state] = True
-    #         return True
-    #     else:
-    #         generation_log.append({
-    #             'context': context,
-    #             'result': [],
-    #         })
-    #         # print('=======================DENIED============================')
-    #         print('Denied', token)  # , token, completions)
-    #         # self.memorization.infeasible_token_ids[input_state] = False
-    #         return False
+        cost = time.perf_counter() - start_time
+        return SynthesisResultBatch(results, cost)
 
     def trivially_feasible(self, token: str) -> bool:
         if len(token) > 0 and not char_may_trigger_completion(token[-1]):
@@ -235,9 +270,12 @@ class Realm:
         else:
             return False
 
-    def plain_decode(self, gen_contexts: List[GenerationContext], probs: torch.Tensor) -> torch.LongTensor:
-        next_token_ids = cast(torch.LongTensor, torch.multinomial(
-            probs, num_samples=1).squeeze(1))
+    def plain_decode(self, probs: torch.Tensor) -> torch.LongTensor:
+        assert self.gen_state is not None
+        gen_contexts = self.gen_state.gen_contexts
+        next_token_ids = cast(
+            torch.LongTensor, torch.multinomial(probs, num_samples=1).squeeze(1)
+        )
         assert next_token_ids.dtype == torch.long
         assert next_token_ids.shape == torch.Size((self.batch_size,))
         for batch_idx, next_token_id in enumerate(next_token_ids):
@@ -246,29 +284,26 @@ class Realm:
             next_token = self.model.token_map[next_token_id_item]
             if not self.model.is_special_token(next_token):
                 self.lsp_contexts[batch_idx].text_file.add(next_token)
-                gen_contexts[batch_idx].generated_ids.append(
-                    next_token_id_item)
+                gen_contexts[batch_idx].generated_ids.append(next_token_id_item)
                 gen_contexts[batch_idx].generated_tokens.append(next_token)
         return next_token_ids
 
     def pruned_decode(
         self,
-        gen_contexts: List[GenerationContext],
         probs: torch.Tensor,
     ) -> torch.LongTensor:
         """Stateful method that updates the generated token ids and tokens (excluding special
         tokens) and returns the 'real' generation"""
+        assert self.gen_state is not None
+        batch_is_failed = self.gen_state.batch_is_failed
+        gen_contexts = self.gen_state.gen_contexts
         special_value = self.model.vocab_size
         next_token_ids = torch.full(
-            (self.batch_size,),
-            special_value,
-            dtype=torch.long
+            (self.batch_size,), special_value, dtype=torch.long
         ).to(utils.DEVICE)
-        # TODO: change the hard coded `2`
-        next_token_ids[self.batch_is_failed] = 2
+        next_token_ids[batch_is_failed] = self.model.end_id
         # Keeps track of batches whose next token is not determined
-        batch_needs_to_process = [
-            not failed for failed in self.batch_is_failed]
+        batch_needs_to_process = [not failed for failed in batch_is_failed]
         assert len(batch_needs_to_process) == self.batch_size
 
         # The next token of batch `batch_idx` is set to `next_token_id`
@@ -285,7 +320,7 @@ class Realm:
         while any(batch_needs_to_process):
             # all_infeasible_indices: List[Tuple[int, int]] = []
             start = time.perf_counter()
-            probs_assign = 0.
+            probs_assign = 0.0
             if self.use_mem:
                 mem_infeasible_token_ids: List[List[int]] = []
                 mem_feasible_token_ids: List[Set[int]] = []
@@ -296,11 +331,14 @@ class Realm:
                     input_state = pickle.dumps(gen_context.generated_ids)
 
                     denied_trie = self.mem.denied_tokens.setdefault(
-                        input_state, utils.Trie())
+                        input_state, utils.Trie()
+                    )
                     feasible_indices = self.mem.feasible_token_ids.setdefault(
-                        input_state, set())
+                        input_state, set()
+                    )
                     infeasible_indices = self.mem.infeasible_token_ids.setdefault(
-                        input_state, [])
+                        input_state, []
+                    )
 
                     mem_denied_tokens.append(denied_trie)
                     mem_feasible_token_ids.append(feasible_indices)
@@ -308,24 +346,22 @@ class Realm:
 
                     # Ensures that all tokens tried are feasible
                     _start = time.perf_counter()
-                    probs[batch_idx, infeasible_indices] = 0.
+                    probs[batch_idx, infeasible_indices] = 0.0
                     probs_assign += time.perf_counter() - _start
-            print('Mem first preprocess:', time.perf_counter() - start)
-            print('Probability assigning:', probs_assign)
+            print("Mem first preprocess:", time.perf_counter() - start)
+            print("Probability assigning:", probs_assign)
 
             start = time.perf_counter()
-            assert probs.shape == torch.Size(
-                [self.batch_size, self.model.vocab_size])
-            # TODO: chances are that certain rows accumulated probabilities <= 0 and remember to join subprocesses
+            assert probs.shape == torch.Size([self.batch_size, self.model.vocab_size])
             # The sampled ids corresponding to the batches that need to process
-            zero_prob_batches = (probs.sum(dim=-1) == 0.).nonzero().squeeze(1)
-            print('Batch zeroing:', time.perf_counter() - start)
+            zero_prob_batches = (probs.sum(dim=-1) == 0.0).nonzero().squeeze(1)
+            print("Batch zeroing:", time.perf_counter() - start)
             assert len(zero_prob_batches.shape) == 1
             for batch_idx_tensor in zero_prob_batches:
                 batch_idx = batch_idx_tensor.item()
                 assert isinstance(batch_idx, int)
-                if not self.batch_is_failed[batch_idx]:
-                    self.batch_is_failed[batch_idx] = True
+                if not batch_is_failed[batch_idx]:
+                    batch_is_failed[batch_idx] = True
                     if batch_needs_to_process[batch_idx]:
                         batch_needs_to_process[batch_idx] = False
                         generated_ids = gen_contexts[batch_idx].generated_ids
@@ -334,16 +370,17 @@ class Realm:
                             prev_state = pickle.dumps(generated_ids[:-1])
                             last_token_id = generated_ids[-1]
                             self.mem.infeasible_token_ids[prev_state].append(
-                                last_token_id)
-                        # TODO: change hard coded value
-                        next_token_ids[batch_idx] = 2
-            
+                                last_token_id
+                            )
+                        next_token_ids[batch_idx] = self.model.end_id
+
             start = time.perf_counter()
             if not any(batch_needs_to_process):
                 break
             probs_to_process = probs[batch_needs_to_process]
             trying_token_ids = torch.multinomial(
-                probs_to_process, num_samples=1).squeeze(1)
+                probs_to_process, num_samples=1
+            ).squeeze(1)
             assert trying_token_ids.dtype == torch.long
             assert len(trying_token_ids) == sum(batch_needs_to_process)
 
@@ -353,21 +390,21 @@ class Realm:
 
             # The map from batch_idx to trying_token_ids_idx
             trying_token_ids_idx_given_batch: List[int | bytes] = [
-                b''] * self.batch_size
-            
-            print('Decoding:', time.perf_counter() - start)
+                b""
+            ] * self.batch_size
+
+            print("Decoding:", time.perf_counter() - start)
 
             # Use memorization to do preprocessing and prepare for parallel checking
             # `trying_token_ids_idx`s are the rank position of each `batch_idx` where `batch_needs_to_process[batch_idx]`
 
             start = time.perf_counter()
-            gpu_time = 0.
-            infeasible_time = 0.
-            batch_time = 0.
-            for trying_token_ids_idx, batch_idx in enumerate(filter(
-                batch_needs_to_process.__getitem__,
-                range(self.batch_size)
-            )):
+            gpu_time = 0.0
+            infeasible_time = 0.0
+            batch_time = 0.0
+            for trying_token_ids_idx, batch_idx in enumerate(
+                filter(batch_needs_to_process.__getitem__, range(self.batch_size))
+            ):
                 trying_token_ids_idx_given_batch[batch_idx] = trying_token_ids_idx
                 assert batch_needs_to_process[batch_idx]
                 _start = time.perf_counter()
@@ -378,41 +415,49 @@ class Realm:
                 if (
                     self.model.is_special_token(trying_token)
                     or self.trivially_feasible(trying_token)
-                    or (self.use_mem and trying_token_id_item in mem_feasible_token_ids[batch_idx])
+                    or (
+                        self.use_mem
+                        and trying_token_id_item in mem_feasible_token_ids[batch_idx]
+                    )
                 ):
                     _start = time.perf_counter()
                     update_batch_state(batch_idx, trying_token_id_item)
                     batch_time += time.perf_counter() - _start
-                elif self.use_mem and mem_denied_tokens[batch_idx].is_prefix_of(trying_token):
+                elif self.use_mem and mem_denied_tokens[batch_idx].is_prefix_of(
+                    trying_token
+                ):
                     _start = time.perf_counter()
-                    mem_infeasible_token_ids[batch_idx].append(
-                        trying_token_id_item)
+                    mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
                     batch_is_denied[batch_idx] = True
                     infeasible_time += time.perf_counter() - _start
                 else:
                     lsp_context = self.lsp_contexts[batch_idx]
-                    lsp_context.analyzer.send((Message(
-                        True,
-                        JdtLspAnalyzer.pruned_decode.__name__,
-                        lsp_context.text_file,
-                        gen_contexts[batch_idx],
-                        trying_token_id_item,
-                        trying_token,
-                    )))
-            print('Real Initialization:', time.perf_counter() - start)
-            print('GPU time in real init:', gpu_time)
-            print('Infeasible checking time in real init:', infeasible_time)
-            print('Batch time in real init:', batch_time)
+                    lsp_context.analyzer.send(
+                        (
+                            Message(
+                                True,
+                                JdtLspAnalyzer.pruned_decode.__name__,
+                                lsp_context.text_file,
+                                gen_contexts[batch_idx],
+                                trying_token_id_item,
+                                trying_token,
+                            )
+                        )
+                    )
+            print("Real Initialization:", time.perf_counter() - start)
+            print("GPU time in real init:", gpu_time)
+            print("Infeasible checking time in real init:", infeasible_time)
+            print("Batch time in real init:", batch_time)
             start = time.perf_counter()
             for batch_idx in filter(
-                batch_needs_to_process.__getitem__,
-                range(self.batch_size)
+                batch_needs_to_process.__getitem__, range(self.batch_size)
             ):
                 assert batch_needs_to_process[batch_idx]
                 if self.use_mem and batch_is_denied[batch_idx]:
                     continue
                 trying_token_ids_idx = cast(
-                    int, trying_token_ids_idx_given_batch[batch_idx])
+                    int, trying_token_ids_idx_given_batch[batch_idx]
+                )
                 assert isinstance(trying_token_ids_idx, int)
                 trying_token_id = trying_token_ids[trying_token_ids_idx]
                 trying_token_id_item = cast(int, trying_token_id.item())
@@ -420,118 +465,15 @@ class Realm:
                 if success:
                     update_batch_state(batch_idx, trying_token_id_item)
                     if self.use_mem:
-                        mem_feasible_token_ids[batch_idx].add(
-                            trying_token_id_item)
+                        mem_feasible_token_ids[batch_idx].add(trying_token_id_item)
                 else:
-                    probs[batch_idx, trying_token_id_item] = 0.
+                    probs[batch_idx, trying_token_id_item] = 0.0
                     if self.use_mem:
-                        mem_infeasible_token_ids[batch_idx].append(
-                            trying_token_id_item)
+                        mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
                         mem_denied_tokens[batch_idx].insert(trying_token)
-            print('Checking:', time.perf_counter() - start)
+            print("Checking:", time.perf_counter() - start)
         assert (next_token_ids == special_value).sum().item() == 0
         return cast(torch.LongTensor, next_token_ids)
-
-        # considered_token_ids: torch.Tensor = probs.nonzero(as_tuple=True)[1].unique()
-        # considered_probs = probs.index_select(1, considered_token_ids)
-        # assert considered_probs.shape[1] == considered_token_ids.shape[0]
-        # # assert considered_probs.shape[1] <= self.inference_config.top_k
-
-        # for gen_context, (text_file, realm_conn), probs_batch in zip(
-        #     gen_contexts,
-        #     self.lsp_contexts,
-        #     considered_probs,
-        # ):
-        #     # TODO: check mem hit here in advance
-        #     realm_conn.send(Message(
-        #         True,
-        #         JdtLspAnalyzer.pruned_decode.__name__,
-        #         text_file,
-        #         gen_context,
-        #         probs_batch.cpu(),
-        #         considered_token_ids.cpu(),
-        #     ))
-        # for batch_idx, (text_file, realm_conn) in enumerate(self.lsp_contexts):
-        #     next_token_id_item = realm_conn.recv()
-        #     next_token_id_list.append(next_token_id_item)
-        #     assert isinstance(next_token_id_item, int)
-        #     next_token = self.model.token_map[next_token_id_item]
-        #     if not self.model.is_special_token(next_token):
-        #         text_file.add(next_token)
-        #         gen_contexts[batch_idx].generated_ids.append(next_token_id_item)
-        #         gen_contexts[batch_idx].generated_tokens.append(next_token)
-        # assert len(next_token_id_list) == self.batch_size
-        # return torch.LongTensor(next_token_id_list).to(utils.DEVICE)
-
-        # generated_ids = gen_context.generated_ids
-        # input_state = pickle.dumps(generated_ids)
-        # if self.use_mem:
-        #     denied_trie = self.mem.denied_tokens.setdefault(input_state, utils.Trie())
-        #     feasible_indices = self.mem.feasible_token_ids.setdefault(input_state, set())
-        #     infeasible_indices = self.mem.infeasible_token_ids.setdefault(input_state, [])
-        #     # Ensures that all tokens tried are feasible
-        #     probs[infeasible_indices] = 0.
-        # while True:
-        #     # `probs` will change each iteration (some entries will be assigned 0.)
-        #     try:
-        #         trying_token_id = cast(torch.LongTensor, torch.multinomial(probs, num_samples=1))
-        #         assert trying_token_id.dtype == torch.long
-        #         trying_token_id_item = cast(int, trying_token_id.item())
-        #         assert isinstance(trying_token_id_item, int)
-        #     except RuntimeError as e:
-        #         # Sum of probabilities < 0
-        #         if self.use_mem and len(generated_ids) > 0:
-        #             prev_state = pickle.dumps(generated_ids[:-1])
-        #             last_token_id = generated_ids[-1]
-        #             self.mem.infeasible_token_ids[prev_state].append(last_token_id)
-        #         raise e
-        #     # All trying tokens are feasible
-        #     if self.use_mem:
-        #         assert trying_token_id_item not in infeasible_indices
-        #     trying_token = self.model.token_map[trying_token_id_item]
-
-        #     def update_gen():
-        #         generated_ids.append(trying_token_id_item)
-        #         gen_context.generated_tokens.append(trying_token)
-
-        #     if self.model.is_special_token(trying_token):
-        #         return trying_token_id
-        #     elif self.trivially_feasible(trying_token):
-        #         self.text_file.add(trying_token)
-        #         update_gen()
-        #         return trying_token_id
-        #     elif self.use_mem and denied_trie.is_prefix_of(trying_token):
-        #         pass
-        #     elif self.use_mem and trying_token_id_item in feasible_indices:
-        #         self.text_file.add(trying_token)
-        #         update_gen()
-        #         return trying_token_id
-        #     else:
-        #         self.text_file.add(trying_token)
-        #         self.analyzer.send(Message(False, JdtLspAnalyzer.change.__name__, self.text_file))
-        #         pos = self.text_file.get_cursor_position()
-        #         if self.feasible(
-        #             [],
-        #             generated_ids,
-        #             gen_context.generated_tokens,
-        #             self.text_file.path.as_uri(),
-        #             trying_token_id_item,
-        #             trying_token,
-        #             pos,
-        #             []
-        #         ):
-        #             if self.use_mem:
-        #                 feasible_indices.add(trying_token_id_item)
-        #             update_gen()
-        #             return trying_token_id
-        #         else:
-        #             self.text_file.delete(len(trying_token))
-        #     # Token is infeasible if the program runs to this line
-        #     # By setting the probability to 0.0, this token will not be selected.
-        #     probs[trying_token_id_item] = 0.
-        #     if self.use_mem:
-        #         infeasible_indices.append(trying_token_id_item)
-        #         denied_trie.insert(trying_token)
 
     @typing.no_type_check
     def sample(
@@ -549,32 +491,40 @@ class Realm:
         output_hidden_states: Optional[bool] = None,
         output_scores: Optional[bool] = None,
         **model_kwargs,
-    ) -> Generation:
+    ):
         model = self.model
 
         # init values
-        logits_warper = logits_warper if logits_warper is not None else LogitsProcessorList()
-        logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
-        stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
-        pad_token_id = pad_token_id if pad_token_id is not None else model.config.pad_token_id
-        eos_token_id = eos_token_id if eos_token_id is not None else model.config.eos_token_id
-        output_scores = output_scores if output_scores is not None else model.config.output_scores
-        output_attentions = output_attentions if output_attentions is not None else model.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else model.config.output_hidden_states
+        logits_warper = (
+            logits_warper if logits_warper is not None else LogitsProcessorList()
         )
-
-        completion_overhead: List[float] = []
-
-        gen_contexts = [GenerationContext(
-            generated_tokens=[],
-            generated_ids=[],
-        ) for _ in range(self.batch_size)]
-        # Whether the model generation is complete
-        is_complete = True
-
-        # Logging
-        generation_log: GenerationLog = []
+        logits_processor = (
+            logits_processor if logits_processor is not None else LogitsProcessorList()
+        )
+        stopping_criteria = (
+            stopping_criteria
+            if stopping_criteria is not None
+            else StoppingCriteriaList()
+        )
+        pad_token_id = (
+            pad_token_id if pad_token_id is not None else model.config.pad_token_id
+        )
+        eos_token_id = (
+            eos_token_id if eos_token_id is not None else model.config.eos_token_id
+        )
+        output_scores = (
+            output_scores if output_scores is not None else model.config.output_scores
+        )
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else model.config.output_attentions
+        )
+        output_hidden_states = (
+            output_hidden_states
+            if output_hidden_states is not None
+            else model.config.output_hidden_states
+        )
 
         # keep track of which sequences are already finished
         unfinished_sequences = input_ids.new(input_ids.shape[0]).fill_(1)
@@ -583,7 +533,8 @@ class Realm:
         while True:
             # prepare model inputs
             model_inputs = model.prepare_inputs_for_generation(
-                input_ids, **model_kwargs)
+                input_ids, **model_kwargs
+            )
 
             # forward pass to get next token
             outputs = model(
@@ -597,28 +548,29 @@ class Realm:
             next_token_logits = outputs.logits[:, -1, :]
             next_token_scores = logits_processor(input_ids, next_token_logits)
             if temperature != 1.0:
-                next_token_scores = TemperatureLogitsWarper(
-                    temperature)(input_ids, next_token_scores)
-            next_token_scores = TopKLogitsWarper(
-                top_k=top_k, min_tokens_to_keep=1)(input_ids, next_token_scores)
+                next_token_scores = TemperatureLogitsWarper(temperature)(
+                    input_ids, next_token_scores
+                )
+            next_token_scores = TopKLogitsWarper(top_k=top_k, min_tokens_to_keep=1)(
+                input_ids, next_token_scores
+            )
             # next_token_scores = logits_warper(input_ids, next_token_scores)
             # assert len(next_token_scores) == 1
             # scores = next_token_scores[0]
             # BATCH_SIZE * TOKEN_MAP_SIZE
             probs = nn.functional.softmax(next_token_scores, dim=-1)
             assert len(probs.shape) == 2
-            assert probs.shape == torch.Size(
-                (self.batch_size, model.vocab_size))
+            assert probs.shape == torch.Size((self.batch_size, model.vocab_size))
 
-            if os.getenv('PLAIN') is not None or CHART_11:  # or count > 10:
+            if self.is_plain or CHART_11:  # or count > 10:
                 # shape: (1)
                 start = time.perf_counter()
-                next_token_ids = self.plain_decode(gen_contexts, probs)
+                next_token_ids = self.plain_decode(probs)
             else:
                 # try:
                 start = time.perf_counter()
-                next_token_ids = self.pruned_decode(gen_contexts, probs)
-                print('Time:', time.perf_counter() - start)
+                next_token_ids = self.pruned_decode(probs)
+                print("Time:", time.perf_counter() - start)
                 # breakpoint()
                 # except RuntimeError:
                 #     return completion_overhead, [], None, generation_log
@@ -627,9 +579,13 @@ class Realm:
             if eos_token_id is not None:
                 if pad_token_id is None:
                     raise ValueError(
-                        "If `eos_token_id` is defined, make sure that `pad_token_id` is defined.")
-                next_token_ids = next_token_ids * unfinished_sequences + \
-                    pad_token_id * (1 - unfinished_sequences)
+                        "If `eos_token_id` is defined, make sure that `pad_token_id` is defined."
+                    )
+                assert isinstance(pad_token_id, int)
+                next_token_ids = (
+                    next_token_ids * unfinished_sequences
+                    + pad_token_id * (1 - unfinished_sequences)
+                )
 
             # update generated ids, model inputs, and length for next step
             # TODO: modify use_cache for active completion
@@ -638,35 +594,33 @@ class Realm:
             input_ids = torch.cat([input_ids, next_token_ids[:, None]], dim=-1)
             # model_kwargs['use_cache'] = use_cache
             model_kwargs = model._update_model_kwargs_for_generation(
-                outputs, model_kwargs, is_encoder_decoder=model.config.is_encoder_decoder
+                outputs,
+                model_kwargs,
+                is_encoder_decoder=model.config.is_encoder_decoder,
             )
             # print(model_kwargs['use_cache'])
             # breakpoint()
             # cur_len = cur_len + 1
 
             # if eos_token was found in one sentence, set sentence to finished
-            if eos_token_id is not None:
-                # TODO: change hard coded values
-                unfinished_sequences = unfinished_sequences.mul(
-                    (next_token_ids != eos_token_id).long())
-                unfinished_sequences = unfinished_sequences.mul(
-                    (next_token_ids != 32098).long())
+            # if eos_token_id is not None:
+            unfinished_sequences = unfinished_sequences.mul(
+                torch.isin(next_token_ids, self.end_ids_tensor, invert=True).long()
+            )
+            assert len(unfinished_sequences) == self.batch_size
 
             # stop when each sentence is finished, or if we exceed the maximum length
-            if unfinished_sequences.max() == 0 or len(input_ids[0]) == max_length:
+            if unfinished_sequences.max() == 0:
                 break
-            # NOTE: originally next_token_ids[:, None] because for each batch it generate 'one' token;
-            #  but here we do not consider batch and we can generate multiple tokens
-
-            # stop when each sentence is finished, or if we exceed the maximum length
+            if len(input_ids[0]) == max_length:
+                for batch_idx in range(self.batch_size):
+                    self.gen_state.batch_is_unfinished[
+                        batch_idx
+                    ] = unfinished_sequences[batch_idx]
+                break
             # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
             # Mask ids are 32099, 32098, 32097...
-            # if model.is_end(next_token_ids[-1].item()):
-            #     break
-            # elif len(input_ids[0]) == max_length:
-            #     is_complete = False
-            #     break
-        return completion_overhead, gen_contexts, generation_log
+        return
 
     # Rewritten from huggingface/transformers, not changed so much
     @typing.no_type_check
@@ -684,8 +638,7 @@ class Realm:
         typical_p: Optional[float] = None,
         repetition_penalty: Optional[float] = None,
         bad_words_ids: Optional[Iterable[int]] = None,
-        force_words_ids: Optional[Union[Iterable[int],
-                                        Iterable[Iterable[int]]]] = None,
+        force_words_ids: Optional[Union[Iterable[int], Iterable[Iterable[int]]]] = None,
         bos_token_id: Optional[int] = None,
         pad_token_id: Optional[int] = None,
         eos_token_id: Optional[int] = None,
@@ -699,13 +652,12 @@ class Realm:
         use_cache: Optional[bool] = None,
         num_beam_groups: Optional[int] = None,
         diversity_penalty: Optional[float] = None,
-        prefix_allowed_tokens_fn: Optional[Callable[[
-            int, torch.Tensor], List[int]]] = None,
-        logits_processor: Optional[LogitsProcessorList] = LogitsProcessorList(
-        ),
+        prefix_allowed_tokens_fn: Optional[
+            Callable[[int, torch.Tensor], List[int]]
+        ] = None,
+        logits_processor: Optional[LogitsProcessorList] = LogitsProcessorList(),
         renormalize_logits: Optional[bool] = None,
-        stopping_criteria: Optional[StoppingCriteriaList] = StoppingCriteriaList(
-        ),
+        stopping_criteria: Optional[StoppingCriteriaList] = StoppingCriteriaList(),
         constraints: Optional[List[Constraint]] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -717,23 +669,43 @@ class Realm:
         synced_gpus: Optional[bool] = False,
         exponential_decay_length_penalty: Optional[Tuple[Union[int, float]]] = None,
         **model_kwargs,
-    ) -> Generation:
+    ):
         inputs = self.inputs
         model = self.model
 
         # 1. Set generation parameters if not already defined
-        bos_token_id = bos_token_id if bos_token_id is not None else model.config.bos_token_id
+        bos_token_id = (
+            bos_token_id if bos_token_id is not None else model.config.bos_token_id
+        )
         num_beams = num_beams if num_beams is not None else model.config.num_beams
-        length_penalty = length_penalty if length_penalty is not None else model.config.length_penalty
-        early_stopping = early_stopping if early_stopping is not None else model.config.early_stopping
-        num_beam_groups = num_beam_groups if num_beam_groups is not None else model.config.num_beam_groups
+        length_penalty = (
+            length_penalty
+            if length_penalty is not None
+            else model.config.length_penalty
+        )
+        early_stopping = (
+            early_stopping
+            if early_stopping is not None
+            else model.config.early_stopping
+        )
+        num_beam_groups = (
+            num_beam_groups
+            if num_beam_groups is not None
+            else model.config.num_beam_groups
+        )
         do_sample = do_sample if do_sample is not None else model.config.do_sample
         num_return_sequences = (
-            num_return_sequences if num_return_sequences is not None else model.config.num_return_sequences
+            num_return_sequences
+            if num_return_sequences is not None
+            else model.config.num_return_sequences
         )
 
-        pad_token_id = pad_token_id if pad_token_id is not None else model.config.pad_token_id
-        eos_token_id = eos_token_id if eos_token_id is not None else model.config.eos_token_id
+        pad_token_id = (
+            pad_token_id if pad_token_id is not None else model.config.pad_token_id
+        )
+        eos_token_id = (
+            eos_token_id if eos_token_id is not None else model.config.eos_token_id
+        )
 
         if eos_token_id is None and hasattr(model.config, "decoder"):
             eos_token_id = model.config.decoder.eos_token_id
@@ -745,16 +717,27 @@ class Realm:
                     "unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results."
                 )
             logger.warning(
-                f"Setting `pad_token_id` to `eos_token_id`:{eos_token_id} for open-end generation.")
+                f"Setting `pad_token_id` to `eos_token_id`:{eos_token_id} for open-end generation."
+            )
             pad_token_id = eos_token_id
 
-        output_scores = output_scores if output_scores is not None else model.config.output_scores
-        output_attentions = output_attentions if output_attentions is not None else model.config.output_attentions
+        output_scores = (
+            output_scores if output_scores is not None else model.config.output_scores
+        )
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else model.config.output_attentions
+        )
         output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else model.config.output_hidden_states
+            output_hidden_states
+            if output_hidden_states is not None
+            else model.config.output_hidden_states
         )
         return_dict_in_generate = (
-            return_dict_in_generate if return_dict_in_generate is not None else model.config.return_dict_in_generate
+            return_dict_in_generate
+            if return_dict_in_generate is not None
+            else model.config.return_dict_in_generate
         )
 
         # 2. Define model inputs
@@ -762,11 +745,12 @@ class Realm:
         # model_input_name is defined if model-specific keyword input is passed
         # otherwise model_input_name is None
         # all model-specific keyword inputs are removed from `model_kwargs`
-        prev_use_cache = model_kwargs.get('use_cache')
+        prev_use_cache = model_kwargs.get("use_cache")
         inputs_tensor, model_input_name, model_kwargs = model._prepare_model_inputs(
-            inputs, bos_token_id, model_kwargs)
+            inputs, bos_token_id, model_kwargs
+        )
         batch_size = inputs_tensor.shape[0]
-        assert prev_use_cache == model_kwargs.get('use_cache')
+        assert prev_use_cache == model_kwargs.get("use_cache")
         # assert batch_size == 1
 
         # 3. Define other model kwargs
@@ -775,11 +759,18 @@ class Realm:
         model_kwargs["use_cache"] = use_cache
 
         accepts_attention_mask = "attention_mask" in set(
-            inspect.signature(model.forward).parameters.keys())
+            inspect.signature(model.forward).parameters.keys()
+        )
         requires_attention_mask = "encoder_outputs" not in model_kwargs
 
-        if model_kwargs.get("attention_mask", None) is None and requires_attention_mask and accepts_attention_mask:
-            model_kwargs["attention_mask"] = model._prepare_attention_mask_for_generation(
+        if (
+            model_kwargs.get("attention_mask", None) is None
+            and requires_attention_mask
+            and accepts_attention_mask
+        ):
+            model_kwargs[
+                "attention_mask"
+            ] = model._prepare_attention_mask_for_generation(
                 inputs_tensor, pad_token_id, eos_token_id
             )
 
@@ -832,7 +823,9 @@ class Realm:
                 f"length ({max_length})"
             )
         if input_ids_seq_length >= max_length:
-            input_ids_string = "decoder_input_ids" if model.config.is_encoder_decoder else "input_ids"
+            input_ids_string = (
+                "decoder_input_ids" if model.config.is_encoder_decoder else "input_ids"
+            )
             logger.warning(
                 f"Input length of {input_ids_string} is {input_ids_seq_length}, but `max_length` is set to"
                 f" {max_length}. This can lead to unexpected behavior. You should consider increasing "
@@ -893,6 +886,8 @@ class Realm:
             max_length=max_length,
             **model_kwargs,
         )
+
+
 # Get the exact identifier token position
 
 # def get_id_token(generated_tokens: List[str]) -> str:

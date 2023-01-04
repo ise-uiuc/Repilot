@@ -43,6 +43,7 @@ def take_while_two(pred_first: Callable[[T], bool], pred: Callable[[T, T], bool]
             break
     return (elements, return_iter)
 
+COUNTER = itertools.count(0)
 
 def line_consecutive(lhs: Line, rhs: Line) -> bool:
     if lhs.is_added and rhs.is_added:
@@ -64,14 +65,15 @@ def chunked(n: int, data: Iterable[T]) -> Iterator[List[T]]:
     while len(result := list(take(n, data_iter))) > 0:
         yield result
 
-def load_and_cache_data(path: Path, default_data: T) -> T:
+def load_and_cache_data(path: Path, default_data: Callable[[], T]) -> T:
     if path.exists():
         with open(path, 'rb') as f:
             return pickle.load(f)
     else:
+        data = default_data()
         with open(path, 'wb') as f:
-            pickle.dump(default_data, f)
-        return default_data
+            pickle.dump(data, f)
+        return data
 
 
 # TODO: construct a Trie for all the vocabulary

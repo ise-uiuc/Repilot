@@ -1,0 +1,258 @@
+from . import utils, generation as gen
+from .model import CodeT5ForRealm, CodeT5Large
+from .report import Reporter
+from .config import MetaConfig, SynthesisConfig
+from .generation_defs import SynthesisSuccessful
+from .jdt_lsp import JdtLspAnalyzer, Message
+from .lsp.text import TextFile
+from .lsp import spec
+from .d4j import Change, Defects4J, Bug
+from multiprocessing import Pipe
+from multiprocessing.connection import Connection
+from typing import cast, List, NamedTuple, Optional, Dict, Tuple
+from pathlib import Path
+import time
+import numpy
+import torch
+import random
+import regex as re
+import shlex
+import difflib
+
+
+def server_cmd(repo: str) -> list[str]:
+    jdt_repo = f"{repo}/org.eclipse.jdt.ls.product/target/repository"
+    return shlex.split(
+        f"java -Declipse.application=org.eclipse.jdt.ls.core.id1 \
+        -Dosgi.bundles.defaultStartLevel=4 \
+        -Declipse.product=org.eclipse.jdt.ls.core.product \
+        -Dlog.level=ERROR \
+        -noverify \
+        -Xmx1G \
+        --add-modules=ALL-SYSTEM \
+        --add-opens java.base/java.util=ALL-UNNAMED \
+        --add-opens java.base/java.lang=ALL-UNNAMED \
+        -jar {jdt_repo}/plugins/org.eclipse.equinox.launcher_1.6.400.v20210924-0641.jar \
+        -configuration {jdt_repo}/config_linux \
+        -data .lsp_data/{next(utils.COUNTER)}"
+    )
+
+
+def wait_until_all_analyzers_free(
+    realm_conns: List[Connection],
+    max_waiting_time: float = 20,
+    free_check_time: float = 1.0,
+):
+    batch_is_free = [False] * len(realm_conns)
+    start_time = time.perf_counter()
+    print("Waiting until all analyzers are free...")
+    while time.perf_counter() < start_time + max_waiting_time:
+        for idx, connection in enumerate(realm_conns):
+            if not batch_is_free[idx]:
+                connection.send(
+                    Message(True, JdtLspAnalyzer.is_free.__name__, free_check_time)
+                )
+
+        for idx, connection in enumerate(realm_conns):
+            if not batch_is_free[idx]:
+                is_free = connection.recv()
+                batch_is_free[idx] = is_free
+        if all(batch_is_free):
+            print("All analyzers are free:", time.perf_counter() - start_time)
+            break
+
+
+def remove_buggy_hunk(text_file: TextFile, change: Change) -> Tuple[str, str]:
+    """Modifies `text_file` and returns the prefix and the suffix"""
+    start = change.start - 1
+    end = start + len(change.removed_lines)
+    start_pos = text_file.refine_index(start, 0)
+    end_pos = text_file.refine_index(end, 0)
+
+    start_index = text_file.form_index(start, 0)
+    end_index = text_file.form_index(end, 0)
+
+    prefix_start = 0
+    suffix_end = len(text_file.content)
+    prefix = text_file.content[prefix_start:start_index]
+    suffix = "\n" + text_file.content[end_index:suffix_end]
+
+    # prefix(\n)
+    # insertion(\n)
+    # <cursor:infill>
+    # (\n)suffix
+    text_file.change(
+        [
+            cast(
+                spec.EntireDocumentChange,
+                {"text": "\n", "range": {"start": start_pos, "end": end_pos}},
+            )
+        ]
+    )
+
+    text_file.move_cursor(start_index)
+    assert prefix.endswith("\n")
+    assert text_file.content[text_file.cursor - 1] == "\n"
+    assert text_file.content[text_file.cursor] == "\n"
+
+    return prefix, suffix
+
+
+class Repairer:
+    def __init__(
+        self,
+        config: MetaConfig,
+        model: CodeT5ForRealm,
+        d4j: Defects4J,
+        reporter: Reporter,
+    ) -> None:
+        self.config = config
+        self.model = model
+        self.d4j = d4j
+        self.reporter = reporter
+        self.cleanup = lambda: None
+
+    @staticmethod
+    def init(config: MetaConfig, report_dir: Path) -> "Repairer":
+        reporter = Reporter.create(report_dir, config)
+        model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # n oqa
+        d4j = Defects4J(config.d4j_home, config.d4j_checkout_root)
+        return Repairer(config, model, d4j, reporter)
+
+    def fix_seed(self):
+        torch.manual_seed(self.config.seed)
+        numpy.random.seed(self.config.seed)
+        random.seed(self.config.seed)
+
+    def repair(self, config: SynthesisConfig, bug_pattern: str, hunk_only: bool = True):
+        self.fix_seed()
+        print(bug_pattern)
+        pattern = re.compile(bug_pattern)
+        bugs_considered = self.d4j.single_hunk_bugs if hunk_only else self.d4j.all_bugs
+        bugs_to_repair = {
+            bug_id: bug
+            for bug_id, bug in bugs_considered.items()
+            if re.fullmatch(pattern, bug_id)
+            # Unicode error
+            and bug_id != "Lang-25"
+        }
+        for bug_id, bug in bugs_to_repair.items():
+            gen.CHART_11 = bug_id == "Chart-11"
+            self.repair_bug(config, bug_id, bug)
+
+    def repair_bug(self, config: SynthesisConfig, bug_id: str, bug: Bug):
+        try:
+            self.repair_bug_no_cleanup(config, bug_id, bug)
+        finally:
+            self.cleanup()
+
+    def repair_bug_no_cleanup(self, config: SynthesisConfig, bug_id: str, bug: Bug):
+        print("Repair", bug_id)
+        self.d4j.checkout_buggy(bug_id, bug.proj_path)
+        if not config.method.is_plain():
+            connection_pairs = cast(
+                list[tuple[Connection, Connection]],
+                [Pipe(duplex=True) for _ in range(config.batch_size)],
+            )
+            connection_analyzer_pairs = [
+                (
+                    client_conn,
+                    JdtLspAnalyzer(
+                        analyzer_conn,
+                        server_cmd(str(self.config.jdt_ls_repo.absolute())),
+                        Path(bug.proj_path),
+                        self.model,
+                    ),
+                )
+                for analyzer_conn, client_conn in connection_pairs
+            ]
+
+            def cleanup():
+                for connection, analyzer in connection_analyzer_pairs:
+                    connection.send(None)
+                    analyzer.join()
+
+            self.cleanup = cleanup
+
+            connections = [connection for connection, _ in connection_analyzer_pairs]
+            for _, analyzer in connection_analyzer_pairs:
+                analyzer.start()
+            for connection in connections:
+                connection.send(Message(False, JdtLspAnalyzer.init.__name__))
+        else:
+            meaning_less = utils.Meaningless
+            connection_analyzer_pairs = cast(
+                list[tuple[Connection, JdtLspAnalyzer]],
+                [(meaning_less, meaning_less)] * config.batch_size,
+            )
+            connections = cast(list[Connection], [meaning_less] * config.batch_size)
+
+        # Buggy text files
+        buggy_text_files = [
+            TextFile(Path(bug.proj_path) / buggy_file.path)
+            for buggy_file in bug.buggy_files
+        ]
+
+        # Initialize each buggy file for LSP
+        if not config.method.is_plain():
+            assert isinstance(connections, list)
+            for connection in connections:
+                for buggy_text_file in buggy_text_files:
+                    connection.send(
+                        Message(False, JdtLspAnalyzer.open.__name__, buggy_text_file)
+                    )
+            wait_until_all_analyzers_free(connections)
+
+        # Ready to repair
+        proj, id_str = self.d4j.split_bug_id(bug_id)
+        base_dir = self.reporter.root / proj / id_str
+        base_dir.mkdir(exist_ok=False, parents=True)
+        # # This variable stores the repair results
+        # repair_result = RepairResult()
+        for buggy_file_idx, buggy_file in enumerate(bug.buggy_files):
+            text_file = buggy_text_files[buggy_file_idx].copy()
+
+            print(len(buggy_file.changes))
+            print(buggy_file.path)
+            print(
+                [(c.start, len(c.removed_lines)) for c in reversed(buggy_file.changes)]
+            )
+
+            for (change_idx, change) in enumerate(reversed(buggy_file.changes)):
+                hunk_id = (buggy_file_idx, change_idx)
+                prefix, suffix = remove_buggy_hunk(text_file, change)
+                for idx in range(config.n_samples):
+                    print("Hunk index:", hunk_id)
+                    print("Repair index:", idx)
+                    text_file_batch = text_file.repeat(config.batch_size)
+
+                    lm_context = gen.LMContext(
+                        self.model, prefix, suffix, config.lm_inference_config
+                    )
+
+                    lsp_contexts = [
+                        gen.LspContext(text_file, connection)
+                        for text_file, connection in zip(text_file_batch, connections)
+                    ]
+
+                    synthesizer = gen.Synthesizer(
+                        lm_context, lsp_contexts, config.method
+                    )
+
+                    try:
+                        synthesis_result_batch = synthesizer.synthesize()
+                        assert len(synthesis_result_batch.results) == config.batch_size
+                        print(synthesis_result_batch.time_cost)
+                        for result in synthesis_result_batch.results:
+                            if isinstance(result, SynthesisSuccessful):
+                                print(result.hunk)
+                            else:
+                                print(result)
+                        buggy_file_path = Path(bug.proj_path) / buggy_file.path
+                        assert buggy_file_path.exists()
+                        self.reporter.add(
+                            bug_id, hunk_id, synthesis_result_batch, buggy_file_path
+                        )
+                        self.reporter.save()
+                    except TimeoutError:
+                        self.reporter.report_timeout_error()

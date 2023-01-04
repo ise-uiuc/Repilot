@@ -124,6 +124,9 @@ class TextFile(MutableTextDocument):
     
     def copy(self) -> 'TextFile':
         return TextFile(self.path, self.content)
+    
+    def repeat(self, n: int, include_self=False) -> List['TextFile']:
+        return [self.copy() for _ in range(n - 1)] + [self if include_self else self.copy()]
 
     @property
     def path(self) -> Path:
