@@ -121,7 +121,8 @@ class Repairer:
 
     @staticmethod
     def init(config: MetaConfig, report_dir: Path) -> "Repairer":
-        shutil.rmtree(DATA_DIR)
+        if Path(DATA_DIR).exists():
+            shutil.rmtree(DATA_DIR)
         reporter = Reporter.create(report_dir, config)
         model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # n oqa
         d4j = Defects4J(config.d4j_home, config.d4j_checkout_root)

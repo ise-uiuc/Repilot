@@ -26,7 +26,7 @@ META_CONFIG = MetaConfig(
     seed=0,
 )
 
-INFERENCE_CONFIG = LMInferenceConfig(25, 1.0, 50, 50)
+INFERENCE_CONFIG = LMInferenceConfig(1, 1.0, 50, 50)
 
 SYNTHESIS_CONFIG = SynthesisConfig(
     5,
@@ -54,6 +54,5 @@ if __name__ == "__main__":
         result_dir = Path("../results") / "temp" / result_dir
     result_dir.parent.mkdir(exist_ok=True, parents=True)
 
-    model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
     repairer = Repairer.init(META_CONFIG, result_dir)
     repairer.repair(SYNTHESIS_CONFIG, args.bug)
