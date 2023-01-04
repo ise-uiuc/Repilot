@@ -9,7 +9,7 @@ from .lsp import spec
 from .d4j import Change, Defects4J, Bug
 from multiprocessing import Pipe
 from multiprocessing.connection import Connection
-from typing import cast, List, NamedTuple, Optional, Dict, Tuple
+from typing import cast, List, NamedTuple, Optional, Dict, Tuple, Callable
 from pathlib import Path
 import time
 import numpy
@@ -23,6 +23,7 @@ DATA_DIR = '.lsp_data'
 
 def server_cmd(repo: str) -> list[str]:
     jdt_repo = f"{repo}/org.eclipse.jdt.ls.product/target/repository"
+    # IMPORTANT: -data dir should be DIFFERENT for different analyzers!!!
     return shlex.split(
         f"java -Declipse.application=org.eclipse.jdt.ls.core.id1 \
         -Dosgi.bundles.defaultStartLevel=4 \
@@ -107,14 +108,14 @@ class Repairer:
         model: CodeT5ForRealm,
         d4j: Defects4J,
         reporter: Reporter,
-        server_cmd: List[str],
+        server_cmd_maker: Callable[[], List[str]],
         active_connection_analyzer_pairs: List[Tuple[Connection, JdtLspAnalyzer]],
     ) -> None:
         self.config = config
         self.model = model
         self.d4j = d4j
         self.reporter = reporter
-        self.server_cmd = server_cmd
+        self.server_cmd_maker = server_cmd_maker
         self.active_connection_analyzer_pairs = active_connection_analyzer_pairs
 
     @staticmethod
@@ -123,8 +124,8 @@ class Repairer:
         reporter = Reporter.create(report_dir, config)
         model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # n oqa
         d4j = Defects4J(config.d4j_home, config.d4j_checkout_root)
-        cmd = server_cmd(str(config.jdt_ls_repo.absolute()))
-        return Repairer(config, model, d4j, reporter, cmd, [])
+        server_cmd_maker = lambda: server_cmd(str(config.jdt_ls_repo.absolute()))
+        return Repairer(config, model, d4j, reporter, server_cmd_maker, [])
 
     def fix_seed(self):
         torch.manual_seed(self.config.seed)
@@ -174,7 +175,7 @@ class Repairer:
                         client_conn,
                         JdtLspAnalyzer(
                             analyzer_conn,
-                            self.server_cmd,
+                            self.server_cmd_maker(),
                             Path(bug.proj_path),
                             self.model,
                         ),
