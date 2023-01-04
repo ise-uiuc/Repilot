@@ -10,6 +10,7 @@ import uuid
 
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+# Checks
 assert shutil.which("defects4j")
 assert os.getenv("JAVA8_HOME")
 
@@ -26,14 +27,6 @@ META_CONFIG = MetaConfig(
     seed=0,
 )
 
-INFERENCE_CONFIG = LMInferenceConfig(1, 1.0, 50, 50)
-
-SYNTHESIS_CONFIG = SynthesisConfig(
-    5,
-    INFERENCE_CONFIG,
-    SynthesisMethod.PRUNED_MEM,
-)
-
 
 parser = argparse.ArgumentParser("REALM program repair")
 parser.add_argument(
@@ -44,9 +37,64 @@ parser.add_argument(
     help="The directory to store generated data",
 )
 parser.add_argument(
-    "-b", "--bug", required=False, default=None, help="The bug to repair"
+    "-b",
+    "--bug",
+    required=True,
+    help="Regex representing the bugs to repair",
+)
+parser.add_argument(
+    "-n",
+    "--n-samples",
+    required=False,
+    default=20,
+    type=int,
+    help="Number of batched samples to generate (#total samples = n_samples * batch_size)",
+)
+parser.add_argument(
+    "--method",
+    required=True,
+    choices=["pruned-nomem", "pruned-mem", "plain"],
+    help="The method to use for patch synthesis",
+)
+parser.add_argument(
+    "--batch-size",
+    required=False,
+    default=10,
+    type=int,
+    help="The batch size of the language model",
+)
+parser.add_argument(
+    "--temperature",
+    required=False,
+    default=1.0,
+    type=float,
+    help="Temperature for sampling",
+)
+parser.add_argument(
+    "--top-k", required=False, default=50, type=int, help="Top-K value of the sampling"
+)
+parser.add_argument(
+    "--n-max-tokens",
+    required=False,
+    default=50,
+    type=int,
+    help="Max number of tokens to generate for each hunk",
 )
 args = parser.parse_args()
+
+INFERENCE_CONFIG = LMInferenceConfig(
+    args.batch_size, args.temperature, args.top_k, args.n_max_tokens
+)
+
+SYNTHESIS_CONFIG = SynthesisConfig(
+    args.n_samples,
+    INFERENCE_CONFIG,
+    {
+        "pruned-nomem": SynthesisMethod.PRUNED_NO_MEM,
+        "pruned-mem": SynthesisMethod.PRUNED_MEM,
+        "plain": SynthesisMethod.PLAIN,
+    }[args.method],
+)
 
 if __name__ == "__main__":
     result_dir = Path(f"results-{uuid.uuid4()}" if args.dir is None else args.dir)

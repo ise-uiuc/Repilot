@@ -2,7 +2,7 @@ import difflib
 import io
 import json
 from pathlib import Path
-from typing import NamedTuple
+from dataclasses import dataclass
 
 import git
 
@@ -16,7 +16,8 @@ from .generation_defs import (
 )
 
 
-class TaggedResult(NamedTuple):
+@dataclass
+class TaggedResult:
     synthesis_result_batch: SynthesisResultBatch
     buggy_file_path: Path
     is_dumpped: bool
@@ -93,6 +94,9 @@ class Reporter:
             for _, tagged_results in hunk_dict.items():
                 idx = 0
                 for tagged_result in tagged_results:
+                    if tagged_result.is_dumpped:
+                        idx += len(tagged_result.synthesis_result_batch.results)
+                        continue
                     for result in tagged_result.synthesis_result_batch.results:
                         idx += 1
                         save_dir = self.root / proj / id_str / str(idx)
@@ -137,6 +141,7 @@ class Reporter:
                                 "w",
                             ) as f:
                                 f.writelines(unified_diff)
+                    tagged_result.is_dumpped = True
 
 
 RULE = "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"

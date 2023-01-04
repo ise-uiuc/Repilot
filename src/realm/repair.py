@@ -136,7 +136,7 @@ class Repairer:
 
     def repair(self, config: SynthesisConfig, bug_pattern: str, hunk_only: bool = True):
         self.fix_seed()
-        print(bug_pattern)
+        self.reporter.dump_synthesis_config(config)
         pattern = re.compile(bug_pattern)
         bugs_considered = self.d4j.single_hunk_bugs if hunk_only else self.d4j.all_bugs
         bugs_to_repair = {
