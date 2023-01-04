@@ -17,8 +17,9 @@ import torch
 import random
 import regex as re
 import shlex
-import difflib
+import shutil
 
+DATA_DIR = '.lsp_data'
 
 def server_cmd(repo: str) -> list[str]:
     jdt_repo = f"{repo}/org.eclipse.jdt.ls.product/target/repository"
@@ -34,7 +35,7 @@ def server_cmd(repo: str) -> list[str]:
         --add-opens java.base/java.lang=ALL-UNNAMED \
         -jar {jdt_repo}/plugins/org.eclipse.equinox.launcher_1.6.400.v20210924-0641.jar \
         -configuration {jdt_repo}/config_linux \
-        -data .lsp_data/{next(utils.COUNTER)}"
+        -data {DATA_DIR}/{next(utils.COUNTER)}"
     )
 
 
@@ -57,6 +58,7 @@ def wait_until_all_analyzers_free(
             if not batch_is_free[idx]:
                 is_free = connection.recv()
                 batch_is_free[idx] = is_free
+        print('Elapsed:', time.perf_counter() - start_time)
         if all(batch_is_free):
             print("All analyzers are free:", time.perf_counter() - start_time)
             break
@@ -105,19 +107,24 @@ class Repairer:
         model: CodeT5ForRealm,
         d4j: Defects4J,
         reporter: Reporter,
+        server_cmd: List[str],
+        active_connection_analyzer_pairs: List[Tuple[Connection, JdtLspAnalyzer]],
     ) -> None:
         self.config = config
         self.model = model
         self.d4j = d4j
         self.reporter = reporter
-        self.cleanup = lambda: None
+        self.server_cmd = server_cmd
+        self.active_connection_analyzer_pairs = active_connection_analyzer_pairs
 
     @staticmethod
     def init(config: MetaConfig, report_dir: Path) -> "Repairer":
+        shutil.rmtree(DATA_DIR)
         reporter = Reporter.create(report_dir, config)
         model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # n oqa
         d4j = Defects4J(config.d4j_home, config.d4j_checkout_root)
-        return Repairer(config, model, d4j, reporter)
+        cmd = server_cmd(str(config.jdt_ls_repo.absolute()))
+        return Repairer(config, model, d4j, reporter, cmd, [])
 
     def fix_seed(self):
         torch.manual_seed(self.config.seed)
@@ -140,11 +147,18 @@ class Repairer:
             gen.CHART_11 = bug_id == "Chart-11"
             self.repair_bug(config, bug_id, bug)
 
+    def clean_up(self):
+        for connection, _ in self.active_connection_analyzer_pairs:
+            connection.send(None)
+        for _, analyzer in self.active_connection_analyzer_pairs:
+            analyzer.join()
+        self.active_connection_analyzer_pairs.clear()
+
     def repair_bug(self, config: SynthesisConfig, bug_id: str, bug: Bug):
         try:
             self.repair_bug_no_cleanup(config, bug_id, bug)
         finally:
-            self.cleanup()
+            self.clean_up()
 
     def repair_bug_no_cleanup(self, config: SynthesisConfig, bug_id: str, bug: Bug):
         print("Repair", bug_id)
@@ -154,26 +168,19 @@ class Repairer:
                 list[tuple[Connection, Connection]],
                 [Pipe(duplex=True) for _ in range(config.batch_size)],
             )
-            connection_analyzer_pairs = [
-                (
-                    client_conn,
-                    JdtLspAnalyzer(
-                        analyzer_conn,
-                        server_cmd(str(self.config.jdt_ls_repo.absolute())),
-                        Path(bug.proj_path),
-                        self.model,
-                    ),
+            for analyzer_conn, client_conn in connection_pairs:
+                self.active_connection_analyzer_pairs.append(
+                    (
+                        client_conn,
+                        JdtLspAnalyzer(
+                            analyzer_conn,
+                            self.server_cmd,
+                            Path(bug.proj_path),
+                            self.model,
+                        ),
+                    )
                 )
-                for analyzer_conn, client_conn in connection_pairs
-            ]
-
-            def cleanup():
-                for connection, analyzer in connection_analyzer_pairs:
-                    connection.send(None)
-                    analyzer.join()
-
-            self.cleanup = cleanup
-
+            connection_analyzer_pairs = self.active_connection_analyzer_pairs
             connections = [connection for connection, _ in connection_analyzer_pairs]
             for _, analyzer in connection_analyzer_pairs:
                 analyzer.start()

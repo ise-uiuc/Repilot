@@ -143,5 +143,6 @@ def log_git_repo(f: io.TextIOBase, tag: str, repo_path: Path, new_line: bool = T
             repo.git.diff(),
             RULE,
         ]
-        + ([] if not new_line else ["\n"])
     )
+    if new_line:
+        f.write("\n")

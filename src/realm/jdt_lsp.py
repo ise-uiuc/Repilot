@@ -15,33 +15,6 @@ from realm.lsp import LSPClient, TextFile, spec
 from realm.model import CodeT5ForRealm
 from realm import utils
 
-JAVA_KEYWORDS = {'abstract', 'continue', 'for', 'new', 'switch',
-                 'assert', 'default', 'goto', 'package', 'synchronized',
-                 'boolean', 'do', 'if', 'private', 'this',
-                 'break', 'double', 'implements', 'protected', 'throw',
-                 'byte', 'else', 'import', 'public', 'throws',
-                 'case', 'enum', 'instanceof', 'return', 'transient',
-                 'catch', 'extends', 'int', 'short', 'try',
-                 'char', 'final', 'interface', 'static', 'void',
-                 'class', 'finally', 'long', 'strictfp', 'volatile',
-                 'const' 'float', 'native', 'super', 'while'}
-
-# def post_process(get_client: Callable[[C], LSPClient], rpc: Callable[Concatenate[LSPClient, P], Msg]) \
-#         -> Callable[[Callable[[Msg], T]], Callable[Concatenate[C, P], T]]:
-#     def decorator(f: Callable[[Msg], T]) -> Callable[Concatenate[C, P], T]:
-#         @wraps(f)
-#         def impl(self: C, *args: P.args, **kwargs: P.kwargs) -> T:
-#             client = get_client(self)
-#             return f(rpc(client, *args, **kwargs))
-#         return impl
-#     return decorator
-
-
-def char_may_trigger_completion(c: str) -> bool:
-    assert len(c) == 1
-    return c.isalnum() or (c in ['.', '_', '$'])
-
-
 class Message:
     def __init__(self, return_result: bool, method: str, *args: Any, **kwargs: Any) -> None:
         self.return_result = return_result
@@ -84,15 +57,18 @@ class JdtLspAnalyzer(Process):
             self.server_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
         assert self.process.stdin is not None and self.process.stdout is not None
         self.client = LSPClient(
-            self.process.stdin, self.process.stdout, self.verbose, 120)
+            self.process.stdin, self.process.stdout, self.verbose, 180)
         self.client.start()
 
     def stop_lsp(self):
-        self.process.terminate()
-        self.client.stop()
         self.client.shutdown(None)
         self.client.exit(None)
-        self.process.terminate()
+        self.client.join()
+        # Faster
+        # self.process.terminate()
+        # The code below also works but is slower
+        return_code = self.process.wait()
+        assert return_code == 0
 
     def run(self) -> None:
         # Start the thread

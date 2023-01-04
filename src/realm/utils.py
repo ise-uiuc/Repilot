@@ -81,7 +81,7 @@ class TrieNode:
     # This class represents a single node in a Trie. It has a dictionary of children
     # nodes and a flag to indicate if it is the end of a word
     def __init__(self):
-        self.children: Dict[str, TrieNode] = {}
+        self.children: dict[str, TrieNode] = {}
         self.is_end_of_word = False
 
 

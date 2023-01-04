@@ -11,6 +11,8 @@ from . import spec
 # TODO: support Content-Type
 HEADER = 'Content-Length: '
 
+SHUTDOWN_ID = 0
+
 
 def add_header(content_str: str) -> str:
     return f'Content-Length: {len(content_str)}\r\n\r\n{content_str}'
@@ -24,13 +26,12 @@ def request_getter(init_id: int):
             'jsonrpc': '2.0',
             'method': method,
             'params': params,
-            # Temp solution for multiprocessing (in multiple processes, next(id) doesn't work)
-            'id': next(request_id_gen) + int(str(uuid.uuid4().int)[:6])
+            'id': next(request_id_gen) if not method == 'shutdown' else SHUTDOWN_ID
         }
     return request
 
 
-request = request_getter(0)
+request = request_getter(1)
 
 
 def notification(method: spec.string, params: spec.array | spec.object) -> spec.NotificationMessage:
@@ -84,15 +85,15 @@ class LSPClient(Thread):
             Condition
         ] = {}
         self.timeout = timeout
-        self.stopped = False
+        # self.stopped = False
         self.read_lock = Lock()
         self.write_lock = Lock()
 
-    def stop(self):
-        self.stopped = True
+    # def stop(self):
+    #     self.stopped = True
 
     def run(self) -> None:
-        while not self.stopped:
+        while True:
             server_response = self.recv()
             if self.verbose:
                 print("THREAD received", str(server_response)[:50])
@@ -109,10 +110,9 @@ class LSPClient(Thread):
                     condition.acquire()
                     condition.notify()
                     condition.release()
+                if id == SHUTDOWN_ID:
+                    break
         print('LSP client terminated.')
-            # else:
-            #     print(server_response)
-            #     assert False, server_response
 
     def call(self, method: str, params: spec.array | spec.object) -> spec.ResponseMessage:
         message = request(method, params)
@@ -121,12 +121,12 @@ class LSPClient(Thread):
         self.requests[id] = condition
         condition.acquire()
         self.send(message)
-        if self.stopped:
-            return {
-                'jsonrpc': '2.0',
-                'id': id,
-                'result': None,
-            }
+        # if self.stopped:
+        #     return {
+        #         'jsonrpc': '2.0',
+        #         'id': id,
+        #         'result': None,
+        #     }
         if not condition.wait(self.timeout):
             condition.release()
             raise TimeoutError

@@ -26,10 +26,10 @@ META_CONFIG = MetaConfig(
     seed=0,
 )
 
-INFERENCE_CONFIG = LMInferenceConfig(1, 1.0, 50, 50)
+INFERENCE_CONFIG = LMInferenceConfig(25, 1.0, 50, 50)
 
 SYNTHESIS_CONFIG = SynthesisConfig(
-    10,
+    5,
     INFERENCE_CONFIG,
     SynthesisMethod.PRUNED_MEM,
 )
