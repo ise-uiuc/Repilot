@@ -1,12 +1,16 @@
 from realm.repair import Repairer
 from realm.config import MetaConfig, SynthesisConfig, LMInferenceConfig, SynthesisMethod
-from realm.model import CodeT5Large
-from realm import utils
+from typing import cast
 from pathlib import Path
 import os
 import shutil
 import argparse
 import uuid
+import torch
+
+# if torch.cuda.is_available():
+#     free_memory, _ = cast(tuple[int, int], torch.cuda.mem_get_info())
+#     torch.cuda.caching_allocator_alloc(free_memory - 1024 ** 3)
 
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")

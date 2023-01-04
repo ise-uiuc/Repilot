@@ -14,6 +14,9 @@ class MetaConfig(JsonSerializable):
     d4j_checkout_root: Path
     jdt_ls_repo: Path
     java8_home: Path
+    # Should be specified without the '--path' argument
+    # And note to call it with a higher version of Java (e.g., Java 18)
+    language_server_cmd: list[str]
     seed: int
 
     def to_json(self) -> Any:
@@ -22,6 +25,7 @@ class MetaConfig(JsonSerializable):
             "d4j_checkout_root": str(self.d4j_checkout_root),
             "jdt_ls_repo": str(self.jdt_ls_repo),
             "java8_home": str(self.java8_home),
+            "language_server_cmd": self.language_server_cmd,
             "seed": self.seed,
         }
 
@@ -32,6 +36,7 @@ class MetaConfig(JsonSerializable):
             Path(d["d4j_checkout_root"]),
             Path(d["jdt_ls_repo"]),
             Path(d["java8_home"]),
+            d["language_server_cmd"],
             d["seed"],
         )
 

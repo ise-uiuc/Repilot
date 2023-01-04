@@ -53,8 +53,7 @@ class Reporter:
         raise NotImplementedError
 
     def dump_metadata(self):
-        with open(self.root / "meta_config.json", "w") as f:
-            json.dump(self.config.to_json(), f, indent=2)
+        self.config.save_json(self.root / "meta_config.json")
         with open(self.root / "gen_meta.txt", "w") as f:
             log_git_repo(f, "Repair tool", Path("."))
             log_git_repo(f, "Defects4J", self.config.d4j_home)
@@ -62,10 +61,7 @@ class Reporter:
             f.write(f"Defects4J checkout path: {self.config.d4j_checkout_root}\n")
 
     def dump_synthesis_config(self, config: SynthesisConfig):
-        with open(
-            self.root / f"synthesis_config_{self.synthesis_times}.json", "w"
-        ) as f:
-            json.dump(config.to_json(), f, indent=2)
+        config.save_json(self.root / f"synthesis_config_{self.synthesis_times}.json")
 
     def report_timeout_error(self):
         path = self.root / "timeout.times"

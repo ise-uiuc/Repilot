@@ -130,6 +130,7 @@ class Defects4J:
         self.d4j_home = d4j_home
         self.d4j_checkout_root = d4j_checkout_root
         assert d4j_home.exists()
+        assert self.d4j_executable.exists()
         assert d4j_checkout_root.exists()
         self.metadata = self._get_metadata()
         self.all_bugs = self._all_bugs()
@@ -144,12 +145,24 @@ class Defects4J:
         proj, id_str = bug_id.split("-")
         return proj, id_str
 
+    @property
+    def d4j_executable(self) -> Path:
+        return self.d4j_home / "framework" / "bin" / "defects4j"
+
     def checkout_buggy(self, bug_id: str, bug_proj_path: str):
         proj, id_str = self.split_bug_id(bug_id)
         repo = git.Repo(bug_proj_path)
         repo.git.execute(["git", "checkout", "HEAD", "-f", "."])
         subprocess.run(
-            ["defects4j", "checkout", "-p", proj, f"-v{id_str}b", "-w", bug_proj_path]
+            [
+                str(self.d4j_executable),
+                "checkout",
+                "-p",
+                proj,
+                f"-v{id_str}b",
+                "-w",
+                bug_proj_path,
+            ]
         )
         repo.git.execute(["git", "checkout", "HEAD", "-f", "."])
         repo.git.execute(["git", "clean", "-xfd"])
@@ -193,7 +206,7 @@ class Defects4J:
             "fixed_commit": bug["revision.id.fixed"],
             "path": str(path.absolute()),
             "cmd": [
-                "defects4j",
+                str(self.d4j_executable),
                 "checkout",
                 "-p",
                 proj,

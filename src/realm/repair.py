@@ -16,29 +16,9 @@ import numpy
 import torch
 import random
 import regex as re
-import shlex
 import shutil
 
-DATA_DIR = ".lsp_data"
-
-
-def server_cmd(repo: str) -> list[str]:
-    jdt_repo = f"{repo}/org.eclipse.jdt.ls.product/target/repository"
-    # IMPORTANT: -data dir should be DIFFERENT for different analyzers!!!
-    return shlex.split(
-        f"java -Declipse.application=org.eclipse.jdt.ls.core.id1 \
-        -Dosgi.bundles.defaultStartLevel=4 \
-        -Declipse.product=org.eclipse.jdt.ls.core.product \
-        -Dlog.level=ERROR \
-        -noverify \
-        -Xmx1G \
-        --add-modules=ALL-SYSTEM \
-        --add-opens java.base/java.util=ALL-UNNAMED \
-        --add-opens java.base/java.lang=ALL-UNNAMED \
-        -jar {jdt_repo}/plugins/org.eclipse.equinox.launcher_1.6.400.v20210924-0641.jar \
-        -configuration {jdt_repo}/config_linux \
-        -data {DATA_DIR}/{next(utils.COUNTER)}"
-    )
+DATA_DIR = Path(".lsp_data")
 
 
 def wait_until_all_analyzers_free(
@@ -109,25 +89,29 @@ class Repairer:
         model: CodeT5ForRealm,
         d4j: Defects4J,
         reporter: Reporter,
-        server_cmd_maker: Callable[[], List[str]],
         active_connection_analyzer_pairs: List[Tuple[Connection, JdtLspAnalyzer]],
     ) -> None:
         self.config = config
         self.model = model
         self.d4j = d4j
         self.reporter = reporter
-        self.server_cmd_maker = server_cmd_maker
         self.active_connection_analyzer_pairs = active_connection_analyzer_pairs
 
     @staticmethod
     def init(config: MetaConfig, report_dir: Path) -> "Repairer":
-        if Path(DATA_DIR).exists():
+        if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
         reporter = Reporter.create(report_dir, config)
         model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # n oqa
         d4j = Defects4J(config.d4j_home, config.d4j_checkout_root)
-        server_cmd_maker = lambda: server_cmd(str(config.jdt_ls_repo.absolute()))
-        return Repairer(config, model, d4j, reporter, server_cmd_maker, [])
+        return Repairer(config, model, d4j, reporter, [])
+
+    def server_cmd_maker(self) -> list[str]:
+        # IMPORTANT: -data dir should be DIFFERENT for different analyzers!!!
+        return self.config.language_server_cmd + [
+            "-data",
+            str(DATA_DIR / str(next(utils.COUNTER))),
+        ]
 
     def fix_seed(self):
         torch.manual_seed(self.config.seed)
@@ -162,6 +146,7 @@ class Repairer:
             self.repair_bug_no_cleanup(config, bug_id, bug)
         finally:
             self.clean_up()
+            print("Cleaned up")
 
     def repair_bug_no_cleanup(self, config: SynthesisConfig, bug_id: str, bug: Bug):
         print("Repair", bug_id)
@@ -171,23 +156,23 @@ class Repairer:
                 list[tuple[Connection, Connection]],
                 [Pipe(duplex=True) for _ in range(config.batch_size)],
             )
-            for analyzer_conn, client_conn in connection_pairs:
-                self.active_connection_analyzer_pairs.append(
-                    (
-                        client_conn,
-                        JdtLspAnalyzer(
-                            analyzer_conn,
-                            self.server_cmd_maker(),
-                            Path(bug.proj_path),
-                            self.model,
-                            str(self.config.java8_home),
-                        ),
-                    )
+            connection_analyzer_pairs = [
+                (
+                    client_conn,
+                    JdtLspAnalyzer(
+                        analyzer_conn,
+                        self.server_cmd_maker(),
+                        Path(bug.proj_path),
+                        self.model,
+                        str(self.config.java8_home),
+                    ),
                 )
-            connection_analyzer_pairs = self.active_connection_analyzer_pairs
+                for analyzer_conn, client_conn in connection_pairs
+            ]
             connections = [connection for connection, _ in connection_analyzer_pairs]
-            for _, analyzer in connection_analyzer_pairs:
+            for connection, analyzer in connection_analyzer_pairs:
                 analyzer.start()
+                self.active_connection_analyzer_pairs.append((connection, analyzer))
             for connection in connections:
                 connection.send(Message(False, JdtLspAnalyzer.init.__name__))
         else:
