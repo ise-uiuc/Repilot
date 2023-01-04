@@ -6,11 +6,14 @@ from pathlib import Path
 from multiprocessing.connection import Connection
 import torch
 
-T = TypeVar('T')
+T = TypeVar("T")
 
-DEVICE = 'cuda' if torch.cuda.is_available else 'cpu'
+DEVICE = "cuda" if torch.cuda.is_available else "cpu"
 
-def take_while(pred: Callable[[T], bool], iterable: Iterable[T]) -> Tuple[List[T], Iterator[T]]:
+
+def take_while(
+    pred: Callable[[T], bool], iterable: Iterable[T]
+) -> Tuple[List[T], Iterator[T]]:
     iterator = iter(iterable)
     elements: List[T] = []
     return_iter = iterator
@@ -23,7 +26,9 @@ def take_while(pred: Callable[[T], bool], iterable: Iterable[T]) -> Tuple[List[T
     return (elements, return_iter)
 
 
-def take_while_two(pred_first: Callable[[T], bool], pred: Callable[[T, T], bool], iterable: Iterable[T]) -> Tuple[List[T], Iterator[T]]:
+def take_while_two(
+    pred_first: Callable[[T], bool], pred: Callable[[T, T], bool], iterable: Iterable[T]
+) -> Tuple[List[T], Iterator[T]]:
     """take_while that looks at two elements at a time"""
     iterator = iter(iterable)
     try:
@@ -43,7 +48,9 @@ def take_while_two(pred_first: Callable[[T], bool], pred: Callable[[T, T], bool]
             break
     return (elements, return_iter)
 
+
 COUNTER = itertools.count(0)
+
 
 def line_consecutive(lhs: Line, rhs: Line) -> bool:
     if lhs.is_added and rhs.is_added:
@@ -62,16 +69,18 @@ def chunked(n: int, data: Iterable[T]) -> Iterator[List[T]]:
                 yield next(data_iter)
             except StopIteration:
                 return
+
     while len(result := list(take(n, data_iter))) > 0:
         yield result
 
+
 def load_and_cache_data(path: Path, default_data: Callable[[], T]) -> T:
     if path.exists():
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             return pickle.load(f)
     else:
         data = default_data()
-        with open(path, 'wb') as f:
+        with open(path, "wb") as f:
             pickle.dump(data, f)
         return data
 
@@ -88,7 +97,7 @@ class TrieNode:
 class Trie:
     def __init__(self):
         self.root = TrieNode()
-    
+
     # This method takes a word and inserts it into the Trie
     # by creating a new TrieNode for each character in the word
     # and setting the is_end_of_word flag for the last TrieNode to True
@@ -109,6 +118,7 @@ class Trie:
             curr = curr.children[ch]
         return curr.is_end_of_word
 
+
 # This function finds the common prefix shared by all the strings in the given list
 # by inserting each string into a Trie and traversing the Trie starting from the root
 # If a TrieNode is reached that is the end of a word and has more than one child
@@ -120,7 +130,7 @@ class Trie:
 def common_prefix(strings: List[str]) -> Optional[str]:
     trie = Trie()
     for s in strings:
-        if s == '':
+        if s == "":
             return None
         trie.insert(s)
 
@@ -146,10 +156,11 @@ class Meaningless:
     def __getattribute__(self, __name: str):
         return self
 
+
 class ConnectionWrapper:
     def __init__(self, conn: Connection) -> None:
         self.conn = conn
-    
+
     def send(self, obj: Any) -> None:
         self.conn.send(obj)
 

@@ -19,7 +19,8 @@ import regex as re
 import shlex
 import shutil
 
-DATA_DIR = '.lsp_data'
+DATA_DIR = ".lsp_data"
+
 
 def server_cmd(repo: str) -> list[str]:
     jdt_repo = f"{repo}/org.eclipse.jdt.ls.product/target/repository"
@@ -59,7 +60,7 @@ def wait_until_all_analyzers_free(
             if not batch_is_free[idx]:
                 is_free = connection.recv()
                 batch_is_free[idx] = is_free
-        print('Elapsed:', time.perf_counter() - start_time)
+        print("Elapsed:", time.perf_counter() - start_time)
         if all(batch_is_free):
             print("All analyzers are free:", time.perf_counter() - start_time)
             break
@@ -247,20 +248,21 @@ class Repairer:
                         lm_context, lsp_contexts, config.method
                     )
 
-                    try:
-                        synthesis_result_batch = synthesizer.synthesize()
-                        assert len(synthesis_result_batch.results) == config.batch_size
-                        print(synthesis_result_batch.time_cost)
-                        for result in synthesis_result_batch.results:
-                            if isinstance(result, SynthesisSuccessful):
-                                print(result.hunk)
-                            else:
-                                print(result)
-                        buggy_file_path = Path(bug.proj_path) / buggy_file.path
-                        assert buggy_file_path.exists()
-                        self.reporter.add(
-                            bug_id, hunk_id, synthesis_result_batch, buggy_file_path
-                        )
-                        self.reporter.save()
-                    except TimeoutError:
-                        self.reporter.report_timeout_error()
+                    synthesis_result_batch = synthesizer.synthesize()
+                    assert len(synthesis_result_batch.results) == config.batch_size
+                    print(synthesis_result_batch.time_cost)
+                    for result in synthesis_result_batch.results:
+                        if isinstance(result, SynthesisSuccessful):
+                            print(result.hunk)
+                        else:
+                            print(result)
+                    buggy_file_path = Path(bug.proj_path) / buggy_file.path
+                    assert buggy_file_path.exists()
+                    self.reporter.add(
+                        bug_id, hunk_id, synthesis_result_batch, buggy_file_path
+                    )
+                    self.reporter.save()
+                    # WARNING: Timeout error, if happend, indicates the TIMEOUT_THRESHOULD is too small (unlikely)
+                    # or a fatal implementation error!!
+                    # except TimeoutError:
+                    #     self.reporter.report_timeout_error()

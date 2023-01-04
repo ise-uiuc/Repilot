@@ -54,7 +54,6 @@ if __name__ == "__main__":
         result_dir = Path("../results") / "temp" / result_dir
     result_dir.parent.mkdir(exist_ok=True, parents=True)
 
-    model = CodeT5Large.init().to(utils.DEVICE) # type: ignore # noqa
+    model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
     repairer = Repairer.init(META_CONFIG, result_dir)
     repairer.repair(SYNTHESIS_CONFIG, args.bug)
-    

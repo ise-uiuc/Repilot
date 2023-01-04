@@ -9,81 +9,88 @@ import uuid
 from . import spec
 
 # TODO: support Content-Type
-HEADER = 'Content-Length: '
+HEADER = "Content-Length: "
 
 SHUTDOWN_ID = 0
 
 
 def add_header(content_str: str) -> str:
-    return f'Content-Length: {len(content_str)}\r\n\r\n{content_str}'
+    return f"Content-Length: {len(content_str)}\r\n\r\n{content_str}"
 
 
 def request_getter(init_id: int):
     request_id_gen = count(init_id)
 
-    def request(method: spec.string, params: spec.array | spec.object) -> spec.RequestMessage:
+    def request(
+        method: spec.string, params: spec.array | spec.object
+    ) -> spec.RequestMessage:
         return {
-            'jsonrpc': '2.0',
-            'method': method,
-            'params': params,
-            'id': next(request_id_gen) if not method == 'shutdown' else SHUTDOWN_ID
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": next(request_id_gen) if not method == "shutdown" else SHUTDOWN_ID,
         }
+
     return request
 
 
 request = request_getter(1)
 
 
-def notification(method: spec.string, params: spec.array | spec.object) -> spec.NotificationMessage:
+def notification(
+    method: spec.string, params: spec.array | spec.object
+) -> spec.NotificationMessage:
     return {
-        'jsonrpc': '2.0',
-        'method': method,
-        'params': params,
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
     }
 
 
 def response(
     id: spec.integer | spec.string | spec.null,
-    result: spec.string | spec.number | spec.boolean | spec.object | spec.null
+    result: spec.string | spec.number | spec.boolean | spec.object | spec.null,
 ) -> spec.ResponseMessage:
     return {
-        'jsonrpc': '2.0',
-        'id': id,
-        'result': result,
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result,
     }
 
 
-P = ParamSpec('P')
+P = ParamSpec("P")
 RPC = Tuple[str, dict]
-T = TypeVar('T')
+T = TypeVar("T")
 
 
-def d_call(method: str, _: Type[T]) -> Callable[['LSPClient', T], spec.ResponseMessage]:
-    def impl(self: 'LSPClient', params: T) -> spec.ResponseMessage:
+def d_call(method: str, _: Type[T]) -> Callable[["LSPClient", T], spec.ResponseMessage]:
+    def impl(self: "LSPClient", params: T) -> spec.ResponseMessage:
         return self.call(method, params)
+
     return impl
 
 
-def d_notify(method: str, _: Type[T]) -> Callable[['LSPClient', T], None]:
-    def impl(self: 'LSPClient', params: T) -> None:
+def d_notify(method: str, _: Type[T]) -> Callable[["LSPClient", T], None]:
+    def impl(self: "LSPClient", params: T) -> None:
         self.notify(method, params)
+
     return impl
 
 
 class LSPClient(Thread):
-    def __init__(self, stdin: IO[bytes], stdout: IO[bytes], verbose: bool, timeout: float):
+    def __init__(
+        self,
+        stdin: IO[bytes],
+        stdout: IO[bytes],
+        verbose: bool,
+        timeout: Optional[float],
+    ):
         super().__init__()
         self.stdin = stdin
         self.stdout = stdout
         self.verbose = verbose
-        self.responses: Dict[
-            spec.integer | str | None,
-            spec.ResponseMessage
-        ] = {}
-        self.requests: Dict[
-            spec.integer | str | None,
-            Condition
-        ] = {}
+        self.responses: Dict[spec.integer | str | None, spec.ResponseMessage] = {}
+        self.requests: Dict[spec.integer | str | None, Condition] = {}
         self.timeout = timeout
         # self.stopped = False
         self.read_lock = Lock()
@@ -97,13 +104,13 @@ class LSPClient(Thread):
             server_response = self.recv()
             if self.verbose:
                 print("THREAD received", str(server_response)[:50])
-            if 'method' in server_response and 'id' in server_response:
+            if "method" in server_response and "id" in server_response:
                 # print(server_response)
                 server_response = cast(spec.RequestMessage, server_response)
-                self.send(response(server_response['id'], None))
-            elif 'id' in server_response:
+                self.send(response(server_response["id"], None))
+            elif "id" in server_response:
                 server_response = cast(spec.ResponseMessage, server_response)
-                id = server_response['id']
+                id = server_response["id"]
                 self.responses[id] = server_response
                 if id in self.requests:
                     condition = self.requests[id]
@@ -112,11 +119,13 @@ class LSPClient(Thread):
                     condition.release()
                 if id == SHUTDOWN_ID:
                     break
-        print('LSP client terminated.')
+        print("LSP client terminated.")
 
-    def call(self, method: str, params: spec.array | spec.object) -> spec.ResponseMessage:
+    def call(
+        self, method: str, params: spec.array | spec.object
+    ) -> spec.ResponseMessage:
         message = request(method, params)
-        id = message['id']
+        id = message["id"]
         condition = Condition()
         self.requests[id] = condition
         condition.acquire()
@@ -153,11 +162,14 @@ class LSPClient(Thread):
         #     while True:
         #         self.recv()
 
-    def send(self, message: spec.RequestMessage | spec.ResponseMessage | spec.NotificationMessage):
+    def send(
+        self,
+        message: spec.RequestMessage | spec.ResponseMessage | spec.NotificationMessage,
+    ):
         content = json.dumps(message)
         content = add_header(content)
         if self.verbose:
-            print('SEND:', str(message)[:50])
+            print("SEND:", str(message)[:50])
         with self.write_lock:
             # print(content)
             self.stdin.write(content.encode())
@@ -174,7 +186,9 @@ class LSPClient(Thread):
     #         raise TimeoutError
     #     return self.recv()
 
-    def recv(self) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
+    def recv(
+        self,
+    ) -> spec.ResponseMessage | spec.RequestMessage | spec.NotificationMessage:
         with self.read_lock:
             # read header
             # Tolerance to Error
@@ -199,41 +213,47 @@ class LSPClient(Thread):
                 # assert line.endswith('\r\n'), repr(line)
                 # assert line.startswith(HEADER) and line.endswith('\r\n'), line
                 if not line:
-                    return cast(spec.ResponseMessage, {
-                        'jsonrpc': '2.0',
-                        'result': None,
-                        'id': None,
-                    })
-                if line.endswith('\r\n'):
+                    return cast(
+                        spec.ResponseMessage,
+                        {
+                            "jsonrpc": "2.0",
+                            "result": None,
+                            "id": None,
+                        },
+                    )
+                if line.endswith("\r\n"):
                     if (idx := line.find(HEADER)) != -1:
                         line = line[idx:]
                         break
 
             # get content length
-            content_len = int(line[len(HEADER):].strip())
+            content_len = int(line[len(HEADER) :].strip())
             line_breaks = self.stdout.readline().decode()
-            assert line_breaks == '\r\n', line_breaks
+            assert line_breaks == "\r\n", line_breaks
             response = self.stdout.read(content_len).decode()
             # if 'textDocument/publishDiagnostics' in response:
         if self.verbose:
             print(str(response)[:50])
         return json.loads(response)
 
-    initialize = d_call('initialize', spec.InitializeParams)
-    shutdown = d_call('shutdown', NoneType)
-    exit = d_notify('exit', NoneType)
-    initialized = d_notify('initialized', spec.InitializedParams)
+    initialize = d_call("initialize", spec.InitializeParams)
+    shutdown = d_call("shutdown", NoneType)
+    exit = d_notify("exit", NoneType)
+    initialized = d_notify("initialized", spec.InitializedParams)
     workspace_didChangeConfiguration = d_notify(
-        'textDocument/didChangeConfiguration', dict)
+        "textDocument/didChangeConfiguration", dict
+    )
     textDocument_didOpen = d_notify(
-        'textDocument/didOpen', spec.DidOpenTextDocumentParams)
+        "textDocument/didOpen", spec.DidOpenTextDocumentParams
+    )
     textDocument_didSave = d_notify(
-        'textDocument/didSave', spec.DidSaveTextDocumentParams)
+        "textDocument/didSave", spec.DidSaveTextDocumentParams
+    )
     textDocument_didChange = d_notify(
-        'textDocument/didChange', spec.DidChangeTextDocumentParams)
-    textDocument_completion = d_call(
-        'textDocument/completion', spec.CompletionParams)
-    newCompletion = d_call('newCompletion', spec.CompletionParams)
+        "textDocument/didChange", spec.DidChangeTextDocumentParams
+    )
+    textDocument_completion = d_call("textDocument/completion", spec.CompletionParams)
+    newCompletion = d_call("newCompletion", spec.CompletionParams)
 
     # @d_call
     # def _initialize(pid: int, proj_path: PathLike, java_home: str) -> RPC:  # type: ignore[misc] # noqa

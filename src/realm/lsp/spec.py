@@ -14,7 +14,9 @@ object: TypeAlias = Any
 
 # NOTE: used an experimenting feature of mypy: --enable-recursive-aliases
 LSPObject: TypeAlias = Dict[str, Any]
-LSPAny: TypeAlias = LSPObject | List['LSPAny'] | string | integer | uinteger | decimal | boolean | null
+LSPAny: TypeAlias = (
+    LSPObject | List["LSPAny"] | string | integer | uinteger | decimal | boolean | null
+)
 LSPArray: TypeAlias = List[LSPAny]
 
 
@@ -81,7 +83,7 @@ class CancelParams(TypedDict):
 
 class HoverParams(TypedDict):
     textDocument: string
-    position: 'Position'
+    position: "Position"
 
 
 class HoverResult(TypedDict):
@@ -241,7 +243,7 @@ class WorkspaceFolder(TypedDict):
     name: string
 
 
-TraceValue = Literal['off', 'messages', 'verbose']
+TraceValue = Literal["off", "messages", "verbose"]
 
 
 class InitializeParams(WorkDoneProgressParams):
@@ -297,5 +299,7 @@ class CompletionContext(TypedDict):
     triggerCharacter: NotRequired[string]
 
 
-class CompletionParams(TextDocumentPositionParams, WorkDoneProgressParams, PartialResultParams):
+class CompletionParams(
+    TextDocumentPositionParams, WorkDoneProgressParams, PartialResultParams
+):
     context: NotRequired[CompletionContext]

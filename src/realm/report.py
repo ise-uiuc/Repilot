@@ -33,7 +33,7 @@ class Reporter:
         result_dict: RepairResult,
         synthesis_times: int,
     ) -> None:
-        self.root = root
+        self.root = root.absolute()
         assert self.root.exists()
         self.config = config
         self.result_dict = result_dict
@@ -114,6 +114,18 @@ class Reporter:
                                     result.patch.content.splitlines(keepends=True),
                                     fromfile="bug",
                                     tofile="patch",
+                                )
+                            with open(
+                                save_dir / result.patch.path.with_suffix(".json").name,
+                                "w",
+                            ) as f:
+                                json.dump(
+                                    {
+                                        "path": str(result.patch.path.absolute()),
+                                        "content": result.patch.content,
+                                    },
+                                    f,
+                                    indent=2,
                                 )
                             with open(
                                 debug_dir / buggy_file_path.with_suffix(".hunk").name,
