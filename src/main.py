@@ -91,11 +91,11 @@ SYNTHESIS_CONFIG = SynthesisConfig(
 )
 
 
-def random_dir() -> str:
-    return datetime.now().strftime("results-%Y%m%d-%H%M%S")
+def random_dir(suffix: str) -> str:
+    return datetime.now().strftime(f"results-%Y%m%d-%H%M%S-{suffix}")
 
 
 if __name__ == "__main__":
-    result_dir = Path(args.dir if args.dir is not None else random_dir())
+    result_dir = Path(args.dir if args.dir is not None else random_dir(args.method))
     repairer = Repairer.init(META_CONFIG, result_dir, args.pre_allocate)
     repairer.repair(SYNTHESIS_CONFIG, args.bug)
