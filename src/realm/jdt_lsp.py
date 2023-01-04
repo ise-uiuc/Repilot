@@ -46,6 +46,7 @@ class JdtLspAnalyzer(Process):
         server_cmd: List[str],
         proj_path: PathLike,
         model: CodeT5ForRealm,
+        java8_home: str,
         verbose: bool = False,
     ) -> None:
         super().__init__()
@@ -53,7 +54,7 @@ class JdtLspAnalyzer(Process):
         self.server_cmd = server_cmd
         self.proj_path = proj_path
         # TODO: change this using config
-        self.java8_home = cast(str, os.getenv("JAVA8_HOME"))
+        self.java8_home = java8_home
         self.verbose = verbose
         self.counter = itertools.count(0)
         self.model = model

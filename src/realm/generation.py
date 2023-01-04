@@ -180,12 +180,11 @@ def char_may_trigger_completion(c: str) -> bool:
 
 
 class Synthesizer:
-    """This object can only call `synthesize` once. To make multiple calls, init multiple times"""
-
     def __init__(
         self,
         lm_context: LMContext,
-        lsp_contexts: List[LspContext],
+        connections: List[Connection],
+        text_file: TextFile,
         gen_method: SynthesisMethod,
     ) -> None:
         # Constants
@@ -195,22 +194,26 @@ class Synthesizer:
         self.inputs = self.model.encode(lm_context.prefix, lm_context.suffix).repeat(
             self.batch_size, 1
         )
-        self.lsp_contexts = lsp_contexts
-        assert len(self.lsp_contexts) > 0
-
-        # Constant
-        self.hunk_start_cursor = self.lsp_contexts[0].text_file.cursor
-        for text_file in map(lambda ctx: ctx.text_file, self.lsp_contexts):
-            assert text_file.cursor == self.hunk_start_cursor
-
-        # Memorizations
+        self.text_file = text_file
+        self.hunk_start_cursor = self.text_file.cursor
         self.gen_method = gen_method
-        if self.use_mem:
-            self.mem = Memorization.init()
+        self.connections = connections
+        assert len(connections) == self.batch_size
 
-        # This is initialized everytime calling `synthesize``
+        # States that are initialized everytime calling `synthesize``
+        self.lsp_contexts: Optional[List[LspContext]] = None
+        self.mem: Optional[Memorization] = None
         self.gen_state: Optional[GenerationState] = None
+
         # self.all_ids = torch.tensor(range(self.model.vocab_size)).to(utils.DEVICE).repeat(self.batch_size, 1)
+
+    def init_state(self):
+        self.gen_state = GenerationState.init(self.batch_size)
+        self.lsp_contexts = [
+            LspContext(self.text_file.copy(), conn) for conn in self.connections
+        ]
+        if self.use_mem and self.mem is None:
+            self.mem = Memorization.init()
 
     @property
     def use_mem(self) -> bool:
@@ -225,9 +228,12 @@ class Synthesizer:
         return self.inference_config.batch_size
 
     def synthesize(self) -> SynthesisResultBatch:
-        start_time = time.perf_counter()
+        self.init_state()
+        assert self.gen_state is not None
+        assert self.lsp_contexts is not None
+        assert len(self.lsp_contexts) == self.batch_size
 
-        self.gen_state = GenerationState.init(self.batch_size)
+        start_time = time.perf_counter()
         self.generate(
             do_sample=True,
             max_new_tokens=self.inference_config.max_new_tokens,
@@ -249,7 +255,7 @@ class Synthesizer:
                 start_index = self.hunk_start_cursor
                 end_index = patch_file.cursor
                 hunk = "".join(gen_context.generated_tokens)
-                assert patch_file.content[start_index:end_index] == hunk
+                assert (lhs := patch_file.content[start_index:end_index]) == hunk
                 results.append(
                     SynthesisSuccessful(
                         patch_file,
@@ -258,7 +264,6 @@ class Synthesizer:
                         hunk,
                     )
                 )
-
         cost = time.perf_counter() - start_time
         return SynthesisResultBatch(results, cost)
 
@@ -273,6 +278,7 @@ class Synthesizer:
 
     def plain_decode(self, probs: torch.Tensor) -> torch.LongTensor:
         assert self.gen_state is not None
+        assert self.lsp_contexts is not None
         gen_contexts = self.gen_state.gen_contexts
         next_token_ids = cast(
             torch.LongTensor, torch.multinomial(probs, num_samples=1).squeeze(1)
@@ -296,6 +302,7 @@ class Synthesizer:
         """Stateful method that updates the generated token ids and tokens (excluding special
         tokens) and returns the 'real' generation"""
         assert self.gen_state is not None
+        assert self.lsp_contexts is not None
         batch_is_failed = self.gen_state.batch_is_failed
         gen_contexts = self.gen_state.gen_contexts
         special_value = self.model.vocab_size
@@ -309,6 +316,7 @@ class Synthesizer:
 
         # The next token of batch `batch_idx` is set to `next_token_id`
         def update_batch_state(batch_idx: int, next_token_id: int):
+            assert self.lsp_contexts is not None
             batch_needs_to_process[batch_idx] = False
             next_token_ids[batch_idx] = next_token_id
             next_token = self.model.token_map[next_token_id]
@@ -323,6 +331,7 @@ class Synthesizer:
             start = time.perf_counter()
             probs_assign = 0.0
             if self.use_mem:
+                assert self.mem is not None
                 mem_infeasible_token_ids: List[List[int]] = []
                 mem_feasible_token_ids: List[Set[int]] = []
                 # mem_completions: List[Optional[List[dict]]] = []
@@ -368,6 +377,7 @@ class Synthesizer:
                         generated_ids = gen_contexts[batch_idx].generated_ids
                         # Make the current state infeasible
                         if self.use_mem and len(generated_ids) > 0:
+                            assert self.mem is not None
                             prev_state = pickle.dumps(generated_ids[:-1])
                             last_token_id = generated_ids[-1]
                             self.mem.infeasible_token_ids[prev_state].append(

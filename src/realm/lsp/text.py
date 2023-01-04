@@ -128,7 +128,9 @@ class TextFile(MutableTextDocument):
             f.write(self.content)
 
     def copy(self) -> "TextFile":
-        return TextFile(self.path, self.content)
+        text_file = TextFile(self.path, self.content)
+        text_file.cursor = self.cursor
+        return text_file
 
     def repeat(self, n: int, include_self=False) -> List["TextFile"]:
         return [self.copy() for _ in range(n - 1)] + [

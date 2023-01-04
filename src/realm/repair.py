@@ -180,6 +180,7 @@ class Repairer:
                             self.server_cmd_maker(),
                             Path(bug.proj_path),
                             self.model,
+                            str(self.config.java8_home),
                         ),
                     )
                 )
@@ -231,32 +232,24 @@ class Repairer:
             for (change_idx, change) in enumerate(reversed(buggy_file.changes)):
                 hunk_id = (buggy_file_idx, change_idx)
                 prefix, suffix = remove_buggy_hunk(text_file, change)
+                lm_context = gen.LMContext(
+                    self.model, prefix, suffix, config.lm_inference_config
+                )
+                synthesizer = gen.Synthesizer(
+                    lm_context, connections, text_file, config.method
+                )
                 for idx in range(config.n_samples):
                     print("Hunk index:", hunk_id)
                     print("Repair index:", idx)
-                    text_file_batch = text_file.repeat(config.batch_size)
-
-                    lm_context = gen.LMContext(
-                        self.model, prefix, suffix, config.lm_inference_config
-                    )
-
-                    lsp_contexts = [
-                        gen.LspContext(text_file, connection)
-                        for text_file, connection in zip(text_file_batch, connections)
-                    ]
-
-                    synthesizer = gen.Synthesizer(
-                        lm_context, lsp_contexts, config.method
-                    )
 
                     synthesis_result_batch = synthesizer.synthesize()
                     assert len(synthesis_result_batch.results) == config.batch_size
-                    print(synthesis_result_batch.time_cost)
                     for result in synthesis_result_batch.results:
                         if isinstance(result, SynthesisSuccessful):
                             print(result.hunk)
                         else:
                             print(result)
+                    print("Time cost:", synthesis_result_batch.time_cost)
                     buggy_file_path = Path(bug.proj_path) / buggy_file.path
                     assert buggy_file_path.exists()
                     self.reporter.add(

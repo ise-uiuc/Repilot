@@ -12,7 +12,6 @@ import uuid
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 # Checks
 assert shutil.which("defects4j")
-assert os.getenv("JAVA8_HOME")
 
 # def str_hash(s: str) -> int:
 #     return int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**8
@@ -20,13 +19,7 @@ assert os.getenv("JAVA8_HOME")
 # def compress(patch_group: List[TextFile]) -> int:
 #     return str_hash(''.join(re.sub(r'\s+', '', t.content) for t in patch_group))
 
-META_CONFIG = MetaConfig(
-    d4j_home=Path("/home/yuxiang/Developer/defects4j"),
-    d4j_checkout_root=Path("/JawTitan/yuxiang-data/Developer/d4j-checkout"),
-    jdt_ls_repo=Path("/home/yuxiang/fastd/Developer/eclipse.jdt.ls/"),
-    seed=0,
-)
-
+META_CONFIG = MetaConfig.from_json_file(Path("meta_config.json"))
 
 parser = argparse.ArgumentParser("REALM program repair")
 parser.add_argument(

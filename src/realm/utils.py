@@ -1,6 +1,18 @@
 import itertools
 import pickle
-from typing import Callable, Iterable, Iterator, List, Tuple, TypeVar, Optional, Any
+import json
+from typing import (
+    Callable,
+    Iterable,
+    Iterator,
+    List,
+    Tuple,
+    TypeVar,
+    Optional,
+    Any,
+    Protocol,
+    Type,
+)
 from unidiff.patch import Line
 from pathlib import Path
 from multiprocessing.connection import Connection
@@ -169,3 +181,22 @@ class ConnectionWrapper:
 
     def recv(self) -> Any:
         return self.conn.recv()
+
+
+class JsonSerializable(Protocol):
+    def save_json(self, path: Path):
+        with open(path, "w") as f:
+            json.dump(self.to_json(), f, indent=2)
+
+    def to_json(self) -> Any:
+        ...
+
+    @classmethod
+    def from_json_file(cls: Type[T], path: Path) -> T:
+        with open(path) as f:
+            d = json.load(f)
+        return cls.from_json(d)  # type: ignore # noqa
+
+    @classmethod
+    def from_json(cls: Type[T], d: Any) -> T:
+        ...

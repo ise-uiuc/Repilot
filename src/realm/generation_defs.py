@@ -61,11 +61,26 @@ class SynthesisResultBatch(NamedTuple):
 # MODEL = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
 
 
-class LMInferenceConfig(NamedTuple):
+@dataclass(frozen=True)
+class LMInferenceConfig(utils.JsonSerializable):
     batch_size: int
     temperature: float
     top_k: int
     max_new_tokens: int
 
     def to_json(self) -> Any:
-        return self._asdict()
+        return {
+            "batch_size": self.batch_size,
+            "temperature": self.temperature,
+            "top_k": self.top_k,
+            "max_new_tokens": self.max_new_tokens,
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "LMInferenceConfig":
+        return LMInferenceConfig(
+            int(d["batch_size"]),
+            float(d["temperature"]),
+            int(d["top_k"]),
+            int(d["max_new_tokens"]),
+        )
