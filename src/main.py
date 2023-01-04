@@ -1,21 +1,12 @@
 from realm.repair import Repairer
 from realm.config import MetaConfig, SynthesisConfig, LMInferenceConfig, SynthesisMethod
-from typing import cast
 from pathlib import Path
 import os
-import shutil
 import argparse
-import uuid
-import torch
-
-# if torch.cuda.is_available():
-#     free_memory, _ = cast(tuple[int, int], torch.cuda.mem_get_info())
-#     torch.cuda.caching_allocator_alloc(free_memory - 1024 ** 3)
+from datetime import datetime
 
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-# Checks
-assert shutil.which("defects4j")
 
 # def str_hash(s: str) -> int:
 #     return int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**8
@@ -77,6 +68,12 @@ parser.add_argument(
     type=int,
     help="Max number of tokens to generate for each hunk",
 )
+parser.add_argument(
+    "--pre-allocate",
+    required=False,
+    action="store_true",
+    help="Whether to do pre-allocation",
+)
 args = parser.parse_args()
 
 INFERENCE_CONFIG = LMInferenceConfig(
@@ -93,11 +90,12 @@ SYNTHESIS_CONFIG = SynthesisConfig(
     }[args.method],
 )
 
-if __name__ == "__main__":
-    result_dir = Path(f"results-{uuid.uuid4()}" if args.dir is None else args.dir)
-    if os.getenv("DEBUG") is not None:
-        result_dir = Path("../results") / "temp" / result_dir
-    result_dir.parent.mkdir(exist_ok=True, parents=True)
 
-    repairer = Repairer.init(META_CONFIG, result_dir)
+def random_dir() -> str:
+    return datetime.now().strftime("results-%Y%m%d-%H%M%S")
+
+
+if __name__ == "__main__":
+    result_dir = Path(args.dir if args.dir is not None else random_dir())
+    repairer = Repairer.init(META_CONFIG, result_dir, args.pre_allocate)
     repairer.repair(SYNTHESIS_CONFIG, args.bug)

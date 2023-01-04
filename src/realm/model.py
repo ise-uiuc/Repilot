@@ -1,6 +1,6 @@
 from transformers import T5ForConditionalGeneration, T5Config, AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
-from typing import List, Optional, Union, TypeVar
+from typing import List, Optional, Union, TypeVar, cast
 from realm import utils
 from pathlib import Path
 import torch
@@ -144,3 +144,16 @@ class CodeT5Large(CodeT5ForRealm):
     @classmethod
     def is_special_token(cls, token: str) -> bool:
         return (token in CODET5_LARGE_SPECIAL_TOKENS) or token.startswith("<extra_id_")
+
+    def pre_allocate(self):
+        """https://pytorch.org/tutorials/recipes/recipes/tuning_guide.html#pre-allocate-memory-in-case-of-variable-input-length"""
+        if torch.cuda.is_available():
+            free_memory, _ = cast(tuple[int, int], torch.cuda.mem_get_info())
+            free_memory -= 5 * 1024**3
+            one_batch_increase = 120 * (1024**2)
+            repeat = free_memory // one_batch_increase
+            self.generate(
+                torch.zeros(self.max_tokens, dtype=torch.long).cuda().repeat(repeat, 1),
+                max_new_tokens=50,
+            )
+            # No need to do backward

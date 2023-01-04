@@ -98,12 +98,16 @@ class Repairer:
         self.active_connection_analyzer_pairs = active_connection_analyzer_pairs
 
     @staticmethod
-    def init(config: MetaConfig, report_dir: Path) -> "Repairer":
+    def init(config: MetaConfig, report_dir: Path, pre_allocate: bool) -> "Repairer":
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
         reporter = Reporter.create(report_dir, config)
-        model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # n oqa
+        model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
         d4j = Defects4J(config.d4j_home, config.d4j_checkout_root)
+        if pre_allocate:
+            print("Doing pre-allocation..")
+            model.pre_allocate()
+            print("Done.")
         return Repairer(config, model, d4j, reporter, [])
 
     def server_cmd_maker(self) -> list[str]:
