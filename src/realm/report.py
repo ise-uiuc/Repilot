@@ -66,6 +66,7 @@ class Reporter:
 
     @staticmethod
     def load(root: Path) -> "Reporter":
+        assert root.exists()
         with open(root / META_CONFIG_FNAME) as f:
             config: MetaConfig = json.load(f)
         repair_configs: list[RepairConfig] = []
@@ -79,8 +80,7 @@ class Reporter:
                 RepairConfig.from_json_file(d_repair / REPAIR_CONFIG_FNAME)
             )
             result_dict: RepairResult = {}
-            for d_bug_id in d_repair.iterdir():
-                assert d_bug_id.is_dir()
+            for d_bug_id in filter(Path.is_dir, d_repair.iterdir()):
                 bug_id = d_bug_id.name
                 hunk_dict = result_dict.setdefault(bug_id, {})
                 for d_hunk_id in d_bug_id.iterdir():
@@ -156,6 +156,7 @@ class Reporter:
                     hunk_idx_str = f"{hunk_idx[0]}-{hunk_idx[1]}"
                     save_dir = self.root / repair_dir / bug_id / hunk_idx_str
                     save_dir.mkdir(exist_ok=True, parents=True)
+                    tagged_result.is_dumpped = True
                     tagged_result.save_json(save_dir / f"{idx}.json")
                     # for result in result_batch.results:
                     #     idx += 1
