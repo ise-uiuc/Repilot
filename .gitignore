@@ -1,5 +1,7 @@
 __pycache__
 .mypy_cache
 .vscode
-.path_to_data
+.lsp_data
 results-*
+.github
+src/test.py
