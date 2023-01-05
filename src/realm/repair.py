@@ -1,6 +1,6 @@
 from . import utils, generation as gen
 from .model import CodeT5ForRealm, CodeT5Large
-from .report import Reporter
+from .reporters import RepairReporter
 from .config import MetaConfig, RepairConfig
 from .generation_defs import SynthesisSuccessful
 from .jdt_lsp import JdtLspAnalyzer, Message
@@ -88,7 +88,7 @@ class Repairer:
         config: MetaConfig,
         model: CodeT5ForRealm,
         d4j: Defects4J,
-        reporter: Reporter,
+        reporter: RepairReporter,
         active_connection_analyzer_pairs: List[Tuple[Connection, JdtLspAnalyzer]],
     ) -> None:
         self.config = config
@@ -101,7 +101,7 @@ class Repairer:
     def init(config: MetaConfig, report_dir: Path, pre_allocate: bool) -> "Repairer":
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
-        reporter = Reporter.create(report_dir, config)
+        reporter = RepairReporter.create(report_dir, config)
         model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
         d4j = Defects4J(config.d4j_home, config.d4j_checkout_root)
         if pre_allocate:
