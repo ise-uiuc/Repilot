@@ -1,6 +1,7 @@
 from . import utils, generation as gen
 from .model import CodeT5ForRealm, CodeT5Large
-from .reporters import RepairReporter
+from .report import Reporter
+from .results import RepairResult
 from .config import MetaConfig, RepairConfig
 from .generation_defs import SynthesisSuccessful
 from .jdt_lsp import JdtLspAnalyzer, Message
@@ -88,7 +89,7 @@ class Repairer:
         config: MetaConfig,
         model: CodeT5ForRealm,
         d4j: Defects4J,
-        reporter: RepairReporter,
+        reporter: Reporter,
         active_connection_analyzer_pairs: List[Tuple[Connection, JdtLspAnalyzer]],
     ) -> None:
         self.config = config
@@ -101,7 +102,7 @@ class Repairer:
     def init(config: MetaConfig, report_dir: Path, pre_allocate: bool) -> "Repairer":
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
-        reporter = RepairReporter.create(report_dir, config)
+        reporter = Reporter.create_repair(report_dir, config)
         model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
         d4j = Defects4J(config.d4j_home, config.d4j_checkout_root)
         if pre_allocate:
@@ -124,7 +125,8 @@ class Repairer:
 
     def repair(self, config: RepairConfig, hunk_only: bool = True):
         self.fix_seed()
-        self.reporter.dump_repair_config(config)
+        report_result = cast(RepairResult, self.reporter.result)
+        report_result.add_repair_config(config)
         pattern = re.compile(config.bug_pattern)
         bugs_considered = self.d4j.single_hunk_bugs if hunk_only else self.d4j.all_bugs
         bugs_to_repair = {
@@ -237,7 +239,8 @@ class Repairer:
                     print("Time cost:", synthesis_result_batch.time_cost)
                     buggy_file_path = Path(bug.proj_path) / buggy_file.path
                     assert buggy_file_path.exists()
-                    self.reporter.add(
+                    report_result = cast(RepairResult, self.reporter.result)
+                    report_result.add(
                         bug_id, hunk_id, synthesis_result_batch, buggy_file_path
                     )
                     self.reporter.save()

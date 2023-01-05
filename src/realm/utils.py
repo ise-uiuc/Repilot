@@ -3,6 +3,7 @@ import pickle
 import json
 from typing import (
     Callable,
+    Generic,
     Iterable,
     Iterator,
     List,
@@ -12,10 +13,13 @@ from typing import (
     Any,
     Protocol,
     Type,
+    ClassVar,
+    cast,
 )
 from unidiff.patch import Line
 from pathlib import Path
 from multiprocessing.connection import Connection
+from dataclasses import dataclass
 import torch
 
 T = TypeVar("T")

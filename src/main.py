@@ -4,8 +4,10 @@ from pathlib import Path
 import os
 import argparse
 from datetime import datetime
+import torch
 
-
+if torch.cuda.is_available():
+    _EMPTY = torch.empty((1,)).cuda()
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 # def str_hash(s: str) -> int:
