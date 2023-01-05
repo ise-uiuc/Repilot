@@ -183,13 +183,29 @@ class ConnectionWrapper:
         return self.conn.recv()
 
 
-class JsonSerializable(Protocol):
+class IORetrospective(Protocol):
+    @classmethod
+    def load(cls: Type[T], path: Path) -> T:
+        ...
+
+    def dump(self, path: Path):
+        ...
+
+
+class JsonSerializable(IORetrospective):
     def save_json(self, path: Path):
         with open(path, "w") as f:
             json.dump(self.to_json(), f, indent=2)
 
     def to_json(self) -> Any:
         ...
+
+    @classmethod
+    def load(cls: Type[T], path: Path) -> T:
+        return cls.from_json_file(path)  # type: ignore # noqa
+
+    def dump(self, path: Path):
+        self.save_json(path)
 
     @classmethod
     def from_json_file(cls: Type[T], path: Path) -> T:

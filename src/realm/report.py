@@ -8,8 +8,8 @@ from typing import Any, cast
 import git
 
 from .config import MetaConfig, RepairConfig
-from .generation_defs import SynthesisResultBatch
-from .utils import JsonSerializable
+from .generation_defs import SynthesisResultBatch, AvgSynthesisResult
+from .utils import JsonSerializable, IORetrospective
 
 META_CONFIG_FNAME = "meta_config.json"
 REPAIR_CONFIG_FNAME = "repair_config.json"
@@ -38,23 +38,153 @@ class TaggedResult(JsonSerializable):
         )
 
 
+# bug_id -> hunk_id -> result
 RepairResult = dict[str, dict[tuple[int, int], list[TaggedResult]]]
+# repair_idx -> repair_result
 RepairResults = list[RepairResult]
 
 
-class Reporter:
-    def __init__(
-        self,
-        root: Path,
-        config: MetaConfig,
-        results: RepairResults,
-        repair_configs: list[RepairConfig],
-    ) -> None:
-        self.root = root.absolute()
+@dataclass(frozen=True)
+class AvgHunkPatch(JsonSerializable):
+    avg_result: AvgSynthesisResult
+    buggy_file_path: Path
+    is_duplicate: bool
+
+    def to_json(self) -> Any:
+        return {
+            "avg_result": AvgSynthesisResult,
+            "buggy_file_path": str(self.buggy_file_path),
+            "is_duplicate": self.is_duplicate,
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "AvgHunkPatch":
+        return AvgHunkPatch(
+            AvgSynthesisResult.from_json(d["avg_result"]),
+            Path(d["buggy_file_path"]),
+            bool(d["is_duplicate"]),
+        )
+
+
+AvgPatch = list[AvgHunkPatch]
+
+
+@dataclass(frozen=True)
+class AnalysisResult(JsonSerializable):
+    # bug_id -> patch_idx -> entire patch
+    result_dict: dict[str, list[AvgPatch]]
+
+    def to_json(self) -> Any:
+        return {
+            bug_id: [
+                [hunk.to_json() for hunk in avg_patch] for avg_patch in avg_patches
+            ]
+            for bug_id, avg_patches in self.result_dict.items()
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "AnalysisResult":
+        return AnalysisResult(
+            {
+                bug_id: [
+                    [AvgHunkPatch.from_json(hunk) for hunk in avg_patch]
+                    for avg_patch in avg_patches
+                ]
+                for bug_id, avg_patches in d.items()
+            }
+        )
+
+
+AnalysisResults = list[AnalysisResult]
+
+
+@dataclass
+class Reporter(IORetrospective):
+    root: Path
+    config: MetaConfig
+    results: RepairResults
+    repair_configs: list[RepairConfig]
+
+    def __post_init__(self):
         assert self.root.exists()
-        self.config = config
-        self.results = results
-        self.repair_configs = repair_configs
+
+    def analysis(self) -> AnalysisResults:
+        all_appeared: dict[str, set[str]] = {}
+        a_results: AnalysisResults = []
+        for result in self.results:
+            result_dict: dict[str, list[AvgPatch]] = {}
+            for bug_id, hunk_dict in result.items():
+                patches = result_dict.setdefault(bug_id, [])
+                # zipped = zip(
+                #     *(
+                #         tagged_results
+                #         for _, tagged_results in hunk_dict.items()
+                #     )
+                # )
+                result_iter = (
+                    [
+                        (
+                            avg_result,
+                            tagged_result.buggy_file_path,
+                        )
+                        for tagged_result in tagged_results
+                        for avg_result in tagged_result.synthesis_result_batch.to_average_results()
+                    ]
+                    for _, tagged_results in hunk_dict.items()
+                )
+                zipped = zip(*result_iter)
+                appeared = all_appeared.setdefault(bug_id, set())
+                for patch in zipped:
+                    assert len(set(str(hunk[1]) for hunk in patch)) == 1
+                    is_duplicate = False
+                    if all(
+                        avg_result.result.successful_result is not None
+                        for avg_result, _ in patch
+                    ):
+                        concat_hunk_str = "".join(
+                            avg_result.result.successful_result.hunk
+                            for avg_result, _ in patch
+                        )
+                        if concat_hunk_str in appeared:
+                            is_duplicate = True
+                        else:
+                            appeared.add(concat_hunk_str)
+                    patches.append(
+                        [
+                            AvgHunkPatch(avg_result, path, is_duplicate)
+                            for avg_result, path in patch
+                        ]
+                    )
+                # for patch_batch in zipped:
+                #     if any(hunk.synthesis_result_batch for hunk in patch)
+
+                # for hunk_id, tagged_results in hunk_dict.items():
+                #     result_iter = (
+                #         (
+                #             avg_result,
+                #             tagged_result.buggy_file_path,
+                #         )
+                #         for tagged_result in tagged_results
+                #         for avg_result in tagged_result.synthesis_result_batch.to_average_results()
+                #     )
+                #     for patch_idx, (avg_result, buggy_path) in enumerate(result_iter):
+                #         if patch_idx >= len(patches):
+                #             patch: AvgPatch = []
+                #             patches.append(patch)
+                #         else:
+                #             patch = patches[patch_idx]
+                #         bug_hunk_id = (bug_id, hunk_id[0], hunk_id[1])
+                #         appeared = all_appeared.setdefault(bug_hunk_id, set())
+                #         success = avg_result.result.successful_result
+                #         is_duplicate = False
+                #         if success is not None:
+                #             if success.hunk in appeared:
+                #                 is_duplicate = True
+                #             else:
+                #                 appeared.add(success.hunk)
+                #         patch.append(AvgHunkPatch(avg_result, buggy_path, is_duplicate))
+            a_results.append(AnalysisResult(result_dict))
+        return a_results
 
     @staticmethod
     def create(root: Path, config: MetaConfig) -> "Reporter":
@@ -64,8 +194,8 @@ class Reporter:
         reporter.dump_metadata()
         return reporter
 
-    @staticmethod
-    def load(root: Path) -> "Reporter":
+    @classmethod
+    def load(cls, root: Path) -> "Reporter":
         assert root.exists()
         with open(root / META_CONFIG_FNAME) as f:
             config: MetaConfig = json.load(f)
@@ -143,7 +273,7 @@ class Reporter:
         tagged_results = hunk_dict.setdefault(hunk_id, [])
         tagged_results.append(TaggedResult(result, buggy_file_path, False))
 
-    def save(self):
+    def dump(self, root: Path):
         assert len(self.repair_configs) > 0
         assert len(self.repair_configs) == len(self.results)
         repair_dir = REPAIR_RESULT_PATH_PREFIX + str(len(self.repair_configs) - 1)
@@ -154,57 +284,13 @@ class Reporter:
                     if tagged_result.is_dumpped:
                         continue
                     hunk_idx_str = f"{hunk_idx[0]}-{hunk_idx[1]}"
-                    save_dir = self.root / repair_dir / bug_id / hunk_idx_str
+                    save_dir = root / repair_dir / bug_id / hunk_idx_str
                     save_dir.mkdir(exist_ok=True, parents=True)
                     tagged_result.is_dumpped = True
                     tagged_result.save_json(save_dir / f"{idx}.json")
-                    # for result in result_batch.results:
-                    #     idx += 1
-                    #     if isinstance(result, Unfinished):
-                    #         (save_dir / str(Unfinished)).touch(exist_ok=True)
-                    #     elif isinstance(result, PrunedHalfway):
-                    #         (save_dir / str(PrunedHalfway)).touch(exist_ok=True)
-                    #     else:
-                    #         assert isinstance(result, SynthesisSuccessful)
-                    #         debug_dir = save_dir / "debug"
-                    #         debug_dir.mkdir(exist_ok=True, parents=False)
-                    #         buggy_file_path = tagged_result.buggy_file_path
-                    #         with open(buggy_file_path) as f:
-                    #             buggy_file_lines = f.readlines()
-                    #             assert isinstance(result, SynthesisSuccessful)
-                    #             unified_diff = difflib.unified_diff(
-                    #                 buggy_file_lines,
-                    #                 result.patch.content.splitlines(keepends=True),
-                    #                 fromfile="bug",
-                    #                 tofile="patch",
-                    #             )
-                    #         with open(
-                    #             save_dir / result.patch.path.with_suffix(".json").name,
-                    #             "w",
-                    #         ) as f:
-                    #             json.dump(
-                    #                 {
-                    #                     "path": str(result.patch.path.absolute()),
-                    #                     "content": result.patch.content,
-                    #                     "time": avg_time,
-                    #                     "hunk": hunk_idx,
-                    #                     "synthesis_config": len(self.repair_configs)
-                    #                     - 1,
-                    #                 },
-                    #                 f,
-                    #                 indent=2,
-                    #             )
-                    #         with open(
-                    #             debug_dir / buggy_file_path.with_suffix(".hunk").name,
-                    #             "w",
-                    #         ) as f:
-                    #             f.write(result.hunk)
-                    #         with open(
-                    #             debug_dir / buggy_file_path.with_suffix(".diff").name,
-                    #             "w",
-                    #         ) as f:
-                    #             f.writelines(unified_diff)
-                    # tagged_result.is_dumpped = True
+
+    def save(self):
+        self.dump(self.root)
 
 
 RULE = "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
@@ -226,3 +312,52 @@ def log_git_repo(f: io.TextIOBase, tag: str, repo_path: Path, new_line: bool = T
     )
     if new_line:
         f.write("\n")
+
+
+# for result in result_batch.results:
+#     idx += 1
+#     if isinstance(result, Unfinished):
+#         (save_dir / str(Unfinished)).touch(exist_ok=True)
+#     elif isinstance(result, PrunedHalfway):
+#         (save_dir / str(PrunedHalfway)).touch(exist_ok=True)
+#     else:
+#         assert isinstance(result, SynthesisSuccessful)
+#         debug_dir = save_dir / "debug"
+#         debug_dir.mkdir(exist_ok=True, parents=False)
+#         buggy_file_path = tagged_result.buggy_file_path
+#         with open(buggy_file_path) as f:
+#             buggy_file_lines = f.readlines()
+#             assert isinstance(result, SynthesisSuccessful)
+#             unified_diff = difflib.unified_diff(
+#                 buggy_file_lines,
+#                 result.patch.content.splitlines(keepends=True),
+#                 fromfile="bug",
+#                 tofile="patch",
+#             )
+#         with open(
+#             save_dir / result.patch.path.with_suffix(".json").name,
+#             "w",
+#         ) as f:
+#             json.dump(
+#                 {
+#                     "path": str(result.patch.path.absolute()),
+#                     "content": result.patch.content,
+#                     "time": avg_time,
+#                     "hunk": hunk_idx,
+#                     "synthesis_config": len(self.repair_configs)
+#                     - 1,
+#                 },
+#                 f,
+#                 indent=2,
+#             )
+#         with open(
+#             debug_dir / buggy_file_path.with_suffix(".hunk").name,
+#             "w",
+#         ) as f:
+#             f.write(result.hunk)
+#         with open(
+#             debug_dir / buggy_file_path.with_suffix(".diff").name,
+#             "w",
+#         ) as f:
+#             f.writelines(unified_diff)
+# tagged_result.is_dumpped = True

@@ -76,9 +76,22 @@ class SynthesisResult(utils.JsonSerializable):
         )
 
 
-class AvgSynthesisResult(NamedTuple):
+@dataclass(frozen=True)
+class AvgSynthesisResult(utils.JsonSerializable):
     result: SynthesisResult
     avg_time_cost: float
+
+    def to_json(self) -> Any:
+        return {
+            "result": self.result.to_json(),
+            "avg_time_cost": self.avg_time_cost,
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "AvgSynthesisResult":
+        return AvgSynthesisResult(
+            SynthesisResult.from_json(d["result"]), float(d["avg_time_cost"])
+        )
 
 
 @dataclass(frozen=True)
