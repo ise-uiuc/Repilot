@@ -1,5 +1,5 @@
 from realm.repair import Repairer
-from realm.config import MetaConfig, SynthesisConfig, LMInferenceConfig, SynthesisMethod
+from realm.config import MetaConfig, RepairConfig, LMInferenceConfig, SynthesisMethod
 from pathlib import Path
 import os
 import argparse
@@ -80,7 +80,7 @@ INFERENCE_CONFIG = LMInferenceConfig(
     args.batch_size, args.temperature, args.top_k, args.n_max_tokens
 )
 
-SYNTHESIS_CONFIG = SynthesisConfig(
+SYNTHESIS_CONFIG = RepairConfig(
     args.n_samples,
     INFERENCE_CONFIG,
     {
@@ -88,6 +88,7 @@ SYNTHESIS_CONFIG = SynthesisConfig(
         "pruned-mem": SynthesisMethod.PRUNED_MEM,
         "plain": SynthesisMethod.PLAIN,
     }[args.method],
+    args.bug,
 )
 
 

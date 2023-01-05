@@ -145,6 +145,10 @@ class Defects4J:
         proj, id_str = bug_id.split("-")
         return proj, id_str
 
+    @staticmethod
+    def form_bug_id(proj: str, id_str: str) -> str:
+        return proj + "-" + id_str
+
     @property
     def d4j_executable(self) -> Path:
         return self.d4j_home / "framework" / "bin" / "defects4j"

@@ -1,29 +1,45 @@
-import difflib
 import io
 import json
-from pathlib import Path
+import sys
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import git
 
-from .config import MetaConfig, SynthesisConfig
-from .d4j import Defects4J
-from .generation_defs import (
-    PrunedHalfway,
-    SynthesisResultBatch,
-    SynthesisSuccessful,
-    Unfinished,
-)
+from .config import MetaConfig, RepairConfig
+from .generation_defs import SynthesisResultBatch
+from .utils import JsonSerializable
+
+META_CONFIG_FNAME = "meta_config.json"
+REPAIR_CONFIG_FNAME = "repair_config.json"
+REPAIR_RESULT_PATH_PREFIX = "Repair-"
 
 
 @dataclass
-class TaggedResult:
+class TaggedResult(JsonSerializable):
     synthesis_result_batch: SynthesisResultBatch
     buggy_file_path: Path
     is_dumpped: bool
 
+    def to_json(self) -> Any:
+        return {
+            "synthesis_result_batch": self.synthesis_result_batch.to_json(),
+            "buggy_file_path": str(self.buggy_file_path),
+            "is_dumpped": self.is_dumpped,
+        }
+
+    @classmethod
+    def from_json(cls, d: Any) -> "TaggedResult":
+        return TaggedResult(
+            SynthesisResultBatch.from_json(d["synthesis_result_batch"]),
+            Path(d["buggy_file_path"]),
+            bool(d["is_dumpped"]),
+        )
+
 
 RepairResult = dict[str, dict[tuple[int, int], list[TaggedResult]]]
+RepairResults = list[RepairResult]
 
 
 class Reporter:
@@ -31,37 +47,64 @@ class Reporter:
         self,
         root: Path,
         config: MetaConfig,
-        result_dict: RepairResult,
-        synthesis_times: int,
+        results: RepairResults,
+        repair_configs: list[RepairConfig],
     ) -> None:
         self.root = root.absolute()
         assert self.root.exists()
         self.config = config
-        self.result_dict = result_dict
-        self.synthesis_times = synthesis_times
+        self.results = results
+        self.repair_configs = repair_configs
 
     @staticmethod
     def create(root: Path, config: MetaConfig) -> "Reporter":
         root.mkdir()
         print(f"Metadata will be saved in {root}")
-        reporter = Reporter(root, config, {}, 0)
+        reporter = Reporter(root, config, [], [])
         reporter.dump_metadata()
         return reporter
 
     @staticmethod
-    def load(root: Path):
-        raise NotImplementedError
+    def load(root: Path) -> "Reporter":
+        with open(root / META_CONFIG_FNAME) as f:
+            config: MetaConfig = json.load(f)
+        repair_configs: list[RepairConfig] = []
+        # synth_times_jsons = list(root.glob(REPAIR_CONFIG_FPREFIX + "*"))
+        # synth_times_jsons.sort(
+        #     key=lambda f: int(f.name[len(REPAIR_CONFIG_FPREFIX) :])
+        # )
+        # synth_times_list = list(map(RepairConfig.from_json_file, synth_times_jsons))
+
+        results: RepairResults = []
+        repair_dirs = list(filter(Path.is_dir, root.iterdir()))
+        repair_dirs.sort(
+            key=lambda dir: int(dir.name[len(REPAIR_RESULT_PATH_PREFIX) :])
+        )
+        for d_repair in repair_dirs:
+            result_dict: RepairResult = {}
+            for d_bug_id in d_repair.iterdir():
+                assert d_bug_id.is_dir()
+                bug_id = d_bug_id.name
+                hunk_dict = result_dict.setdefault(bug_id, {})
+                # for d_bug_id.iterdir()
+            results.append(result_dict)
+        return Reporter(root, config, results, repair_configs)
 
     def dump_metadata(self):
-        self.config.save_json(self.root / "meta_config.json")
+        self.config.save_json(self.root / META_CONFIG_FNAME)
+        with open(self.root / "sys_args.txt", "w") as f:
+            json.dump(sys.argv, f)
         with open(self.root / "gen_meta.txt", "w") as f:
             log_git_repo(f, "Repair tool", Path("."))
             log_git_repo(f, "Defects4J", self.config.d4j_home)
             log_git_repo(f, "Language server", self.config.jdt_ls_repo)
             f.write(f"Defects4J checkout path: {self.config.d4j_checkout_root}\n")
 
-    def dump_synthesis_config(self, config: SynthesisConfig):
-        config.save_json(self.root / f"synthesis_config_{self.synthesis_times}.json")
+    def dump_repair_config(self, config: RepairConfig):
+        path = self.root / (REPAIR_RESULT_PATH_PREFIX + str(len(self.repair_configs)))
+        path.mkdir()
+        config.save_json(path / REPAIR_CONFIG_FNAME)
+        self.repair_configs.append(config)
 
     def report_timeout_error(self):
         path = self.root / "timeout.times"
@@ -80,68 +123,76 @@ class Reporter:
         result: SynthesisResultBatch,
         buggy_file_path: Path,
     ) -> None:
-        hunk_dict = self.result_dict.setdefault(bug_id, {})
+        assert len(self.repair_configs) > 0
+        if len(self.results) != len(self.repair_configs):
+            assert len(self.repair_configs) == len(self.results) + 1
+            self.results.append({})
+        result_dict = self.results[-1]
+        hunk_dict = result_dict.setdefault(bug_id, {})
         tagged_results = hunk_dict.setdefault(hunk_id, [])
         tagged_results.append(TaggedResult(result, buggy_file_path, False))
 
     def save(self):
-        for bug_id, hunk_dict in self.result_dict.items():
-            proj, id_str = Defects4J.split_bug_id(bug_id)
+        assert len(self.repair_configs) > 0
+        assert len(self.repair_configs) == len(self.results)
+        repair_dir = REPAIR_RESULT_PATH_PREFIX + str(len(self.repair_configs) - 1)
+        result_dict = self.results[-1]
+        for bug_id, hunk_dict in result_dict.items():
             for hunk_idx, tagged_results in hunk_dict.items():
-                idx = 0
-                for tagged_result in tagged_results:
-                    result_batch = tagged_result.synthesis_result_batch
+                for idx, tagged_result in enumerate(tagged_results):
                     if tagged_result.is_dumpped:
-                        idx += len(result_batch.results)
                         continue
-                    avg_time = result_batch.time_cost / len(result_batch.results)
-                    for result in result_batch.results:
-                        idx += 1
-                        save_dir = self.root / proj / id_str / str(idx)
-                        save_dir.mkdir(exist_ok=True, parents=True)
-                        if isinstance(result, Unfinished):
-                            (save_dir / str(Unfinished)).touch(exist_ok=True)
-                        elif isinstance(result, PrunedHalfway):
-                            (save_dir / str(PrunedHalfway)).touch(exist_ok=True)
-                        else:
-                            assert isinstance(result, SynthesisSuccessful)
-                            debug_dir = save_dir / "debug"
-                            debug_dir.mkdir(exist_ok=True, parents=False)
-                            buggy_file_path = tagged_result.buggy_file_path
-                            with open(buggy_file_path) as f:
-                                buggy_file_lines = f.readlines()
-                                assert isinstance(result, SynthesisSuccessful)
-                                unified_diff = difflib.unified_diff(
-                                    buggy_file_lines,
-                                    result.patch.content.splitlines(keepends=True),
-                                    fromfile="bug",
-                                    tofile="patch",
-                                )
-                            with open(
-                                save_dir / result.patch.path.with_suffix(".json").name,
-                                "w",
-                            ) as f:
-                                json.dump(
-                                    {
-                                        "path": str(result.patch.path.absolute()),
-                                        "content": result.patch.content,
-                                        "time": avg_time,
-                                        "hunk": hunk_idx,
-                                    },
-                                    f,
-                                    indent=2,
-                                )
-                            with open(
-                                debug_dir / buggy_file_path.with_suffix(".hunk").name,
-                                "w",
-                            ) as f:
-                                f.write(result.hunk)
-                            with open(
-                                debug_dir / buggy_file_path.with_suffix(".diff").name,
-                                "w",
-                            ) as f:
-                                f.writelines(unified_diff)
-                    tagged_result.is_dumpped = True
+                    hunk_idx_str = f"{hunk_idx[0]}-{hunk_idx[1]}"
+                    save_dir = self.root / repair_dir / bug_id / hunk_idx_str
+                    save_dir.mkdir(exist_ok=True, parents=True)
+                    tagged_result.save_json(save_dir / str(idx))
+                    # for result in result_batch.results:
+                    #     idx += 1
+                    #     if isinstance(result, Unfinished):
+                    #         (save_dir / str(Unfinished)).touch(exist_ok=True)
+                    #     elif isinstance(result, PrunedHalfway):
+                    #         (save_dir / str(PrunedHalfway)).touch(exist_ok=True)
+                    #     else:
+                    #         assert isinstance(result, SynthesisSuccessful)
+                    #         debug_dir = save_dir / "debug"
+                    #         debug_dir.mkdir(exist_ok=True, parents=False)
+                    #         buggy_file_path = tagged_result.buggy_file_path
+                    #         with open(buggy_file_path) as f:
+                    #             buggy_file_lines = f.readlines()
+                    #             assert isinstance(result, SynthesisSuccessful)
+                    #             unified_diff = difflib.unified_diff(
+                    #                 buggy_file_lines,
+                    #                 result.patch.content.splitlines(keepends=True),
+                    #                 fromfile="bug",
+                    #                 tofile="patch",
+                    #             )
+                    #         with open(
+                    #             save_dir / result.patch.path.with_suffix(".json").name,
+                    #             "w",
+                    #         ) as f:
+                    #             json.dump(
+                    #                 {
+                    #                     "path": str(result.patch.path.absolute()),
+                    #                     "content": result.patch.content,
+                    #                     "time": avg_time,
+                    #                     "hunk": hunk_idx,
+                    #                     "synthesis_config": len(self.repair_configs)
+                    #                     - 1,
+                    #                 },
+                    #                 f,
+                    #                 indent=2,
+                    #             )
+                    #         with open(
+                    #             debug_dir / buggy_file_path.with_suffix(".hunk").name,
+                    #             "w",
+                    #         ) as f:
+                    #             f.write(result.hunk)
+                    #         with open(
+                    #             debug_dir / buggy_file_path.with_suffix(".diff").name,
+                    #             "w",
+                    #         ) as f:
+                    #             f.writelines(unified_diff)
+                    # tagged_result.is_dumpped = True
 
 
 RULE = "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"

@@ -25,22 +25,55 @@ class GenerationContext:
     generated_ids: List[int]
 
 
-class PrunedHalfway:
-    pass
-
-
-class Unfinished:
-    pass
-
-
-class SynthesisSuccessful(NamedTuple):
+@dataclass(frozen=True)
+class SynthesisSuccessful(utils.JsonSerializable):
     patch: TextFile
     hunk_start_idx: int
     hunk_end_idx: int
     hunk: str
 
+    def to_json(self) -> Any:
+        return {
+            "patch": self.patch.to_json(),
+            "hunk_start_idx": self.hunk_start_idx,
+            "hunk_end_idx": self.hunk_end_idx,
+            "hunk": self.hunk,
+        }
 
-SynthesisResult = SynthesisSuccessful | PrunedHalfway | Unfinished
+    @classmethod
+    def from_json(cls, d: Any) -> "SynthesisSuccessful":
+        return SynthesisSuccessful(
+            TextFile.from_json(d["patch"]),
+            int(d["hunk_start_idx"]),
+            int(d["hunk_end_idx"]),
+            str(d["hunk"]),
+        )
+
+
+@dataclass(frozen=True)
+class SynthesisResult(utils.JsonSerializable):
+    successful_result: Optional[SynthesisSuccessful]
+    is_pruned_halfway: bool
+    is_unfinished: bool
+
+    def to_json(self) -> Any:
+        return {
+            "result": None
+            if self.successful_result is None
+            else self.successful_result.to_json(),
+            "is_pruned_halfway": self.is_pruned_halfway,
+            "is_unfinished": self.is_unfinished,
+        }
+
+    @classmethod
+    def from_json(cls, d: Any) -> "SynthesisResult":
+        return SynthesisResult(
+            None
+            if (result := d["result"]) is None
+            else SynthesisSuccessful.from_json(result),
+            bool(d["is_pruned_halfway"]),
+            bool(d["is_unfinished"]),
+        )
 
 
 class AvgSynthesisResult(NamedTuple):
@@ -48,7 +81,8 @@ class AvgSynthesisResult(NamedTuple):
     avg_time_cost: float
 
 
-class SynthesisResultBatch(NamedTuple):
+@dataclass(frozen=True)
+class SynthesisResultBatch(utils.JsonSerializable):
     # None indicates a failed generation (e.g., due to being unfinished)
     results: List[SynthesisResult]
     time_cost: float
@@ -56,6 +90,19 @@ class SynthesisResultBatch(NamedTuple):
     def to_average_results(self) -> "List[AvgSynthesisResult]":
         avg_time = self.time_cost / len(self.results)
         return [AvgSynthesisResult(result, avg_time) for result in self.results]
+
+    def to_json(self) -> Any:
+        return {
+            "results": [result.to_json() for result in self.results],
+            "time_cost": self.time_cost,
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "SynthesisResultBatch":
+        return SynthesisResultBatch(
+            [SynthesisResult.from_json(result) for result in d["results"]],
+            float(d["time_cost"]),
+        )
 
 
 # MODEL = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa

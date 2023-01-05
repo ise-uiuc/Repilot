@@ -2,8 +2,9 @@ from functools import partial
 from operator import add
 from os import PathLike
 from pathlib import Path
-from typing import List, Optional, Protocol, cast
+from typing import List, Optional, Protocol, cast, Any
 from . import spec
+from realm import utils
 
 
 class MutableTextDocument(Protocol):
@@ -112,7 +113,7 @@ class TextDocument(MutableTextDocument):
         self.sync()
 
 
-class TextFile(MutableTextDocument):
+class TextFile(MutableTextDocument, utils.JsonSerializable):
     def __init__(self, path: PathLike, content: Optional[str] = None) -> None:
         self._path = Path(path)
         self.cursor = 0
@@ -130,6 +131,19 @@ class TextFile(MutableTextDocument):
     def copy(self) -> "TextFile":
         text_file = TextFile(self.path, self.content)
         text_file.cursor = self.cursor
+        return text_file
+
+    def to_json(self) -> Any:
+        return {
+            "path": str(self.path),
+            "content": self.content,
+            "cursor": self.cursor,
+        }
+
+    @classmethod
+    def from_json(cls, d: Any) -> "TextFile":
+        text_file = TextFile(Path(d["path"]), d["content"])
+        text_file.move_cursor(int(d["cursor"]))
         return text_file
 
     def repeat(self, n: int, include_self=False) -> List["TextFile"]:

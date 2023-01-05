@@ -28,8 +28,6 @@ from realm.generation_defs import (
     Memorization,
     GenerationContext,
     LMInferenceConfig,
-    PrunedHalfway,
-    Unfinished,
     SynthesisSuccessful,
     SynthesisResult,
     SynthesisResultBatch,
@@ -245,9 +243,9 @@ class Synthesizer:
         results: List[SynthesisResult] = []
         for batch_idx in range(self.batch_size):
             if self.gen_state.batch_is_failed[batch_idx]:
-                results.append(PrunedHalfway())
+                results.append(SynthesisResult(None, True, False))
             elif self.gen_state.batch_is_unfinished[batch_idx]:
-                results.append(Unfinished())
+                results.append(SynthesisResult(None, False, True))
             else:
                 gen_context = self.gen_state.gen_contexts[batch_idx]
                 lsp_context = self.lsp_contexts[batch_idx]
@@ -255,15 +253,14 @@ class Synthesizer:
                 start_index = self.hunk_start_cursor
                 end_index = patch_file.cursor
                 hunk = "".join(gen_context.generated_tokens)
-                assert (lhs := patch_file.content[start_index:end_index]) == hunk
-                results.append(
-                    SynthesisSuccessful(
-                        patch_file,
-                        start_index,
-                        end_index,
-                        hunk,
-                    )
+                assert patch_file.content[start_index:end_index] == hunk
+                success = SynthesisSuccessful(
+                    patch_file,
+                    start_index,
+                    end_index,
+                    hunk,
                 )
+                results.append(SynthesisResult(success, False, False))
         cost = time.perf_counter() - start_time
         return SynthesisResultBatch(results, cost)
 

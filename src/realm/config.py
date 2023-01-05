@@ -75,10 +75,11 @@ SYNTHESIS_METHOD_REV_MAP = {value: key for key, value in SYNTHESIS_METHOD_MAP.it
 
 
 @dataclass(frozen=True)
-class SynthesisConfig(JsonSerializable):
+class RepairConfig(JsonSerializable):
     n_samples: int
     lm_inference_config: LMInferenceConfig
     method: SynthesisMethod
+    bug_pattern: str
 
     @property
     def batch_size(self) -> int:
@@ -89,13 +90,15 @@ class SynthesisConfig(JsonSerializable):
             "n_samples": self.n_samples,
             "lm_inference_config": self.lm_inference_config.to_json(),
             "method": self.method.to_json(),
+            "bug_pattern": self.bug_pattern,
         }
 
     @classmethod
-    def from_json(cls, d: dict) -> "SynthesisConfig":
+    def from_json(cls, d: dict) -> "RepairConfig":
         inference_config = LMInferenceConfig.from_json(d["lm_inference_config"])
-        return SynthesisConfig(
+        return RepairConfig(
             int(d["n_samples"]),
             inference_config,
             SynthesisMethod.from_json(d["method"]),
+            d["bug_pattern"],
         )

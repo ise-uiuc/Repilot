@@ -1,7 +1,7 @@
 from . import utils, generation as gen
 from .model import CodeT5ForRealm, CodeT5Large
 from .report import Reporter
-from .config import MetaConfig, SynthesisConfig
+from .config import MetaConfig, RepairConfig
 from .generation_defs import SynthesisSuccessful
 from .jdt_lsp import JdtLspAnalyzer, Message
 from .lsp.text import TextFile
@@ -122,10 +122,10 @@ class Repairer:
         numpy.random.seed(self.config.seed)
         random.seed(self.config.seed)
 
-    def repair(self, config: SynthesisConfig, bug_pattern: str, hunk_only: bool = True):
+    def repair(self, config: RepairConfig, hunk_only: bool = True):
         self.fix_seed()
-        self.reporter.dump_synthesis_config(config)
-        pattern = re.compile(bug_pattern)
+        self.reporter.dump_repair_config(config)
+        pattern = re.compile(config.bug_pattern)
         bugs_considered = self.d4j.single_hunk_bugs if hunk_only else self.d4j.all_bugs
         bugs_to_repair = {
             bug_id: bug
@@ -145,14 +145,14 @@ class Repairer:
             analyzer.join()
         self.active_connection_analyzer_pairs.clear()
 
-    def repair_bug(self, config: SynthesisConfig, bug_id: str, bug: Bug):
+    def repair_bug(self, config: RepairConfig, bug_id: str, bug: Bug):
         try:
             self.repair_bug_no_cleanup(config, bug_id, bug)
         finally:
             self.clean_up()
             print("Cleaned up")
 
-    def repair_bug_no_cleanup(self, config: SynthesisConfig, bug_id: str, bug: Bug):
+    def repair_bug_no_cleanup(self, config: RepairConfig, bug_id: str, bug: Bug):
         print("Repair", bug_id)
         self.d4j.checkout_buggy(bug_id, bug.proj_path)
         if not config.method.is_plain():
@@ -234,10 +234,7 @@ class Repairer:
                     synthesis_result_batch = synthesizer.synthesize()
                     assert len(synthesis_result_batch.results) == config.batch_size
                     for result in synthesis_result_batch.results:
-                        if isinstance(result, SynthesisSuccessful):
-                            print(result.hunk)
-                        else:
-                            print(result)
+                        print(result.successful_result.hunk)
                     print("Time cost:", synthesis_result_batch.time_cost)
                     buggy_file_path = Path(bug.proj_path) / buggy_file.path
                     assert buggy_file_path.exists()
