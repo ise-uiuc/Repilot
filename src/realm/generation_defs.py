@@ -58,7 +58,7 @@ class SynthesisResult(utils.JsonSerializable):
 
     def to_json(self) -> Any:
         return {
-            "result": None
+            "successful_result": None
             if self.successful_result is None
             else self.successful_result.to_json(),
             "is_pruned_halfway": self.is_pruned_halfway,
@@ -69,7 +69,7 @@ class SynthesisResult(utils.JsonSerializable):
     def from_json(cls, d: Any) -> "SynthesisResult":
         return SynthesisResult(
             None
-            if (result := d["result"]) is None
+            if (result := d["successful_result"]) is None
             else SynthesisSuccessful.from_json(result),
             bool(d["is_pruned_halfway"]),
             bool(d["is_unfinished"]),

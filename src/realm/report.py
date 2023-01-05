@@ -3,7 +3,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import git
 
@@ -69,24 +69,35 @@ class Reporter:
         with open(root / META_CONFIG_FNAME) as f:
             config: MetaConfig = json.load(f)
         repair_configs: list[RepairConfig] = []
-        # synth_times_jsons = list(root.glob(REPAIR_CONFIG_FPREFIX + "*"))
-        # synth_times_jsons.sort(
-        #     key=lambda f: int(f.name[len(REPAIR_CONFIG_FPREFIX) :])
-        # )
-        # synth_times_list = list(map(RepairConfig.from_json_file, synth_times_jsons))
-
         results: RepairResults = []
         repair_dirs = list(filter(Path.is_dir, root.iterdir()))
         repair_dirs.sort(
             key=lambda dir: int(dir.name[len(REPAIR_RESULT_PATH_PREFIX) :])
         )
         for d_repair in repair_dirs:
+            repair_configs.append(
+                RepairConfig.from_json_file(d_repair / REPAIR_CONFIG_FNAME)
+            )
             result_dict: RepairResult = {}
             for d_bug_id in d_repair.iterdir():
                 assert d_bug_id.is_dir()
                 bug_id = d_bug_id.name
                 hunk_dict = result_dict.setdefault(bug_id, {})
-                # for d_bug_id.iterdir()
+                for d_hunk_id in d_bug_id.iterdir():
+                    assert d_hunk_id.is_dir()
+                    hunk_id = cast(
+                        tuple[int, int], tuple(map(int, d_hunk_id.name.split("-")))
+                    )
+                    assert len(hunk_id) == 2
+                    tagged_results = hunk_dict.setdefault(hunk_id, [])
+                    f_tagged_result_jsons = list(d_hunk_id.iterdir())
+                    f_tagged_result_jsons.sort(key=lambda f: int(f.stem))
+                    for f_tagged_result_json in f_tagged_result_jsons:
+                        assert f_tagged_result_json.is_file()
+                        tagged_result = TaggedResult.from_json_file(
+                            f_tagged_result_json
+                        )
+                        tagged_results.append(tagged_result)
             results.append(result_dict)
         return Reporter(root, config, results, repair_configs)
 
@@ -94,7 +105,7 @@ class Reporter:
         self.config.save_json(self.root / META_CONFIG_FNAME)
         with open(self.root / "sys_args.txt", "w") as f:
             json.dump(sys.argv, f)
-        with open(self.root / "gen_meta.txt", "w") as f:
+        with open(self.root / "meta.txt", "w") as f:
             log_git_repo(f, "Repair tool", Path("."))
             log_git_repo(f, "Defects4J", self.config.d4j_home)
             log_git_repo(f, "Language server", self.config.jdt_ls_repo)
@@ -145,7 +156,7 @@ class Reporter:
                     hunk_idx_str = f"{hunk_idx[0]}-{hunk_idx[1]}"
                     save_dir = self.root / repair_dir / bug_id / hunk_idx_str
                     save_dir.mkdir(exist_ok=True, parents=True)
-                    tagged_result.save_json(save_dir / str(idx))
+                    tagged_result.save_json(save_dir / f"{idx}.json")
                     # for result in result_batch.results:
                     #     idx += 1
                     #     if isinstance(result, Unfinished):

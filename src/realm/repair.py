@@ -204,11 +204,6 @@ class Repairer:
             wait_until_all_analyzers_free(connections)
 
         # Ready to repair
-        proj, id_str = self.d4j.split_bug_id(bug_id)
-        base_dir = self.reporter.root / proj / id_str
-        base_dir.mkdir(exist_ok=False, parents=True)
-        # # This variable stores the repair results
-        # repair_result = RepairResult()
         for buggy_file_idx, buggy_file in enumerate(bug.buggy_files):
             text_file = buggy_text_files[buggy_file_idx].copy()
 
@@ -234,7 +229,11 @@ class Repairer:
                     synthesis_result_batch = synthesizer.synthesize()
                     assert len(synthesis_result_batch.results) == config.batch_size
                     for result in synthesis_result_batch.results:
-                        print(result.successful_result.hunk)
+                        print(
+                            success.hunk
+                            if (success := result.successful_result) is not None
+                            else (result.is_pruned_halfway, result.is_unfinished)
+                        )
                     print("Time cost:", synthesis_result_batch.time_cost)
                     buggy_file_path = Path(bug.proj_path) / buggy_file.path
                     assert buggy_file_path.exists()
