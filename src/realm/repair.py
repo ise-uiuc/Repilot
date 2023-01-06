@@ -5,8 +5,7 @@ from .results import RepairResult
 from .config import MetaConfig, RepairConfig
 from .generation_defs import SynthesisSuccessful
 from .jdt_lsp import JdtLspAnalyzer, Message
-from .lsp.text import TextFile
-from .lsp import spec
+from .lsp import spec, TextFile
 from .d4j import Change, Defects4J, Bug
 from multiprocessing import Pipe
 from multiprocessing.connection import Connection
@@ -47,8 +46,9 @@ def wait_until_all_analyzers_free(
             break
 
 
-def remove_buggy_hunk(text_file: TextFile, change: Change) -> Tuple[str, str]:
-    """Modifies `text_file` and returns the prefix and the suffix"""
+def get_buggy_hunk_start_end_indices_and_positions(
+    text_file: TextFile, change: Change
+) -> tuple[int, int, spec.Position, spec.Position]:
     start = change.start - 1
     end = start + len(change.removed_lines)
     start_pos = text_file.refine_index(start, 0)
@@ -56,10 +56,21 @@ def remove_buggy_hunk(text_file: TextFile, change: Change) -> Tuple[str, str]:
 
     start_index = text_file.form_index(start, 0)
     end_index = text_file.form_index(end, 0)
+    return start_index, end_index, start_pos, end_pos
 
+
+def remove_buggy_hunk(text_file: TextFile, change: Change) -> Tuple[str, str]:
+    """Modifies `text_file` and returns the prefix and the suffix"""
+    (
+        start_index,
+        end_index,
+        start_pos,
+        end_pos,
+    ) = get_buggy_hunk_start_end_indices_and_positions(text_file, change)
     prefix_start = 0
     suffix_end = len(text_file.content)
     prefix = text_file.content[prefix_start:start_index]
+    # "\n" is important as we need a blank place for generation
     suffix = "\n" + text_file.content[end_index:suffix_end]
 
     # prefix(\n)
@@ -76,9 +87,10 @@ def remove_buggy_hunk(text_file: TextFile, change: Change) -> Tuple[str, str]:
     )
 
     text_file.move_cursor(start_index)
-    assert prefix.endswith("\n")
-    assert text_file.content[text_file.cursor - 1] == "\n"
-    assert text_file.content[text_file.cursor] == "\n"
+    if start_index != 0:
+        assert prefix.endswith("\n")
+        assert text_file.content[text_file.cursor - 1] == "\n"
+        assert text_file.content[text_file.cursor] == "\n"
 
     return prefix, suffix
 
@@ -206,45 +218,54 @@ class Repairer:
             wait_until_all_analyzers_free(connections)
 
         # Ready to repair
-        for buggy_file_idx, buggy_file in enumerate(bug.buggy_files):
-            text_file = buggy_text_files[buggy_file_idx].copy()
-
-            print(len(buggy_file.changes))
-            print(buggy_file.path)
-            print(
-                [(c.start, len(c.removed_lines)) for c in reversed(buggy_file.changes)]
+        for hunk_idx, buggy_file, change in bug.iter_hunks():
+            buggy_text_file = buggy_text_files[hunk_idx[0]]
+            (
+                buggy_hunk_start_index,
+                buggy_hunk_end_index,
+                _,
+                _,
+            ) = get_buggy_hunk_start_end_indices_and_positions(buggy_text_file, change)
+            text_file = buggy_text_file.copy()
+            prefix, suffix = remove_buggy_hunk(text_file, change)
+            lm_context = gen.LMContext(
+                self.model, prefix, suffix, config.lm_inference_config
             )
+            synthesizer = gen.Synthesizer(
+                lm_context, connections, text_file, config.method
+            )
+            for idx in range(config.n_samples):
+                print("Hunk index:", hunk_idx)
+                print("Repair index:", idx)
 
-            for (change_idx, change) in enumerate(reversed(buggy_file.changes)):
-                hunk_id = (buggy_file_idx, change_idx)
-                prefix, suffix = remove_buggy_hunk(text_file, change)
-                lm_context = gen.LMContext(
-                    self.model, prefix, suffix, config.lm_inference_config
+                synthesis_result_batch = synthesizer.synthesize()
+                assert len(synthesis_result_batch.results) == config.batch_size
+                for result in synthesis_result_batch.results:
+                    success = result.successful_result
+                    if success is not None:
+                        assert (
+                            buggy_text_file.content[:buggy_hunk_start_index]
+                            + success.hunk
+                            + "\n"
+                            + buggy_text_file.content[buggy_hunk_end_index:]
+                        ) == success.patch.content
+                        print(success.hunk)
+                    else:
+                        print(result)
+                print("Time cost:", synthesis_result_batch.time_cost)
+                buggy_file_path = Path(bug.proj_path) / buggy_file.path
+                assert buggy_file_path.exists()
+                report_result = cast(RepairResult, self.reporter.result)
+                report_result.add(
+                    bug_id,
+                    hunk_idx,
+                    synthesis_result_batch,
+                    buggy_text_file,
+                    buggy_hunk_start_index,
+                    buggy_hunk_end_index,
                 )
-                synthesizer = gen.Synthesizer(
-                    lm_context, connections, text_file, config.method
-                )
-                for idx in range(config.n_samples):
-                    print("Hunk index:", hunk_id)
-                    print("Repair index:", idx)
-
-                    synthesis_result_batch = synthesizer.synthesize()
-                    assert len(synthesis_result_batch.results) == config.batch_size
-                    for result in synthesis_result_batch.results:
-                        print(
-                            success.hunk
-                            if (success := result.successful_result) is not None
-                            else (result.is_pruned_halfway, result.is_unfinished)
-                        )
-                    print("Time cost:", synthesis_result_batch.time_cost)
-                    buggy_file_path = Path(bug.proj_path) / buggy_file.path
-                    assert buggy_file_path.exists()
-                    report_result = cast(RepairResult, self.reporter.result)
-                    report_result.add(
-                        bug_id, hunk_id, synthesis_result_batch, buggy_file_path
-                    )
-                    self.reporter.save()
-                    # WARNING: Timeout error, if happend, indicates the TIMEOUT_THRESHOULD is too small (unlikely)
-                    # or a fatal implementation error!!
-                    # except TimeoutError:
-                    #     self.reporter.report_timeout_error()
+                self.reporter.save()
+                # WARNING: Timeout error, if happend, indicates the TIMEOUT_THRESHOULD is too small (unlikely)
+                # or a fatal implementation error!!
+                # except TimeoutError:
+                #     self.reporter.report_timeout_error()

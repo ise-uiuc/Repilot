@@ -1,8 +1,8 @@
-from .repair_result import RepairResult
+from .repair_result import RepairResult, TaggedResult
 from .repair_analysis_result import (
     RepairAnalysisResult,
     AnalysisResult,
     AnalysisResults,
-    AvgHunkPatch,
+    AvgFilePatch,
     AvgPatch,
 )

@@ -120,6 +120,12 @@ class Bug(NamedTuple):
     buggy_files: List[BuggyFile]
     proj_path: str
 
+    def iter_hunks(self) -> Iterator[tuple[tuple[int, int], BuggyFile, Change]]:
+        """Iterate hunks in a reversed way. This is deterministic and each hunk can be assigned an ID"""
+        for idx_i, buggy_file in enumerate(self.buggy_files):
+            for idx_j, change in enumerate(buggy_file.changes):
+                yield ((idx_i, idx_j), buggy_file, change)
+
 
 BugId = str
 BenchmarkMetadata = Dict[BugId, Bug]

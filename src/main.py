@@ -102,3 +102,5 @@ if __name__ == "__main__":
     result_dir = Path(args.dir if args.dir is not None else random_dir(args.method))
     repairer = Repairer.init(META_CONFIG, result_dir, args.pre_allocate)
     repairer.repair(SYNTHESIS_CONFIG, args.bug)
+    print("Ready to exit")
+    input()

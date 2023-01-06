@@ -15,16 +15,21 @@ class MutableTextDocument(Protocol):
     content: str
     cursor: int
 
-    def add(self, text: str):
+    def unsafe_add(self, text: str):
         self.content = self.content[: self.cursor] + text + self.content[self.cursor :]  # type: ignore # noqa
         self.cursor += len(text)
+
+    def add(self, text: str):
+        self.unsafe_add(text)
         self.sync()
 
-    def delete(self, length: int):
+    def unsafe_delete(self, length: int):
         self.content = (
             self.content[: self.cursor - length] + self.content[self.cursor :]
         )
         self.cursor -= length
+
+    def delete(self, length: int):
         self.sync()
 
     def get_cursor_position(self) -> spec.Position:
@@ -75,6 +80,10 @@ class MutableTextDocument(Protocol):
     @property
     def n_lines(self) -> int:
         return len(self.lines)
+
+    def modify(self, start: int, end: int, content: str):
+        self.content = self.content[:start] + content + self.content[end:]
+        self.sync()
 
     # From LSP spec: The actual content changes. The content changes describe single state
     # changes to the document. So if there are two content changes c1 (at

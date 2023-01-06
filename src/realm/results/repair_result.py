@@ -10,6 +10,7 @@ import git
 from realm.config import MetaConfig, RepairConfig
 from realm.generation_defs import SynthesisResultBatch, AvgSynthesisResult
 from realm.utils import JsonSerializable, IORetrospective
+from realm.lsp import TextFile
 
 META_CONFIG_FNAME = "meta_config.json"
 REPAIR_CONFIG_FNAME = "repair_config.json"
@@ -19,21 +20,24 @@ REPAIR_RESULT_PATH_PREFIX = "Repair-"
 @dataclass
 class TaggedResult(JsonSerializable):
     synthesis_result_batch: SynthesisResultBatch
-    buggy_file_path: Path
+    buggy_hunk: tuple[TextFile, int, int]
     is_dumpped: bool
 
     def to_json(self) -> Any:
+        text_file, start_index, end_index = self.buggy_hunk
         return {
             "synthesis_result_batch": self.synthesis_result_batch.to_json(),
-            "buggy_file_path": str(self.buggy_file_path),
+            "buggy_hunk": (text_file.to_json(), start_index, end_index),
+            "is_dumpped": self.is_dumpped
         }
 
     @classmethod
     def from_json(cls, d: Any) -> "TaggedResult":
+        text_file, start_index, end_index = d["buggy_hunk"]
         return TaggedResult(
             SynthesisResultBatch.from_json(d["synthesis_result_batch"]),
-            Path(d["buggy_file_path"]),
-            True,
+            (TextFile.from_json(text_file), int(start_index), int(end_index)),
+            bool(d["is_dumpped"])
         )
 
 
@@ -144,14 +148,22 @@ class RepairResult(IORetrospective):
         bug_id: str,
         hunk_id: tuple[int, int],
         result: SynthesisResultBatch,
-        buggy_file_path: Path,
+        buggy_text_file: TextFile,
+        buggy_hunk_start_index: int,
+        buggy_hunk_end_index: int,
     ) -> None:
         """Remember to add repair config first"""
         self.check()
         result_dict = self.results[-1]
         hunk_dict = result_dict.setdefault(bug_id, {})
         tagged_results = hunk_dict.setdefault(hunk_id, [])
-        tagged_results.append(TaggedResult(result, buggy_file_path, False))
+        tagged_results.append(
+            TaggedResult(
+                result,
+                (buggy_text_file, buggy_hunk_start_index, buggy_hunk_end_index),
+                False,
+            )
+        )
 
     def dump(self, path: Path):
         self.check()
