@@ -137,7 +137,7 @@ class Repairer:
 
     def repair(self, config: RepairConfig, hunk_only: bool = True):
         self.fix_seed()
-        report_result = cast(RepairResult, self.reporter.result)
+        report_result = cast(RepairResult, self.reporter.repair_result)
         report_result.add_repair_config(config)
         pattern = re.compile(config.bug_pattern)
         bugs_considered = self.d4j.single_hunk_bugs if hunk_only else self.d4j.all_bugs
@@ -255,7 +255,7 @@ class Repairer:
                 print("Time cost:", synthesis_result_batch.time_cost)
                 buggy_file_path = Path(bug.proj_path) / buggy_file.path
                 assert buggy_file_path.exists()
-                report_result = cast(RepairResult, self.reporter.result)
+                report_result = cast(RepairResult, self.reporter.repair_result)
                 report_result.add(
                     bug_id,
                     hunk_idx,

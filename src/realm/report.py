@@ -2,7 +2,7 @@ from .results import (
     RepairResult,
     RepairAnalysisResult,
     AnalysisResult,
-    AnalysisResults,
+    RepairAnalysisResult,
     AvgFilePatch,
     AvgPatch,
     TaggedResult,
@@ -15,13 +15,12 @@ from dataclasses import dataclass
 from .config import MetaConfig
 from typing import Iterator, cast
 
-Result = RepairAnalysisResult | RepairResult
-
 
 @dataclass
 class Reporter(IORetrospective):
     root: Path
-    result: RepairResult | RepairAnalysisResult
+    repair_result: RepairResult
+    analysis_result: RepairAnalysisResult | None
 
     def __post_init__(self):
         assert self.root.exists()
@@ -30,28 +29,32 @@ class Reporter(IORetrospective):
     def create_repair(root: Path, config: MetaConfig):
         root.mkdir()
         print("Metadata will be saved to", root)
-        return Reporter(root, RepairResult.init(config))
+        return Reporter(root, RepairResult.init(config), None)
 
     def save(self):
         self.dump(self.root)
 
     def dump(self, path: Path):
-        self.result.dump(path)
+        self.repair_result.dump(path)
+        if self.analysis_result is not None:
+            self.analysis_result.dump(path)
 
     @classmethod
     def load(cls, path: Path) -> "Reporter":
-        if RepairAnalysisResult.file_exists(path):
-            result: Result = RepairAnalysisResult.load(path)
-        else:
-            result = RepairResult.load(path)
-        return Reporter(path, result)
+        repair_result = RepairResult.load(path)
+        analysis_result = (
+            RepairAnalysisResult.load(path)
+            if RepairAnalysisResult.file_exists(path)
+            else None
+        )
+        return Reporter(path, repair_result, analysis_result)
 
     def analyze(self):
-        if not isinstance(self.result, RepairResult):
+        if not isinstance(self.repair_result, RepairResult):
             return
         all_appeared: dict[str, set[str]] = {}
         a_results: list[AnalysisResult] = []
-        for result in self.result.results:
+        for result in self.repair_result.results:
             result_dict: dict[str, list[AvgPatch]] = {}
             for bug_id, hunk_dict in result.items():
                 appeared = all_appeared.setdefault(bug_id, set())
@@ -75,7 +78,7 @@ class Reporter(IORetrospective):
                     patches.append(AvgPatch(patch, is_duplicate))
                 result_dict[bug_id] = patches
             a_results.append(AnalysisResult(result_dict))
-        self.result = RepairAnalysisResult(self.result, AnalysisResults(a_results))
+        self.repair_result = RepairAnalysisResult(a_results)
 
 
 _AvgResult = tuple[AvgSynthesisResult, tuple[TextFile, int, int]]

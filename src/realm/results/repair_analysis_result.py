@@ -131,32 +131,25 @@ class AnalysisResult(JsonSerializable):
 
 
 @dataclass(frozen=True)
-class AnalysisResults(JsonSerializable):
+class RepairAnalysisResult(JsonSerializable):
     results: list[AnalysisResult]
 
     def to_json(self) -> Any:
         return [result.to_json() for result in self.results]
 
     @classmethod
-    def from_json(cls, d: list) -> "AnalysisResults":
-        return AnalysisResults([AnalysisResult.from_json(r) for r in d])
-
-
-@dataclass
-class RepairAnalysisResult(IORetrospective):
-    repair_result: RepairResult
-    analysis_results: AnalysisResults
+    def from_json(cls, d: list) -> "RepairAnalysisResult":
+        return RepairAnalysisResult([AnalysisResult.from_json(r) for r in d])
 
     @staticmethod
     def file_exists(path: Path) -> bool:
         return (path / ANALYSIS_FNAME).exists()
 
+    def dump(self, path: Path):
+        if not self.file_exists(path / ANALYSIS_FNAME):
+            self.save_json(path / ANALYSIS_FNAME)
+
     @classmethod
     def load(cls, path: Path) -> "RepairAnalysisResult":
-        repair_result = RepairResult.load(path)
-        analysis_results = AnalysisResults.from_json_file(path / ANALYSIS_FNAME)
-        return RepairAnalysisResult(repair_result, analysis_results)
-
-    def dump(self, path: Path):
-        self.repair_result.dump(path)
-        self.analysis_results.save_json(path / ANALYSIS_FNAME)
+        assert RepairAnalysisResult.file_exists(path)
+        return cls.from_json_file(path / ANALYSIS_FNAME)
