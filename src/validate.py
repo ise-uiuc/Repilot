@@ -41,6 +41,15 @@ if __name__ == "__main__":
     reporter.save()
     reporter.save()
     reporter.save()
+    path = Path("results-test")
+    path.mkdir(exist_ok=True)
+    for r in reporter.repair_result.results:
+        print(type(r))
+        for _, v in r.items():
+            for x in (c for b in v for c in b):
+                for t in x.results:
+                    t.is_dumpped = False
+    reporter.dump(path)
     # print(f"RepairReporter loaded from {args.dir}")
     # a_reporter = repair_analysis(reporter)
     # a_reporter.save()

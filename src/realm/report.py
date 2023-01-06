@@ -6,6 +6,8 @@ from .results import (
     AvgFilePatch,
     AvgPatch,
     TaggedResult,
+    BuggyHunk,
+    HunkRepairResult,
 )
 from .generation_defs import AvgSynthesisResult
 from .lsp import TextFile
@@ -56,10 +58,10 @@ class Reporter(IORetrospective):
         a_results: list[AnalysisResult] = []
         for result in self.repair_result.results:
             result_dict: dict[str, list[AvgPatch]] = {}
-            for bug_id, hunk_dict in result.items():
+            for bug_id, files in result.items():
                 appeared = all_appeared.setdefault(bug_id, set())
                 patches: list[AvgPatch] = []
-                for patch in iter_hunk_dict(hunk_dict):
+                for patch in iter_files(files):
                     if any(
                         hunk.result.hunk is None
                         for file in patch
@@ -80,40 +82,43 @@ class Reporter(IORetrospective):
                     patches.append(AvgPatch(patch, is_duplicate))
                 result_dict[bug_id] = patches
             a_results.append(AnalysisResult(result_dict))
-        self.repair_result = RepairAnalysisResult(a_results)
+        self.analysis_result = RepairAnalysisResult(a_results)
 
 
-_AvgResult = tuple[AvgSynthesisResult, tuple[TextFile, int, int]]
+_AvgResult = tuple[AvgSynthesisResult, BuggyHunk]
 
 
-def iter_hunk_dict(
-    hunk_dict: dict[tuple[int, int], list[TaggedResult]]
+def iter_files(
+    file_results: list[list[HunkRepairResult]],
 ) -> Iterator[list[AvgFilePatch]]:
     # For one bug
-    items = list(hunk_dict.items())
-    items.sort(key=lambda kv: kv[0])
+    # items = list(hunk_dict.items())
+    # items.sort(key=lambda kv: kv[0])
     groups: list[list[list[_AvgResult]]] = []
     # TODO: maybe take a look at `itertools.groupby`
-    last_f: int | None = None
-    for (f_idx, h_idx), tagged_results in items:
-        avg_results = [
-            (avg_result, tagged_result.buggy_hunk)
-            for tagged_result in tagged_results
-            for avg_result in tagged_result.synthesis_result_batch.to_average_results()
-        ]
-        assert len(avg_results) > 0
-        assert f_idx == len(groups)
-        if last_f is None or f_idx != last_f:
-            group: list[list[_AvgResult]] = []
-            groups.append(group)
-        else:
-            group = groups[-1]
-        assert h_idx == len(group)
-        group.append(avg_results)
+    # last_f: int | None = None
+    for hunk_results in file_results:
+        groups.append([])
+        group = groups[-1]
+        for hunk_result in hunk_results:
+            avg_results = [
+                (avg_result, hunk_result.buggy_hunk)
+                for tagged_result in hunk_result.results
+                for avg_result in tagged_result.synthesis_result_batch.to_average_results()
+            ]
+            # assert len(avg_results) > 0
+            # assert f_idx == len(groups)
+            # if last_f is None or f_idx != last_f:
+            #     group: list[list[_AvgResult]] = []
+            #     groups.append(group)
+            # else:
+            #     group = groups[-1]
+            # assert h_idx == len(group)
+            group.append(avg_results)
     for group in groups:
         assert len(group) > 0
         assert len(set(len(data) for data in group)) == 1
-        assert len(set(t[1][0].path for data in group for t in data)) == 1
+        assert len(set(t[1].file.path for data in group for t in data)) == 1
 
     for file_groups in zip(*(zip(*group) for group in groups)):
         assert len(file_groups) > 0
@@ -123,8 +128,9 @@ def iter_hunk_dict(
             buggy_hunk_indices: list[tuple[int, int]] = []
             assert len(file_group) > 0
             bug: TextFile | None = None
-            for avg_result, (bug, start, end) in file_group:
-                buggy_hunk_indices.append((start, end))
+            for avg_result, buggy_hunk in file_group:
+                bug = buggy_hunk.file
+                buggy_hunk_indices.append((buggy_hunk.start, buggy_hunk.end))
                 hunks.append(avg_result)
             assert bug is not None
             file_patches.append(AvgFilePatch(hunks, bug, buggy_hunk_indices))
