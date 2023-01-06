@@ -39,21 +39,21 @@ class GenerationContext:
 #             "hunk_end_idx": self.hunk_end_idx,
 #             "hunk": self.hunk,
 #         }
-    
+
 #     def to_json_light(self, buggy_hunk_start: int, buggy_hunk_end: int):
 #         return {
 #             "path": str(self.patch.path),
-#             "cursor": 
+#             "cursor":
 #             "buggy_start": buggy_hunk_start,
 #             "buggy_end": buggy_hunk_end,
 #             "hunk": self.hunk,
 #         }
-    
+
 #     @classmethod
 #     def from_json_light(self) -> "SynthesisSuccessful":
 #         text_file = TextFile(path)
 #         return {
-            
+
 #         }
 
 #     @classmethod
