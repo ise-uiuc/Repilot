@@ -10,49 +10,49 @@ from realm import utils
 class MutableTextDocument(Protocol):
     """Mutable text document represented in 0-index-based lines"""
 
-    lines: List[str]
-    n_chars: List[int]
     content: str
     cursor: int
 
-    def unsafe_add(self, text: str):
+    def add(self, text: str):
         self.content = self.content[: self.cursor] + text + self.content[self.cursor :]  # type: ignore # noqa
         self.cursor += len(text)
 
-    def add(self, text: str):
-        self.unsafe_add(text)
-        self.sync()
-
-    def unsafe_delete(self, length: int):
+    def delete(self, length: int):
         self.content = (
             self.content[: self.cursor - length] + self.content[self.cursor :]
         )
         self.cursor -= length
 
-    def delete(self, length: int):
-        self.sync()
-
     def get_cursor_position(self) -> spec.Position:
         return self.get_position(self.cursor)
 
-    # Remember to sync everytime the content changes
-    def sync(self):
-        # TODO?: make this more efficient (only count the numbers w/o returning str)
-        self.lines = self.content.split("\n")
-        self.n_chars = [len(line) for line in self.lines]
-        self.check()
+    @property
+    def lines(self) -> List[str]:
+        return self.content.split("\n")
+
+    @property
+    def n_chars(self) -> List[int]:
+        return [len(line) for line in self.lines]
+
+    # # Remember to sync everytime the content changes
+    # def sync(self):
+    #     # TODO?: make this more efficient (only count the numbers w/o returning str)
+    #     self.lines = self.content.split("\n")
+    #     self.n_chars = [len(line) for line in self.lines]
+    #     self.check()
 
     def move_cursor(self, index: int):
         self.cursor = index
 
-    def check(self):
-        assert self.n_lines >= 1
-        n_newline_chars = self.n_lines - 1
-        assert sum(self.n_chars) + n_newline_chars == len(self.content)
+    # def check(self):
+    #     assert self.n_lines >= 1
+    #     n_newline_chars = self.n_lines - 1
+    #     assert sum(self.n_chars) + n_newline_chars == len(self.content)
 
     def refine_index(self, line: int, character: int) -> spec.Position:
-        if line >= self.n_lines and character >= 0:
-            line = self.n_lines - 1
+        n_lines = self.n_lines
+        if line >= n_lines and character >= 0:
+            line = n_lines - 1
             character = self.n_chars[line]
         return spec.Position(
             {
@@ -83,7 +83,6 @@ class MutableTextDocument(Protocol):
 
     def modify(self, start: int, end: int, content: str):
         self.content = self.content[:start] + content + self.content[end:]
-        self.sync()
 
     # From LSP spec: The actual content changes. The content changes describe single state
     # changes to the document. So if there are two content changes c1 (at
@@ -106,7 +105,6 @@ class MutableTextDocument(Protocol):
             else:
                 text_change = cast(spec.EntireDocumentChange, text_change)
                 self.content = text_change["text"]
-        self.sync()
 
     def __str__(self) -> str:
         return self.content
@@ -119,7 +117,6 @@ class TextDocument(MutableTextDocument):
     def __init__(self, content: str) -> None:
         self.content = content
         self.cursor = 0
-        self.sync()
 
 
 class TextFile(MutableTextDocument, utils.JsonSerializable):
@@ -131,7 +128,6 @@ class TextFile(MutableTextDocument, utils.JsonSerializable):
                 self.content = f.read()
         else:
             self.content = content
-        self.sync()
 
     def write(self):
         with open(self.path, "w") as f:

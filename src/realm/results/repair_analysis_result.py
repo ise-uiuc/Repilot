@@ -84,6 +84,10 @@ class AvgFilePatch:
             last_success = success
             # "\n" is impotant. Imagine `start` and `end` are the same.
             patch.modify(start, end, success.hunk + "\n")
+        if len(hunks) == 1 and patch is not None:
+            success = hunks[0].result.successful_result
+            assert success is not None
+            assert patch.content == success.patch.content
         return AvgFilePatch(hunks, patch, bug, buggy_hunk_indices)
 
 

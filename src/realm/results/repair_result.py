@@ -28,7 +28,7 @@ class TaggedResult(JsonSerializable):
         return {
             "synthesis_result_batch": self.synthesis_result_batch.to_json(),
             "buggy_hunk": (text_file.to_json(), start_index, end_index),
-            "is_dumpped": self.is_dumpped
+            "is_dumpped": self.is_dumpped,
         }
 
     @classmethod
@@ -37,7 +37,7 @@ class TaggedResult(JsonSerializable):
         return TaggedResult(
             SynthesisResultBatch.from_json(d["synthesis_result_batch"]),
             (TextFile.from_json(text_file), int(start_index), int(end_index)),
-            bool(d["is_dumpped"])
+            bool(d["is_dumpped"]),
         )
 
 
