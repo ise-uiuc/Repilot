@@ -3,7 +3,6 @@ from .model import CodeT5ForRealm, CodeT5Large
 from .report import Reporter
 from .results import RepairResult
 from .config import MetaConfig, RepairConfig
-from .generation_defs import SynthesisSuccessful
 from .jdt_lsp import JdtLspAnalyzer, Message
 from .lsp import spec, TextFile
 from .d4j import Change, Defects4J, Bug
@@ -241,15 +240,14 @@ class Repairer:
                 synthesis_result_batch = synthesizer.synthesize()
                 assert len(synthesis_result_batch.results) == config.batch_size
                 for result in synthesis_result_batch.results:
-                    success = result.successful_result
-                    if success is not None:
-                        assert (
-                            buggy_text_file.content[:buggy_hunk_start_index]
-                            + success.hunk
-                            + "\n"
-                            + buggy_text_file.content[buggy_hunk_end_index:]
-                        ) == success.patch.content
-                        print(success.hunk)
+                    if result.hunk is not None:
+                        # assert (
+                        #     buggy_text_file.content[:buggy_hunk_start_index]
+                        #     + success.hunk
+                        #     + "\n"
+                        #     + buggy_text_file.content[buggy_hunk_end_index:]
+                        # ) == success.patch.content
+                        print(result.hunk)
                     else:
                         print(result)
                 print("Time cost:", synthesis_result_batch.time_cost)

@@ -33,14 +33,13 @@ ANALYSIS_FNAME = "repair_analysis.json"
 @dataclass(frozen=True)
 class AvgFilePatch:
     hunks: list[AvgSynthesisResult]
-    patch: TextFile | None
     bug: TextFile
     buggy_hunk_indices: list[tuple[int, int]]
 
     def to_json(self) -> Any:
         return {
             "hunks": [hunk.to_json() for hunk in self.hunks],
-            "patch": None if self.patch is None else self.patch.to_json(),
+            # "patch": None if self.patch is None else self.patch.to_json(),
             "bug": self.bug.to_json(),
             "buggy_hunk_indices": self.buggy_hunk_indices,
         }
@@ -49,46 +48,41 @@ class AvgFilePatch:
     def from_json(cls, d: dict) -> "AvgFilePatch":
         return AvgFilePatch(
             [AvgSynthesisResult.from_json(hunk) for hunk in d["hunks"]],
-            TextFile.from_json(p) if (p := d["patch"]) is not None else None,
+            # TextFile.from_json(p) if (p := d["patch"]) is not None else None,
             TextFile.from_json(d["bug"]),
             d["buggy_hunk_indices"],
         )
 
-    @staticmethod
-    def init(
-        hunks: list[AvgSynthesisResult],
-        bug: TextFile,
-        buggy_hunk_indices: list[tuple[int, int]],
-    ) -> "AvgFilePatch":
-        assert buggy_hunk_indices == sorted(
-            buggy_hunk_indices, reverse=True, key=lambda tp: tp[0]
+    def compute_patch(self) -> TextFile | None:
+        assert self.buggy_hunk_indices == sorted(
+            self.buggy_hunk_indices, reverse=True, key=lambda tp: tp[0]
         )
-        assert len(hunks) > 0
-        assert len(hunks) == len(buggy_hunk_indices)
-        patch = bug.copy()
+        assert len(self.hunks) > 0
+        assert len(self.hunks) == len(self.buggy_hunk_indices)
+        patch = self.bug.copy()
         # [first_hunk, *rest_hunks] = hunks
         # last_success = first_hunk.result.successful_result
         # if last_success is None:
         #     return AvgFilePatch(hunks, None, bug, buggy_hunk_indices)
-        last_success = None
-        for hunk, (start, end) in zip(hunks, buggy_hunk_indices):
+        # last_success = None
+        for hunk, (start, end) in zip(self.hunks, self.buggy_hunk_indices):
             assert start <= end
-            success = hunk.result.successful_result
+            success = hunk.result.hunk
             if success is None:
-                return AvgFilePatch(hunks, None, bug, buggy_hunk_indices)
-            assert success.patch.path == patch.path
-            assert success.hunk_start_idx == start
-            assert success.hunk_start_idx <= success.hunk_end_idx
-            if last_success is not None:
-                assert success.hunk_end_idx <= last_success.hunk_start_idx
-            last_success = success
+                return None
+            # assert success.patch.path == patch.path
+            # assert success.hunk_start_idx == start
+            # assert success.hunk_start_idx <= success.hunk_end_idx
+            # if last_success is not None:
+            #     assert success.hunk_end_idx <= last_success.hunk_start_idx
+            # last_success = success
             # "\n" is impotant. Imagine `start` and `end` are the same.
-            patch.modify(start, end, success.hunk + "\n")
-        if len(hunks) == 1 and patch is not None:
-            success = hunks[0].result.successful_result
-            assert success is not None
-            assert patch.content == success.patch.content
-        return AvgFilePatch(hunks, patch, bug, buggy_hunk_indices)
+            patch.modify(start, end, success + "\n")
+        # if len(hunks) == 1 and patch is not None:
+        #     success = hunks[0].result.hunk
+        #     assert success is not None
+        #     assert patch.content == success.patch.content
+        return patch
 
 
 @dataclass

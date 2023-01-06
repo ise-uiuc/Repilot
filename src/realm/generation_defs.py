@@ -25,42 +25,56 @@ class GenerationContext:
     generated_ids: List[int]
 
 
-@dataclass(frozen=True)
-class SynthesisSuccessful(utils.JsonSerializable):
-    patch: TextFile
-    hunk_start_idx: int
-    hunk_end_idx: int
-    hunk: str
+# @dataclass(frozen=True)
+# class SynthesisSuccessful(utils.JsonSerializable):
+#     patch: TextFile
+#     hunk_start_idx: int
+#     hunk_end_idx: int
+#     hunk: str
 
-    def to_json(self) -> Any:
-        return {
-            "patch": self.patch.to_json(),
-            "hunk_start_idx": self.hunk_start_idx,
-            "hunk_end_idx": self.hunk_end_idx,
-            "hunk": self.hunk,
-        }
+#     def to_json(self) -> Any:
+#         return {
+#             "patch": self.patch.to_json(),
+#             "hunk_start_idx": self.hunk_start_idx,
+#             "hunk_end_idx": self.hunk_end_idx,
+#             "hunk": self.hunk,
+#         }
+    
+#     def to_json_light(self, buggy_hunk_start: int, buggy_hunk_end: int):
+#         return {
+#             "path": str(self.patch.path),
+#             "cursor": 
+#             "buggy_start": buggy_hunk_start,
+#             "buggy_end": buggy_hunk_end,
+#             "hunk": self.hunk,
+#         }
+    
+#     @classmethod
+#     def from_json_light(self) -> "SynthesisSuccessful":
+#         text_file = TextFile(path)
+#         return {
+            
+#         }
 
-    @classmethod
-    def from_json(cls, d: Any) -> "SynthesisSuccessful":
-        return SynthesisSuccessful(
-            TextFile.from_json(d["patch"]),
-            int(d["hunk_start_idx"]),
-            int(d["hunk_end_idx"]),
-            str(d["hunk"]),
-        )
+#     @classmethod
+#     def from_json(cls, d: Any) -> "SynthesisSuccessful":
+#         return SynthesisSuccessful(
+#             TextFile.from_json(d["patch"]),
+#             int(d["hunk_start_idx"]),
+#             int(d["hunk_end_idx"]),
+#             str(d["hunk"]),
+#         )
 
 
 @dataclass(frozen=True)
 class SynthesisResult(utils.JsonSerializable):
-    successful_result: Optional[SynthesisSuccessful]
+    hunk: Optional[str]
     is_pruned_halfway: bool
     is_unfinished: bool
 
     def to_json(self) -> Any:
         return {
-            "successful_result": None
-            if self.successful_result is None
-            else self.successful_result.to_json(),
+            "hunk": self.hunk,
             "is_pruned_halfway": self.is_pruned_halfway,
             "is_unfinished": self.is_unfinished,
         }
@@ -68,9 +82,7 @@ class SynthesisResult(utils.JsonSerializable):
     @classmethod
     def from_json(cls, d: Any) -> "SynthesisResult":
         return SynthesisResult(
-            None
-            if (result := d["successful_result"]) is None
-            else SynthesisSuccessful.from_json(result),
+            d["hunk"],
             bool(d["is_pruned_halfway"]),
             bool(d["is_unfinished"]),
         )

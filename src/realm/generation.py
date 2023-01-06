@@ -28,7 +28,6 @@ from realm.generation_defs import (
     Memorization,
     GenerationContext,
     LMInferenceConfig,
-    SynthesisSuccessful,
     SynthesisResult,
     SynthesisResultBatch,
 )
@@ -254,13 +253,13 @@ class Synthesizer:
                 end_index = patch_file.cursor
                 hunk = "".join(gen_context.generated_tokens)
                 assert patch_file.content[start_index:end_index] == hunk
-                success = SynthesisSuccessful(
-                    patch_file,
-                    start_index,
-                    end_index,
-                    hunk,
-                )
-                results.append(SynthesisResult(success, False, False))
+                # success = SynthesisSuccessful(
+                #     patch_file,
+                #     start_index,
+                #     end_index,
+                #     hunk,
+                # )
+                results.append(SynthesisResult(hunk, False, False))
         cost = time.perf_counter() - start_time
         return SynthesisResultBatch(results, cost)
 

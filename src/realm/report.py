@@ -7,7 +7,7 @@ from .results import (
     AvgPatch,
     TaggedResult,
 )
-from .generation_defs import AvgSynthesisResult, SynthesisSuccessful
+from .generation_defs import AvgSynthesisResult
 from .lsp import TextFile
 from .utils import IORetrospective
 from pathlib import Path
@@ -60,13 +60,15 @@ class Reporter(IORetrospective):
                 appeared = all_appeared.setdefault(bug_id, set())
                 patches: list[AvgPatch] = []
                 for patch in iter_hunk_dict(hunk_dict):
-                    if any(file.patch is None for file in patch):
+                    if any(
+                        hunk.result.hunk is None
+                        for file in patch
+                        for hunk in file.hunks
+                    ):
                         is_duplicate = False
                     else:
                         concat_hunk_str = "".join(
-                            cast(
-                                SynthesisSuccessful, hunk_patch.result.successful_result
-                            ).hunk
+                            cast(str, hunk_patch.result.hunk)
                             for file_patch in patch
                             for hunk_patch in file_patch.hunks
                         )
@@ -125,5 +127,5 @@ def iter_hunk_dict(
                 buggy_hunk_indices.append((start, end))
                 hunks.append(avg_result)
             assert bug is not None
-            file_patches.append(AvgFilePatch.init(hunks, bug, buggy_hunk_indices))
+            file_patches.append(AvgFilePatch(hunks, bug, buggy_hunk_indices))
         yield file_patches
