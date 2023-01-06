@@ -17,32 +17,52 @@ REPAIR_CONFIG_FNAME = "repair_config.json"
 REPAIR_RESULT_PATH_PREFIX = "Repair-"
 
 
-@dataclass
-class TaggedResult(JsonSerializable):
-    synthesis_result_batch: SynthesisResultBatch
-    buggy_hunk: tuple[TextFile, int, int]
-    is_dumpped: bool
+@dataclass(frozen=True)
+class BuggyHunk(JsonSerializable):
+    file: TextFile
+    start: int
+    end: int
 
     def to_json(self) -> Any:
-        text_file, start_index, end_index = self.buggy_hunk
         return {
-            "synthesis_result_batch": self.synthesis_result_batch.to_json(),
-            "buggy_hunk": (text_file.to_json(), start_index, end_index),
-            "is_dumpped": self.is_dumpped,
+            "file": self.file.to_json(),
+            "start": self.start,
+            "end": self.end,
         }
 
     @classmethod
-    def from_json(cls, d: Any) -> "TaggedResult":
-        text_file, start_index, end_index = d["buggy_hunk"]
-        return TaggedResult(
-            SynthesisResultBatch.from_json(d["synthesis_result_batch"]),
-            (TextFile.from_json(text_file), int(start_index), int(end_index)),
-            bool(d["is_dumpped"]),
+    def from_json(cls, d: dict) -> "BuggyHunk":
+        return BuggyHunk(
+            TextFile.from_json(d["file"]),
+            int(d["start"]),
+            int(d["end"]),
         )
 
 
-# bug_id -> hunk_id -> result
-RepairResultDict = dict[str, dict[tuple[int, int], list[TaggedResult]]]
+@dataclass
+class TaggedResult(JsonSerializable):
+    synthesis_result_batch: SynthesisResultBatch
+    is_dumpped: bool
+
+    def to_json(self) -> Any:
+        return self.synthesis_result_batch.to_json()
+
+    @classmethod
+    def from_json(cls, d: Any) -> "TaggedResult":
+        return TaggedResult(
+            SynthesisResultBatch.from_json(d),
+            True,
+        )
+
+
+@dataclass
+class HunkRepairResult:
+    buggy_hunk: BuggyHunk
+    results: list[TaggedResult]
+
+
+# bug_id -> file_id -> hunk_id -> result
+RepairResultDict = dict[str, list[list[HunkRepairResult]]]
 # repair_idx -> repair_result
 RepairResultDicts = list[RepairResultDict]
 
@@ -81,22 +101,33 @@ class RepairResult(IORetrospective):
             result_dict: RepairResultDict = {}
             for d_bug_id in filter(Path.is_dir, d_repair.iterdir()):
                 bug_id = d_bug_id.name
-                hunk_dict = result_dict.setdefault(bug_id, {})
-                for d_hunk_id in d_bug_id.iterdir():
-                    assert d_hunk_id.is_dir()
-                    hunk_id = cast(
-                        tuple[int, int], tuple(map(int, d_hunk_id.name.split("-")))
+                files = result_dict.setdefault(bug_id, [])
+                d_files = [
+                    (tuple(map(int, p.name.split("-"))), p) for p in d_bug_id.iterdir()
+                ]
+                d_files.sort(key=lambda tp: tp[0])
+                for (f_id, h_id), d_hunks in d_files:
+                    assert d_hunks.is_dir()
+                    buggy_hunk = BuggyHunk.from_json_file(d_hunks / "bug.json")
+                    assert len(files) == f_id
+                    if h_id == 0:
+                        hunks: list[HunkRepairResult] = []
+                        files.append(hunks)
+                    else:
+                        hunks = files[-1]
+                    assert len(hunks) == h_id
+                    hunk = HunkRepairResult(buggy_hunk, [])
+                    f_tagged_result_jsons = list(
+                        filter(lambda p: p.name != "bug.json", d_hunks.iterdir())
                     )
-                    assert len(hunk_id) == 2
-                    tagged_results = hunk_dict.setdefault(hunk_id, [])
-                    f_tagged_result_jsons = list(d_hunk_id.iterdir())
                     f_tagged_result_jsons.sort(key=lambda f: int(f.stem))
                     for f_tagged_result_json in f_tagged_result_jsons:
                         assert f_tagged_result_json.is_file()
                         tagged_result = TaggedResult.from_json_file(
                             f_tagged_result_json
                         )
-                        tagged_results.append(tagged_result)
+                        hunk.results.append(tagged_result)
+                    hunks.append(hunk)
             results.append(result_dict)
         return RepairResult(
             config, results, repair_configs, True, [True] * len(repair_configs)
@@ -154,16 +185,26 @@ class RepairResult(IORetrospective):
     ) -> None:
         """Remember to add repair config first"""
         self.check()
+        f_id, h_id = hunk_id
         result_dict = self.results[-1]
-        hunk_dict = result_dict.setdefault(bug_id, {})
-        tagged_results = hunk_dict.setdefault(hunk_id, [])
-        tagged_results.append(
-            TaggedResult(
-                result,
-                (buggy_text_file, buggy_hunk_start_index, buggy_hunk_end_index),
-                False,
+        files = result_dict.setdefault(bug_id, [])
+        # Ensure that results are added wrt the order [(0,0), (0,1), (0,2), (1,0), (1,1)...]
+        if f_id >= len(files):
+            assert f_id == len(files)
+            files.append([])
+        assert len(files) > 0
+        hunks = files[f_id]
+        if h_id >= len(hunks):
+            assert h_id == len(hunks)
+            buggy_hunk = BuggyHunk(
+                buggy_text_file,
+                buggy_hunk_start_index,
+                buggy_hunk_end_index,
             )
-        )
+            hunks.append(HunkRepairResult(buggy_hunk, []))
+        assert len(hunks) >= 0
+        hunk = hunks[h_id]
+        hunk.results.append(TaggedResult(result, False))
 
     def dump(self, path: Path):
         self.check()
@@ -172,16 +213,22 @@ class RepairResult(IORetrospective):
         for idx, _ in enumerate(self.repair_configs):
             repair_dir = REPAIR_RESULT_PATH_PREFIX + str(idx)
             result_dict = self.results[idx]
-            for bug_id, hunk_dict in result_dict.items():
-                for hunk_idx, tagged_results in hunk_dict.items():
-                    for idx, tagged_result in enumerate(tagged_results):
-                        if tagged_result.is_dumpped:
-                            continue
-                        hunk_idx_str = f"{hunk_idx[0]}-{hunk_idx[1]}"
-                        save_dir = path / repair_dir / bug_id / hunk_idx_str
-                        save_dir.mkdir(exist_ok=True, parents=True)
-                        tagged_result.is_dumpped = True
-                        tagged_result.save_json(save_dir / f"{idx}.json")
+            repair_path = path / repair_dir
+            repair_path.mkdir(exist_ok=True)
+            for bug_id, files in result_dict.items():
+                bug_path = repair_path / bug_id
+                bug_path.mkdir(exist_ok=True)
+                for f_id, hunks in enumerate(files):
+                    for h_id, hunk in enumerate(hunks):
+                        hunk_idx_str = f"{f_id}-{h_id}"
+                        hunk_path = bug_path / hunk_idx_str
+                        hunk_path.mkdir(exist_ok=True)
+                        hunk.buggy_hunk.save_json(hunk_path / "bug.json")
+                        for idx, tagged_result in enumerate(hunk.results):
+                            if tagged_result.is_dumpped:
+                                continue
+                            tagged_result.is_dumpped = True
+                            tagged_result.save_json(hunk_path / f"{idx}.json")
 
 
 RULE = "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
