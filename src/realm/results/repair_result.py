@@ -12,7 +12,7 @@ from realm.generation_defs import SynthesisResultBatch, AvgSynthesisResult
 from realm.utils import JsonSerializable, IORetrospective
 from realm.lsp import TextFile
 
-META_CONFIG_FNAME = "meta_config.json"
+
 REPAIR_CONFIG_FNAME = "repair_config.json"
 REPAIR_RESULT_PATH_PREFIX = "Repair-"
 
@@ -69,25 +69,18 @@ RepairResultDicts = list[RepairResultDict]
 
 @dataclass
 class RepairResult(IORetrospective):
-    config: MetaConfig
     results: RepairResultDicts
     repair_configs: list[RepairConfig]
-
-    is_config_saved: bool
     is_repair_config_saved: list[bool]
 
     @staticmethod
-    def init(config: MetaConfig) -> "RepairResult":
+    def init() -> "RepairResult":
         # print(f"Metadata will be saved in {root}")
-        return RepairResult(config, [], [], False, [])
+        return RepairResult([], [], [])
 
     @classmethod
     def load(cls, path: Path) -> "RepairResult":
         assert path.exists()
-        meta_config_path = path / META_CONFIG_FNAME
-        assert meta_config_path.exists()
-        with open(meta_config_path) as f:
-            config: MetaConfig = json.load(f)
         repair_configs: list[RepairConfig] = []
         results: RepairResultDicts = []
         repair_dirs = list(filter(Path.is_dir, path.iterdir()))
@@ -129,21 +122,7 @@ class RepairResult(IORetrospective):
                         hunk.results.append(tagged_result)
                     hunks.append(hunk)
             results.append(result_dict)
-        return RepairResult(
-            config, results, repair_configs, True, [True] * len(repair_configs)
-        )
-
-    def dump_metadata(self, path: Path):
-        if not self.is_config_saved:
-            self.config.save_json(path / META_CONFIG_FNAME)
-            with open(path / "sys_args.txt", "w") as f:
-                json.dump(sys.argv, f)
-            with open(path / "meta.txt", "w") as f:
-                log_git_repo(f, "Repair tool", Path("."))
-                log_git_repo(f, "Defects4J", self.config.d4j_home)
-                log_git_repo(f, "Language server", self.config.jdt_ls_repo)
-                f.write(f"Defects4J checkout path: {self.config.d4j_checkout_root}\n")
-            self.is_config_saved = True
+        return RepairResult(results, repair_configs, [True] * len(repair_configs))
 
     def check(self):
         assert len(self.repair_configs) == len(self.is_repair_config_saved)
@@ -208,7 +187,6 @@ class RepairResult(IORetrospective):
 
     def dump(self, path: Path):
         self.check()
-        self.dump_metadata(path)
         self.dump_repair_configs(path)
         for idx, _ in enumerate(self.repair_configs):
             repair_dir = REPAIR_RESULT_PATH_PREFIX + str(idx)
@@ -229,27 +207,6 @@ class RepairResult(IORetrospective):
                                 continue
                             tagged_result.is_dumpped = True
                             tagged_result.save_json(hunk_path / f"{idx}.json")
-
-
-RULE = "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
-
-
-def log_git_repo(f: io.TextIOBase, tag: str, repo_path: Path, new_line: bool = True):
-    repo = git.Repo(repo_path)
-    f.writelines(
-        [
-            f"[{tag}] Git hash: {repo.head.object.hexsha}\n",
-            f"[{tag}] Git status: ",
-            RULE,
-            repo.git.status(),
-            RULE,
-            f"[{tag}] Git diff:",
-            repo.git.diff(),
-            RULE,
-        ]
-    )
-    if new_line:
-        f.write("\n")
 
 
 # for result in result_batch.results:

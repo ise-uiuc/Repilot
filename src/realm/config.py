@@ -80,6 +80,7 @@ class RepairConfig(JsonSerializable):
     lm_inference_config: LMInferenceConfig
     method: SynthesisMethod
     bug_pattern: str
+    hunk_only: bool
 
     @property
     def batch_size(self) -> int:
@@ -91,6 +92,7 @@ class RepairConfig(JsonSerializable):
             "lm_inference_config": self.lm_inference_config.to_json(),
             "method": self.method.to_json(),
             "bug_pattern": self.bug_pattern,
+            "hunk_only": self.hunk_only,
         }
 
     @classmethod
@@ -100,5 +102,29 @@ class RepairConfig(JsonSerializable):
             int(d["n_samples"]),
             inference_config,
             SynthesisMethod.from_json(d["method"]),
-            d["bug_pattern"],
+            str(d["bug_pattern"]),
+            bool(d["hunk_only"]),
+        )
+
+
+@dataclass(frozen=True)
+class ValidationConfig(JsonSerializable):
+    n_cores: int
+    # Which repair groups to validate
+    repair_index_pattern: str
+    bug_pattern: str
+
+    def to_json(self) -> Any:
+        return {
+            "n_cores": self.n_cores,
+            "repair_index_pattern": self.repair_index_pattern,
+            "bug_pattern": self.bug_pattern,
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "ValidationConfig":
+        return ValidationConfig(
+            int(d["n_cores"]),
+            str(d["repair_index_pattern"]),
+            str(d["bug_pattern"]),
         )

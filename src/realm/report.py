@@ -1,37 +1,65 @@
-from .results import (
-    RepairResult,
-    RepairAnalysisResult,
-    AnalysisResult,
-    RepairAnalysisResult,
-    AvgFilePatch,
-    AvgPatch,
-    TaggedResult,
-    BuggyHunk,
-    HunkRepairResult,
-)
+import json
+import sys
+from dataclasses import dataclass
+from itertools import zip_longest
+from pathlib import Path
+from typing import Iterator, cast
+
+from joblib import Parallel, delayed
+
+from . import utils
+from .config import MetaConfig, ValidationConfig
 from .generation_defs import AvgSynthesisResult
 from .lsp import TextFile
-from .utils import IORetrospective
-from pathlib import Path
-from dataclasses import dataclass
-from .config import MetaConfig
-from typing import Iterator, cast
+from .d4j import Defects4J
+from .results import (
+    AvgFilePatch,
+    AvgPatch,
+    BuggyHunk,
+    HunkRepairResult,
+    Outcome,
+    PatchValidationResult,
+    RepairAnalysisResult,
+    RepairAnalysisResults,
+    RepairResult,
+    TaggedResult,
+    ValidationResult,
+    ValidationResults,
+)
+
+META_CONFIG_FNAME = "meta_config.json"
+VAL_CONFIG_SUFFIX = "_validation_config.json"
 
 
 @dataclass
-class Reporter(IORetrospective):
+class Report(utils.IORetrospective):
+    """A integrated report type that represents all the information recorded and to be dumped"""
+
     root: Path
+    config: MetaConfig
     repair_result: RepairResult
-    analysis_result: RepairAnalysisResult | None
+    analysis_result: RepairAnalysisResults | None
+    validation_result: ValidationResults | None
+    validation_configs: list[ValidationConfig]
 
-    def __post_init__(self):
-        assert self.root.exists()
+    def get_d4j(self) -> Defects4J:
+        # TODO (low priority): can be optimized
+        return Defects4J(
+            self.config.d4j_home, self.config.d4j_checkout_root, self.config.java8_home
+        )
 
-    @staticmethod
-    def create_repair(root: Path, config: MetaConfig):
-        root.mkdir()
-        print("Metadata will be saved to", root)
-        return Reporter(root, RepairResult.init(config), None)
+    def dump_metadata(self, path: Path):
+        if not (config_path := path / META_CONFIG_FNAME).exists():
+            self.config.dump(config_path)
+        if not (sys_args_path := path / "sys_args.txt").exists():
+            with open(sys_args_path, "w") as f:
+                json.dump(sys.argv, f)
+        if not (meta_path := path / "meta.txt").exists():
+            with open(meta_path, "w") as f:
+                utils.log_git_repo(f, "Repair tool", Path("."))
+                utils.log_git_repo(f, "Defects4J", self.config.d4j_home)
+                utils.log_git_repo(f, "Language server", self.config.jdt_ls_repo)
+                f.write(f"Defects4J checkout path: {self.config.d4j_checkout_root}\n")
 
     def save(self):
         self.dump(self.root)
@@ -40,98 +68,28 @@ class Reporter(IORetrospective):
         self.repair_result.dump(path)
         if self.analysis_result is not None:
             self.analysis_result.dump(path)
+        if self.validation_result is not None:
+            self.validation_result.dump(path)
+        for idx, config in enumerate(self.validation_configs):
+            if not (path := self.root / f"{idx}{VAL_CONFIG_SUFFIX}").exists():
+                config.dump(path)
 
     @classmethod
-    def load(cls, path: Path) -> "Reporter":
+    def load(cls, path: Path) -> "Report":
+        meta_config = MetaConfig.load(path / META_CONFIG_FNAME)
         repair_result = RepairResult.load(path)
-        analysis_result = (
-            RepairAnalysisResult.load(path)
-            if RepairAnalysisResult.file_exists(path)
-            else None
+        analysis_result = RepairAnalysisResults.try_load(path)
+        validation_result = ValidationResults.try_load(path)
+        p_validation_configs = list(
+            filter(lambda p: p.name.endswith(VAL_CONFIG_SUFFIX), path.iterdir())
         )
-        return Reporter(path, repair_result, analysis_result)
-
-    def analyze(self):
-        if not isinstance(self.repair_result, RepairResult):
-            return
-        all_appeared: dict[str, set[str]] = {}
-        a_results: list[AnalysisResult] = []
-        for result in self.repair_result.results:
-            result_dict: dict[str, list[AvgPatch]] = {}
-            for bug_id, files in result.items():
-                appeared = all_appeared.setdefault(bug_id, set())
-                patches: list[AvgPatch] = []
-                for patch in iter_files(files):
-                    if any(
-                        hunk.result.hunk is None
-                        for file in patch
-                        for hunk in file.hunks
-                    ):
-                        is_duplicate = False
-                    else:
-                        concat_hunk_str = "".join(
-                            cast(str, hunk_patch.result.hunk)
-                            for file_patch in patch
-                            for hunk_patch in file_patch.hunks
-                        )
-                        if concat_hunk_str in appeared:
-                            is_duplicate = True
-                        else:
-                            appeared.add(concat_hunk_str)
-                            is_duplicate = False
-                    patches.append(AvgPatch(patch, is_duplicate))
-                result_dict[bug_id] = patches
-            a_results.append(AnalysisResult(result_dict))
-        self.analysis_result = RepairAnalysisResult(a_results)
-
-
-_AvgResult = tuple[AvgSynthesisResult, BuggyHunk]
-
-
-def iter_files(
-    file_results: list[list[HunkRepairResult]],
-) -> Iterator[list[AvgFilePatch]]:
-    # For one bug
-    # items = list(hunk_dict.items())
-    # items.sort(key=lambda kv: kv[0])
-    groups: list[list[list[_AvgResult]]] = []
-    # TODO: maybe take a look at `itertools.groupby`
-    # last_f: int | None = None
-    for hunk_results in file_results:
-        groups.append([])
-        group = groups[-1]
-        for hunk_result in hunk_results:
-            avg_results = [
-                (avg_result, hunk_result.buggy_hunk)
-                for tagged_result in hunk_result.results
-                for avg_result in tagged_result.synthesis_result_batch.to_average_results()
-            ]
-            # assert len(avg_results) > 0
-            # assert f_idx == len(groups)
-            # if last_f is None or f_idx != last_f:
-            #     group: list[list[_AvgResult]] = []
-            #     groups.append(group)
-            # else:
-            #     group = groups[-1]
-            # assert h_idx == len(group)
-            group.append(avg_results)
-    for group in groups:
-        assert len(group) > 0
-        assert len(set(len(data) for data in group)) == 1
-        assert len(set(t[1].file.path for data in group for t in data)) == 1
-
-    for file_groups in zip(*(zip(*group) for group in groups)):
-        assert len(file_groups) > 0
-        file_patches: list[AvgFilePatch] = []
-        for file_group in file_groups:
-            hunks: list[AvgSynthesisResult] = []
-            buggy_hunk_indices: list[tuple[int, int]] = []
-            assert len(file_group) > 0
-            bug: TextFile | None = None
-            for avg_result, buggy_hunk in file_group:
-                bug = buggy_hunk.file
-                buggy_hunk_indices.append((buggy_hunk.start, buggy_hunk.end))
-                hunks.append(avg_result)
-            assert bug is not None
-            file_patches.append(AvgFilePatch(hunks, bug, buggy_hunk_indices))
-        yield file_patches
+        p_validation_configs.sort(key=lambda p: int(p.name[: len(VAL_CONFIG_SUFFIX)]))
+        validation_configs = list(map(ValidationConfig.load, p_validation_configs))
+        return Report(
+            path,
+            meta_config,
+            repair_result,
+            analysis_result,
+            validation_result,
+            validation_configs,
+        )

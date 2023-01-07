@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, TypeVar
 from realm.utils import chunked
 import git
+import os
 
 Metadata = Dict[str, List[Dict[str, str]]]
 
@@ -132,11 +133,15 @@ BenchmarkMetadata = Dict[BugId, Bug]
 
 
 class Defects4J:
-    def __init__(self, d4j_home: Path, d4j_checkout_root: Path) -> None:
+    def __init__(
+        self, d4j_home: Path, d4j_checkout_root: Path, java8_home: Path
+    ) -> None:
         self.d4j_home = d4j_home
         self.d4j_checkout_root = d4j_checkout_root
+        self.java8_home = java8_home
         assert d4j_home.exists()
         assert self.d4j_executable.exists()
+        assert self.java8_home.exists()
         assert d4j_checkout_root.exists()
         self.metadata = self._get_metadata()
         self.all_bugs = self._all_bugs()
@@ -159,7 +164,40 @@ class Defects4J:
     def d4j_executable(self) -> Path:
         return self.d4j_home / "framework" / "bin" / "defects4j"
 
-    def checkout_buggy(self, bug_id: str, bug_proj_path: str):
+    def compile(self, bug_id: str) -> tuple[bool, str, str]:
+        bug = self.all_bugs[bug_id]
+        env = dict(os.environ, JAVA_HOME=str(self.java8_home))
+        result = subprocess.run(
+            ["defects4j", "compile"],
+            env=env,
+            cwd=bug.proj_path,
+            text=True,
+            capture_output=True,
+        )
+        return (result.returncode == 0, result.stdout, result.stderr)
+
+    def test(self, bug_id: str, timeout: int) -> tuple[bool, str, str]:
+        bug = self.all_bugs[bug_id]
+        env = dict(os.environ, JAVA_HOME=str(self.java8_home))
+        result = subprocess.run(
+            ["defects4j", "test"],
+            env=env,
+            cwd=bug.proj_path,
+            timeout=timeout,
+            text=True,
+            capture_output=True,
+        )
+        failing_tests = Path(bug.proj_path) / "failing_tests"
+        assert failing_tests.exists()
+        with open(failing_tests) as f:
+            return (
+                (f.read().strip() == ""),
+                result.stdout,
+                result.stderr,
+            )
+
+    def checkout(self, bug_id: str, buggy: bool = True):
+        bug_proj_path = self.all_bugs[bug_id].proj_path
         proj, id_str = self.split_bug_id(bug_id)
         repo = git.Repo(bug_proj_path)
         repo.git.execute(["git", "checkout", "HEAD", "-f", "."])
@@ -169,7 +207,7 @@ class Defects4J:
                 "checkout",
                 "-p",
                 proj,
-                f"-v{id_str}b",
+                f"-v{id_str}{'b' if buggy else 'f'}",
                 "-w",
                 bug_proj_path,
             ]

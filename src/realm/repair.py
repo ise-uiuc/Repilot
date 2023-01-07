@@ -1,6 +1,6 @@
 from . import utils, generation as gen
 from .model import CodeT5ForRealm, CodeT5Large
-from .report import Reporter
+from .report import Report
 from .results import RepairResult
 from .config import MetaConfig, RepairConfig
 from .jdt_lsp import JdtLspAnalyzer, Message
@@ -100,27 +100,28 @@ class Repairer:
         config: MetaConfig,
         model: CodeT5ForRealm,
         d4j: Defects4J,
-        reporter: Reporter,
+        report: Report,
         active_connection_analyzer_pairs: List[Tuple[Connection, JdtLspAnalyzer]],
     ) -> None:
         self.config = config
         self.model = model
         self.d4j = d4j
-        self.reporter = reporter
+        self.report = report
         self.active_connection_analyzer_pairs = active_connection_analyzer_pairs
 
     @staticmethod
-    def init(config: MetaConfig, report_dir: Path, pre_allocate: bool) -> "Repairer":
+    def init(
+        config: MetaConfig, report: Report, d4j: Defects4J, pre_allocate: bool
+    ) -> "Repairer":
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
-        reporter = Reporter.create_repair(report_dir, config)
+        # report = Report.create(report_dir, config)
         model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
-        d4j = Defects4J(config.d4j_home, config.d4j_checkout_root)
         if pre_allocate:
             print("Doing pre-allocation..")
             model.pre_allocate()
             print("Done.")
-        return Repairer(config, model, d4j, reporter, [])
+        return Repairer(config, model, d4j, report, [])
 
     def server_cmd_maker(self) -> list[str]:
         # IMPORTANT: -data dir should be DIFFERENT for different analyzers!!!
@@ -134,16 +135,18 @@ class Repairer:
         numpy.random.seed(self.config.seed)
         random.seed(self.config.seed)
 
-    def repair(self, config: RepairConfig, hunk_only: bool = True):
+    def repair(self, config: RepairConfig):
         self.fix_seed()
-        report_result = cast(RepairResult, self.reporter.repair_result)
+        report_result = cast(RepairResult, self.report.repair_result)
         report_result.add_repair_config(config)
         pattern = re.compile(config.bug_pattern)
-        bugs_considered = self.d4j.single_hunk_bugs if hunk_only else self.d4j.all_bugs
+        bugs_considered = (
+            self.d4j.single_hunk_bugs if config.hunk_only else self.d4j.all_bugs
+        )
         bugs_to_repair = {
             bug_id: bug
             for bug_id, bug in bugs_considered.items()
-            if re.fullmatch(pattern, bug_id)
+            if pattern.fullmatch(bug_id) is not None
             # Unicode error
             and bug_id != "Lang-25"
         }
@@ -167,7 +170,7 @@ class Repairer:
 
     def repair_bug_no_cleanup(self, config: RepairConfig, bug_id: str, bug: Bug):
         print("Repair", bug_id)
-        self.d4j.checkout_buggy(bug_id, bug.proj_path)
+        self.d4j.checkout(bug_id)
         if not config.method.is_plain():
             connection_pairs = cast(
                 list[tuple[Connection, Connection]],
@@ -253,7 +256,7 @@ class Repairer:
                 print("Time cost:", synthesis_result_batch.time_cost)
                 buggy_file_path = Path(bug.proj_path) / buggy_file.path
                 assert buggy_file_path.exists()
-                report_result = cast(RepairResult, self.reporter.repair_result)
+                report_result = cast(RepairResult, self.report.repair_result)
                 report_result.add(
                     bug_id,
                     hunk_idx,
@@ -262,8 +265,8 @@ class Repairer:
                     buggy_hunk_start_index,
                     buggy_hunk_end_index,
                 )
-                self.reporter.save()
+                self.report.save()
                 # WARNING: Timeout error, if happend, indicates the TIMEOUT_THRESHOULD is too small (unlikely)
                 # or a fatal implementation error!!
                 # except TimeoutError:
-                #     self.reporter.report_timeout_error()
+                #     self.report.report_timeout_error()

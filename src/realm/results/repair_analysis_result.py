@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from realm.config import MetaConfig, RepairConfig
 from realm.generation_defs import SynthesisResultBatch, AvgSynthesisResult
-from realm.utils import JsonSerializable, IORetrospective
+from realm.utils import JsonSerializable, JsonSpecificDirectoryDumpable
 from .repair_result import RepairResult
 from typing import Any
 from realm.lsp.text import TextFile
@@ -35,6 +35,10 @@ class AvgFilePatch:
     hunks: list[AvgSynthesisResult]
     bug: TextFile
     buggy_hunk_indices: list[tuple[int, int]]
+
+    @property
+    def is_broken(self):
+        return any(hunk.result.hunk is None for hunk in self.hunks)
 
     def to_json(self) -> Any:
         return {
@@ -90,6 +94,10 @@ class AvgPatch(JsonSerializable):
     file_patches: list[AvgFilePatch]
     is_duplicate: bool
 
+    @property
+    def is_broken(self) -> bool:
+        return any(file_patch.is_broken for file_patch in self.file_patches)
+
     def to_json(self) -> Any:
         return {
             "file_patches": [file_patch.to_json() for file_patch in self.file_patches],
@@ -105,7 +113,7 @@ class AvgPatch(JsonSerializable):
 
 
 @dataclass(frozen=True)
-class AnalysisResult(JsonSerializable):
+class RepairAnalysisResult(JsonSerializable):
     result_dict: dict[str, list[AvgPatch]]
 
     def to_json(self) -> Any:
@@ -115,8 +123,8 @@ class AnalysisResult(JsonSerializable):
         }
 
     @classmethod
-    def from_json(cls, d: dict) -> "AnalysisResult":
-        return AnalysisResult(
+    def from_json(cls, d: dict) -> "RepairAnalysisResult":
+        return RepairAnalysisResult(
             {
                 bug_id: [AvgPatch.from_json(avg_patch) for avg_patch in avg_patches]
                 for bug_id, avg_patches in d.items()
@@ -125,25 +133,16 @@ class AnalysisResult(JsonSerializable):
 
 
 @dataclass(frozen=True)
-class RepairAnalysisResult(JsonSerializable):
-    results: list[AnalysisResult]
+class RepairAnalysisResults(JsonSpecificDirectoryDumpable):
+    results: list[RepairAnalysisResult]
+
+    @classmethod
+    def name(cls):
+        return ANALYSIS_FNAME
 
     def to_json(self) -> Any:
         return [result.to_json() for result in self.results]
 
     @classmethod
-    def from_json(cls, d: list) -> "RepairAnalysisResult":
-        return RepairAnalysisResult([AnalysisResult.from_json(r) for r in d])
-
-    @staticmethod
-    def file_exists(path: Path) -> bool:
-        return (path / ANALYSIS_FNAME).exists()
-
-    def dump(self, path: Path):
-        if not self.file_exists(path / ANALYSIS_FNAME):
-            self.save_json(path / ANALYSIS_FNAME)
-
-    @classmethod
-    def load(cls, path: Path) -> "RepairAnalysisResult":
-        assert RepairAnalysisResult.file_exists(path)
-        return cls.from_json_file(path / ANALYSIS_FNAME)
+    def from_json(cls, d: list) -> "RepairAnalysisResults":
+        return RepairAnalysisResults([RepairAnalysisResult.from_json(r) for r in d])

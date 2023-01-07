@@ -1,26 +1,30 @@
+import io
 import itertools
-import pickle
 import json
+import pickle
+from dataclasses import dataclass
+from multiprocessing.connection import Connection
+from pathlib import Path
 from typing import (
+    Any,
     Callable,
+    ClassVar,
     Generic,
     Iterable,
     Iterator,
     List,
-    Tuple,
-    TypeVar,
     Optional,
-    Any,
     Protocol,
+    Tuple,
     Type,
-    ClassVar,
+    TypeVar,
     cast,
+    no_type_check,
 )
-from unidiff.patch import Line
-from pathlib import Path
-from multiprocessing.connection import Connection
-from dataclasses import dataclass
+
+import git
 import torch
+from unidiff.patch import Line
 
 T = TypeVar("T")
 
@@ -220,3 +224,50 @@ class JsonSerializable(IORetrospective):
     @classmethod
     def from_json(cls: Type[T], d: Any) -> T:
         ...
+
+
+class JsonSpecificDirectoryDumpable(JsonSerializable):
+    @classmethod
+    def name(cls) -> str:
+        ...
+
+    def dump(self, path: Path):
+        if not (path := path / self.name()).exists():
+            self.save_json(path / self.name())
+
+    @classmethod
+    @no_type_check
+    def try_load(cls: Type[T], path: Path) -> T:
+        if not (path / cls.name()).exists():
+            return None
+        return cls.load(path)
+
+    @classmethod
+    @no_type_check
+    def load(cls: Type[T], path: Path) -> T:
+        path = path / cls.name()
+        assert path.exists()
+        return cls.from_json_file(path)
+
+
+RULE = (
+    "\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
+)
+
+
+def log_git_repo(f: io.TextIOBase, tag: str, repo_path: Path, new_line: bool = True):
+    repo = git.Repo(repo_path)
+    f.writelines(
+        [
+            f"[{tag}] Git hash: {repo.head.object.hexsha}\n",
+            f"[{tag}] Git status: ",
+            RULE,
+            repo.git.status(),
+            RULE,
+            f"[{tag}] Git diff:",
+            repo.git.diff(),
+            RULE,
+        ]
+    )
+    if new_line:
+        f.write("\n")
