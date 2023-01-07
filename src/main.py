@@ -28,7 +28,7 @@ repair_parser.add_argument(
 )
 repair_parser.add_argument(
     "-b",
-    "--bug",
+    "--bug-pattern",
     required=True,
     help="Regex representing the bugs to repair",
 )
@@ -102,13 +102,13 @@ validation_parser.add_argument(
 )
 validation_parser.add_argument(
     "-b",
-    "--bug",
+    "--bug-pattern",
     required=False,
     default=".*",
     help="Regex representing the bug pattern to validate",
 )
 validation_parser.add_argument(
-    "--repair-idx",
+    "--repair-index-pattern",
     required=False,
     default=".*",
     help="Regex representing which repair collection to validate",
@@ -148,7 +148,7 @@ def repair(args: argparse.Namespace):
             "pruned-mem": SynthesisMethod.PRUNED_MEM,
             "plain": SynthesisMethod.PLAIN,
         }[args.method],
-        args.bug,
+        args.bug_pattern,
         not args.not_single_hunk_only,
     )
     runner = Runner.create(result_dir, META_CONFIG)

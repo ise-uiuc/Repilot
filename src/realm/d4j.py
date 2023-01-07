@@ -168,7 +168,7 @@ class Defects4J:
         bug = self.all_bugs[bug_id]
         env = dict(os.environ, JAVA_HOME=str(self.java8_home))
         result = subprocess.run(
-            ["defects4j", "compile"],
+            [self.d4j_executable, "compile"],
             env=env,
             cwd=bug.proj_path,
             text=True,
@@ -180,7 +180,7 @@ class Defects4J:
         bug = self.all_bugs[bug_id]
         env = dict(os.environ, JAVA_HOME=str(self.java8_home))
         result = subprocess.run(
-            ["defects4j", "test"],
+            [self.d4j_executable, "test"],
             env=env,
             cwd=bug.proj_path,
             timeout=timeout,

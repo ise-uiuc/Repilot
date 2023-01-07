@@ -41,7 +41,7 @@ class Runner:
     def create(root: Path, config: MetaConfig) -> "Runner":
         root.mkdir()
         print("Metadata will be saved to", root)
-        return Runner(Report(root, config, RepairResult.init(), None, None, []))
+        return Runner(Report(root, config, RepairResult.init(), None, None))
 
     @staticmethod
     def load(root: Path) -> "Runner":
@@ -101,11 +101,16 @@ class Runner:
         bug_pattern = re.compile(config.bug_pattern)
         report = self.report
         d4j = report.get_d4j()
+        if report.analysis_result is None:
+            print("Doing analysis first...")
+            self.analyze()
+            print("Done")
         assert report.analysis_result is not None
-        report.validation_configs.append(config)
         analysis_results = report.analysis_result.results
         if report.validation_result is None:
-            report.validation_result = ValidationResults([])
+            report.validation_result = ValidationResults([], [])
+        report.validation_result.validation_configs.append(config)
+        val_config_idx = len(report.validation_result.validation_configs) - 1
         validation_results = report.validation_result.results
         for repair_idx, analysis_result in enumerate(analysis_results):
             if repair_idx_pattern.fullmatch(str(repair_idx)) is None:
@@ -130,14 +135,27 @@ class Runner:
                         unvalidated_analysis_results[-1].append(
                             (bug_id, patch_idx, patch)
                         )
+            # Validate n_cores bugs with different bug_ids in parallel
             for zipped_result in zip_longest(*unvalidated_analysis_results):
                 zipped_results = filter(lambda r: r is not None, zipped_result)
                 for result_batch in utils.chunked(config.n_cores, zipped_results):
-                    results = Parallel(n_jobs=len(result_batch))(
+                    assert len(result_batch) == len(set(r[0] for r in result_batch))
+                    val_results: list[PatchValidationResult] = Parallel(
+                        n_jobs=len(result_batch)
+                    )(
                         delayed(validate_patch)(d4j, bug_id, avg_patch)
                         for (bug_id, _, avg_patch) in result_batch
                     )
-                    # TODO
+                    for (bug_id, val_idx, _), val_result in zip(
+                        result_batch, val_results
+                    ):
+                        assert bug_id in validation_result_dict
+                        assert val_idx not in validation_result_dict[bug_id]
+                        validation_result_dict[bug_id][val_idx] = (
+                            val_config_idx,
+                            val_result,
+                        )
+                    report.save()
 
 
 def validate_patch(

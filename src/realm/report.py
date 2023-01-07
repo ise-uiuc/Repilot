@@ -28,7 +28,6 @@ from .results import (
 )
 
 META_CONFIG_FNAME = "meta_config.json"
-VAL_CONFIG_SUFFIX = "_validation_config.json"
 
 
 @dataclass
@@ -40,7 +39,6 @@ class Report(utils.IORetrospective):
     repair_result: RepairResult
     analysis_result: RepairAnalysisResults | None
     validation_result: ValidationResults | None
-    validation_configs: list[ValidationConfig]
 
     def get_d4j(self) -> Defects4J:
         # TODO (low priority): can be optimized
@@ -72,9 +70,9 @@ class Report(utils.IORetrospective):
             self.analysis_result.dump(path)
         if self.validation_result is not None:
             self.validation_result.dump(path)
-        for idx, config in enumerate(self.validation_configs):
-            if not (config_path := self.root / f"{idx}{VAL_CONFIG_SUFFIX}").exists():
-                config.dump(config_path)
+        # for idx, config in enumerate(self.validation_configs):
+        #     if not (config_path := self.root / f"{idx}{VAL_CONFIG_SUFFIX}").exists():
+        #         config.dump(config_path)
 
     @classmethod
     def load(cls, path: Path) -> "Report":
@@ -82,16 +80,10 @@ class Report(utils.IORetrospective):
         repair_result = RepairResult.load(path)
         analysis_result = RepairAnalysisResults.try_load(path)
         validation_result = ValidationResults.try_load(path)
-        p_validation_configs = list(
-            filter(lambda p: p.name.endswith(VAL_CONFIG_SUFFIX), path.iterdir())
-        )
-        p_validation_configs.sort(key=lambda p: int(p.name[: len(VAL_CONFIG_SUFFIX)]))
-        validation_configs = list(map(ValidationConfig.load, p_validation_configs))
         return Report(
             path,
             meta_config,
             repair_result,
             analysis_result,
             validation_result,
-            validation_configs,
         )

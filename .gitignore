@@ -4,4 +4,9 @@ __pycache__
 .lsp_data
 results-*
 .github
-src/test.py
+/src/test.py
+codet5_token_map.pkl
+/meta_config.json
+/repair_plus.py
+/test.py
+/env
