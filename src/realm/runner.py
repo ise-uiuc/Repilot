@@ -38,10 +38,14 @@ class Runner:
     report: Report
 
     @staticmethod
-    def init(root: Path, config: MetaConfig) -> "Runner":
+    def create(root: Path, config: MetaConfig) -> "Runner":
         root.mkdir()
         print("Metadata will be saved to", root)
         return Runner(Report(root, config, RepairResult.init(), None, None, []))
+
+    @staticmethod
+    def load(root: Path) -> "Runner":
+        return Runner(Report.load(root))
 
     def repair(self, configs: list[RepairConfig], pre_allocate: bool):
         repairer = Repairer.init(
@@ -52,8 +56,7 @@ class Runner:
 
     def analyze(self):
         report = self.report
-        if not isinstance(report.repair_result, RepairResult):
-            return
+        assert isinstance(report.repair_result, RepairResult)
         all_appeared: dict[str, set[str]] = {}
         a_results: list[RepairAnalysisResult] = []
         for result in report.repair_result.results:
@@ -83,6 +86,7 @@ class Runner:
                 result_dict[bug_id] = patches
             a_results.append(RepairAnalysisResult(result_dict))
         report.analysis_result = RepairAnalysisResults(a_results)
+        report.save()
 
     def validate(self, config: ValidationConfig):
         """Recoverable validation"""

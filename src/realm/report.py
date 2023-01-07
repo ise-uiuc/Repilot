@@ -49,6 +49,7 @@ class Report(utils.IORetrospective):
         )
 
     def dump_metadata(self, path: Path):
+        assert isinstance(path, Path)
         if not (config_path := path / META_CONFIG_FNAME).exists():
             self.config.dump(config_path)
         if not (sys_args_path := path / "sys_args.txt").exists():
@@ -65,14 +66,15 @@ class Report(utils.IORetrospective):
         self.dump(self.root)
 
     def dump(self, path: Path):
+        self.dump_metadata(path)
         self.repair_result.dump(path)
         if self.analysis_result is not None:
             self.analysis_result.dump(path)
         if self.validation_result is not None:
             self.validation_result.dump(path)
         for idx, config in enumerate(self.validation_configs):
-            if not (path := self.root / f"{idx}{VAL_CONFIG_SUFFIX}").exists():
-                config.dump(path)
+            if not (config_path := self.root / f"{idx}{VAL_CONFIG_SUFFIX}").exists():
+                config.dump(config_path)
 
     @classmethod
     def load(cls, path: Path) -> "Report":

@@ -151,17 +151,17 @@ def repair(args: argparse.Namespace):
         args.bug,
         not args.not_single_hunk_only,
     )
-    runner = Runner.init(result_dir, META_CONFIG)
+    runner = Runner.create(result_dir, META_CONFIG)
     runner.repair([repair_config], args.pre_allocate)
 
 
 def analyze(args: argparse.Namespace):
-    runner = Runner.init(args.dir, META_CONFIG)
+    runner = Runner.load(Path(args.dir))
     runner.analyze()
 
 
 def validate(args: argparse.Namespace):
-    runner = Runner.init(args.dir, META_CONFIG)
+    runner = Runner.load(Path(args.dir))
     runner.validate(
         ValidationConfig(args.n_cores, args.repair_index_pattern, args.bug_pattern)
     )

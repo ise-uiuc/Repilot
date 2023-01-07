@@ -233,7 +233,7 @@ class JsonSpecificDirectoryDumpable(JsonSerializable):
 
     def dump(self, path: Path):
         if not (path := path / self.name()).exists():
-            self.save_json(path / self.name())
+            self.save_json(path)
 
     @classmethod
     @no_type_check
