@@ -231,23 +231,26 @@ class JsonSpecificDirectoryDumpable(JsonSerializable):
     def name(cls) -> str:
         ...
 
+    @classmethod
+    def json_save_path(cls, path: Path) -> Path:
+        return path / cls.name()
+
     def dump(self, path: Path):
-        if not (path := path / self.name()).exists():
-            self.save_json(path)
+        self.save_json(self.json_save_path(path))
 
     @classmethod
-    @no_type_check
-    def try_load(cls: Type[T], path: Path) -> T:
-        if not (path / cls.name()).exists():
+    def try_load(cls: Type[T], path: Path) -> T | None:
+        cls_casted = cast(JsonSpecificDirectoryDumpable, cls)
+        if not (cls_casted.json_save_path(path)).exists():
             return None
-        return cls.load(path)
+        return cast(T, cls_casted.load(path))
 
     @classmethod
-    @no_type_check
     def load(cls: Type[T], path: Path) -> T:
-        path = path / cls.name()
+        cls_casted = cast(JsonSpecificDirectoryDumpable, cls)
+        path = cls_casted.json_save_path(path)
         assert path.exists()
-        return cls.from_json_file(path)
+        return cast(T, cls_casted.from_json_file(path))
 
 
 RULE = (

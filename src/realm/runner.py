@@ -55,16 +55,23 @@ class Runner:
             repairer.repair(config)
 
     def analyze(self):
+        """Incremental analysis"""
         report = self.report
         assert isinstance(report.repair_result, RepairResult)
-        all_appeared: dict[str, set[str]] = {}
-        a_results: list[RepairAnalysisResult] = []
-        for result in report.repair_result.results:
-            result_dict: dict[str, list[AvgPatch]] = {}
+        if report.analysis_result is None:
+            report.analysis_result = RepairAnalysisResults([])
+        a_results = report.analysis_result.results
+        for repair_idx, result in enumerate(report.repair_result.results):
+            if repair_idx == len(a_results):
+                a_results.append(RepairAnalysisResult({}, {}))
+            result_dict = a_results[repair_idx].result_dict
+            all_appeared = a_results[repair_idx].all_appeared
             for bug_id, files in result.items():
+                patches = result_dict.setdefault(bug_id, [])
                 appeared = all_appeared.setdefault(bug_id, set())
-                patches: list[AvgPatch] = []
-                for patch in iter_files(files):
+                for patch_idx, patch in enumerate(iter_files(files)):
+                    if patch_idx < len(patches):
+                        continue
                     if any(
                         hunk.result.hunk is None
                         for file in patch
@@ -84,8 +91,8 @@ class Runner:
                             is_duplicate = False
                     patches.append(AvgPatch(patch, is_duplicate))
                 result_dict[bug_id] = patches
-            a_results.append(RepairAnalysisResult(result_dict))
-        report.analysis_result = RepairAnalysisResults(a_results)
+            # a_results.append(RepairAnalysisResult(result_dict))
+        # report.analysis_result = RepairAnalysisResults(a_results)
         report.save()
 
     def validate(self, config: ValidationConfig):

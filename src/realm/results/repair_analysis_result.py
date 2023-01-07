@@ -115,11 +115,17 @@ class AvgPatch(JsonSerializable):
 @dataclass(frozen=True)
 class RepairAnalysisResult(JsonSerializable):
     result_dict: dict[str, list[AvgPatch]]
+    all_appeared: dict[str, set[str]]
 
     def to_json(self) -> Any:
         return {
-            bug_id: [avg_patch.to_json() for avg_patch in avg_patches]
-            for bug_id, avg_patches in self.result_dict.items()
+            "result_dict": {
+                bug_id: [avg_patch.to_json() for avg_patch in avg_patches]
+                for bug_id, avg_patches in self.result_dict.items()
+            },
+            "all_appeared": {
+                bug_id: list(appeared) for bug_id, appeared in self.all_appeared.items()
+            },
         }
 
     @classmethod
@@ -127,8 +133,9 @@ class RepairAnalysisResult(JsonSerializable):
         return RepairAnalysisResult(
             {
                 bug_id: [AvgPatch.from_json(avg_patch) for avg_patch in avg_patches]
-                for bug_id, avg_patches in d.items()
-            }
+                for bug_id, avg_patches in d["result_dict"].items()
+            },
+            {bug_id: set(appeared) for bug_id, appeared in d["all_appeared"].items()},
         )
 
 
