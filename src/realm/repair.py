@@ -135,6 +135,8 @@ class Repairer:
         numpy.random.seed(self.config.seed)
         random.seed(self.config.seed)
 
+    # This `Report` type is too big. In general, we can lift the state up by intializing
+    # a smaller object with a `didChange` method. This is what React does.
     def repair(self, report: Report):
         """Add results to `report` given `config`"""
         self.fix_seed()
