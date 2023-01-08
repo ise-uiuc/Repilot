@@ -24,78 +24,71 @@ from .results import (
     Outcome,
     PatchValidationResult,
     RepairAnalysisResult,
-    RepairAnalysisResults,
     RepairResult,
     ValidationResult,
-    ValidationResults,
 )
 
 
 @dataclass(frozen=True)
 class Runner:
+    """A `Report` converter"""
+
     report: Report
 
     @staticmethod
-    def create(root: Path, config: MetaConfig) -> "Runner":
+    def create(root: Path, config: MetaConfig, repair_config: RepairConfig) -> "Runner":
         root.mkdir()
         print("Metadata will be saved to", root)
-        return Runner(Report(root, config, RepairResult.init(), None, None))
+        return Runner(Report(root, config, RepairResult({}, repair_config), None, None))
 
     @staticmethod
     def load(root: Path) -> "Runner":
         return Runner(Report.load(root))
 
-    def repair(self, configs: list[RepairConfig], pre_allocate: bool):
-        repairer = Repairer.init(
-            self.report.config, self.report, self.report.get_d4j(), pre_allocate
-        )
-        for config in configs:
-            repairer.repair(config)
+    def repair(self, repairer: Repairer):
+        repairer.repair(self.report)
 
     def analyze(self):
         """Incremental analysis"""
         report = self.report
         assert isinstance(report.repair_result, RepairResult)
+        # a_results = report.analysis_result.results
+        # for repair_idx, result in enumerate(report.repair_result.results):
+        # if repair_idx == len(a_results):
+        #     a_results.append(RepairAnalysisResult({}, {}))
         if report.analysis_result is None:
-            report.analysis_result = RepairAnalysisResults([])
-        a_results = report.analysis_result.results
-        for repair_idx, result in enumerate(report.repair_result.results):
-            if repair_idx == len(a_results):
-                a_results.append(RepairAnalysisResult({}, {}))
-            result_dict = a_results[repair_idx].result_dict
-            all_appeared = a_results[repair_idx].all_appeared
-            for bug_id, files in result.items():
-                patches = result_dict.setdefault(bug_id, [])
-                appeared = all_appeared.setdefault(bug_id, set())
-                for patch_idx, patch in enumerate(iter_files(files)):
-                    if patch_idx < len(patches):
-                        continue
-                    if any(
-                        hunk.result.hunk is None
-                        for file in patch
-                        for hunk in file.hunks
-                    ):
-                        is_duplicate = False
+            report.analysis_result = RepairAnalysisResult({}, {})
+        result_dict = report.analysis_result.result_dict
+        all_appeared = report.analysis_result.all_appeared
+        for bug_id, files in report.repair_result.result_dict.items():
+            patches = result_dict.setdefault(bug_id, [])
+            appeared = all_appeared.setdefault(bug_id, set())
+            for patch_idx, patch in enumerate(iter_files(files)):
+                if patch_idx < len(patches):
+                    continue
+                if any(
+                    hunk.result.hunk is None for file in patch for hunk in file.hunks
+                ):
+                    is_duplicate = False
+                else:
+                    concat_hunk_str = "".join(
+                        cast(str, hunk_patch.result.hunk)
+                        for file_patch in patch
+                        for hunk_patch in file_patch.hunks
+                    )
+                    if concat_hunk_str in appeared:
+                        is_duplicate = True
                     else:
-                        concat_hunk_str = "".join(
-                            cast(str, hunk_patch.result.hunk)
-                            for file_patch in patch
-                            for hunk_patch in file_patch.hunks
-                        )
-                        if concat_hunk_str in appeared:
-                            is_duplicate = True
-                        else:
-                            appeared.add(concat_hunk_str)
-                            is_duplicate = False
-                    patches.append(AvgPatch(patch, is_duplicate))
-                result_dict[bug_id] = patches
-            # a_results.append(RepairAnalysisResult(result_dict))
+                        appeared.add(concat_hunk_str)
+                        is_duplicate = False
+                patches.append(AvgPatch(patch, is_duplicate))
+            result_dict[bug_id] = patches
+        # a_results.append(RepairAnalysisResult(result_dict))
         # report.analysis_result = RepairAnalysisResults(a_results)
         report.save()
 
     def validate(self, config: ValidationConfig):
         """Recoverable validation"""
-        repair_idx_pattern = re.compile(config.repair_index_pattern)
         bug_pattern = re.compile(config.bug_pattern)
         report = self.report
         d4j = report.get_d4j()
@@ -104,56 +97,46 @@ class Runner:
             self.analyze()
             print("Done")
         assert report.analysis_result is not None
-        analysis_results = report.analysis_result.results
         if report.validation_result is None:
-            report.validation_result = ValidationResults([], [])
+            report.validation_result = ValidationResult([], {})
         report.validation_result.validation_configs.append(config)
         val_config_idx = len(report.validation_result.validation_configs) - 1
-        validation_results = report.validation_result.results
-        for repair_idx, analysis_result in enumerate(analysis_results):
-            if repair_idx_pattern.fullmatch(str(repair_idx)) is None:
+        analysis_result = report.analysis_result
+        validation_result = report.validation_result
+        validation_result_dict = validation_result.result_dict
+        analysis_result_dict = analysis_result.result_dict
+        unvalidated_analysis_results: list[list[tuple[str, int, AvgPatch]]] = []
+        for bug_id, patches in analysis_result_dict.items():
+            if bug_pattern.fullmatch(bug_id) is None:
                 continue
-            gap = repair_idx - len(validation_results) + 1
-            validation_results.extend([ValidationResult({}) for _ in range(gap)])
-            validation_result = validation_results[repair_idx]
-            validation_result_dict = validation_result.result_dict
-            analysis_result_dict = analysis_result.result_dict
-            unvalidated_analysis_results: list[list[tuple[str, int, AvgPatch]]] = []
-            for bug_id, patches in analysis_result_dict.items():
-                if bug_pattern.fullmatch(bug_id) is None:
-                    continue
-                validated_patches = validation_result_dict.setdefault(bug_id, {})
-                unvalidated_analysis_results.append([])
-                for patch_idx, patch in enumerate(patches):
-                    if (
-                        not patch.is_duplicate
-                        and not patch.is_broken
-                        and patch_idx not in validated_patches
-                    ):
-                        unvalidated_analysis_results[-1].append(
-                            (bug_id, patch_idx, patch)
-                        )
-            # Validate n_cores bugs with different bug_ids in parallel
-            for zipped_result in zip_longest(*unvalidated_analysis_results):
-                zipped_results = filter(lambda r: r is not None, zipped_result)
-                for result_batch in utils.chunked(config.n_cores, zipped_results):
-                    assert len(result_batch) == len(set(r[0] for r in result_batch))
-                    val_results: list[PatchValidationResult] = Parallel(
-                        n_jobs=len(result_batch)
-                    )(
-                        delayed(validate_patch)(d4j, bug_id, avg_patch)
-                        for (bug_id, _, avg_patch) in result_batch
+            validated_patches = validation_result_dict.setdefault(bug_id, {})
+            unvalidated_analysis_results.append([])
+            for patch_idx, patch in enumerate(patches):
+                if (
+                    not patch.is_duplicate
+                    and not patch.is_broken
+                    and patch_idx not in validated_patches
+                ):
+                    unvalidated_analysis_results[-1].append((bug_id, patch_idx, patch))
+        # Validate n_cores bugs with different bug_ids in parallel
+        for zipped_result in zip_longest(*unvalidated_analysis_results):
+            zipped_results = filter(lambda r: r is not None, zipped_result)
+            for result_batch in utils.chunked(config.n_cores, zipped_results):
+                assert len(result_batch) == len(set(r[0] for r in result_batch))
+                val_results: list[PatchValidationResult] = Parallel(
+                    n_jobs=len(result_batch)
+                )(
+                    delayed(validate_patch)(d4j, bug_id, avg_patch)
+                    for (bug_id, _, avg_patch) in result_batch
+                )
+                for (bug_id, val_idx, _), val_result in zip(result_batch, val_results):
+                    assert bug_id in validation_result_dict
+                    assert val_idx not in validation_result_dict[bug_id]
+                    validation_result_dict[bug_id][val_idx] = (
+                        val_config_idx,
+                        val_result,
                     )
-                    for (bug_id, val_idx, _), val_result in zip(
-                        result_batch, val_results
-                    ):
-                        assert bug_id in validation_result_dict
-                        assert val_idx not in validation_result_dict[bug_id]
-                        validation_result_dict[bug_id][val_idx] = (
-                            val_config_idx,
-                            val_result,
-                        )
-                    report.save()
+                report.save()
 
 
 def validate_patch(

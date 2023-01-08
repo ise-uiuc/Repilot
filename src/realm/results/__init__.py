@@ -1,9 +1,4 @@
-from .repair_analysis_result import (
-    AvgFilePatch,
-    AvgPatch,
-    RepairAnalysisResult,
-    RepairAnalysisResults,
-)
+from .repair_analysis_result import AvgFilePatch, AvgPatch, RepairAnalysisResult
 from .repair_result import (
     AvgSynthesisResult,
     BuggyHunk,
@@ -13,9 +8,4 @@ from .repair_result import (
     SynthesisResultBatch,
     TaggedResult,
 )
-from .validation_result import (
-    Outcome,
-    PatchValidationResult,
-    ValidationResult,
-    ValidationResults,
-)
+from .validation_result import Outcome, PatchValidationResult, ValidationResult

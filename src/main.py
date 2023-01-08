@@ -12,6 +12,7 @@ from realm.config import (
     SynthesisMethod,
     ValidationConfig,
 )
+from realm.repair import Repairer
 from realm.runner import Runner
 
 parser = argparse.ArgumentParser("REALM program repair")
@@ -108,12 +109,6 @@ validation_parser.add_argument(
     help="Regex representing the bug pattern to validate",
 )
 validation_parser.add_argument(
-    "--repair-index-pattern",
-    required=False,
-    default=".*",
-    help="Regex representing which repair collection to validate",
-)
-validation_parser.add_argument(
     "--n-cores",
     required=False,
     default=1,
@@ -151,8 +146,9 @@ def repair(args: argparse.Namespace):
         args.bug_pattern,
         not args.not_single_hunk_only,
     )
-    runner = Runner.create(result_dir, META_CONFIG)
-    runner.repair([repair_config], args.pre_allocate)
+    runner = Runner.create(result_dir, META_CONFIG, repair_config)
+    repairer = Repairer.init(META_CONFIG, args.pre_allocate)
+    Runner.repair(runner, repairer)
 
 
 def analyze(args: argparse.Namespace):
@@ -162,9 +158,7 @@ def analyze(args: argparse.Namespace):
 
 def validate(args: argparse.Namespace):
     runner = Runner.load(Path(args.dir))
-    runner.validate(
-        ValidationConfig(args.n_cores, args.repair_index_pattern, args.bug_pattern)
-    )
+    runner.validate(ValidationConfig(args.n_cores, args.bug_pattern))
 
 
 if __name__ == "__main__":

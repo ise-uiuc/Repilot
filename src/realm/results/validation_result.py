@@ -58,22 +58,33 @@ class PatchValidationResult(JsonSerializable):
 
 
 @dataclass
-class ValidationResult(JsonSerializable):
+class ValidationResult(JsonSpecificDirectoryDumpable):
     # bug_id -> patch_id -> (result, validation_config_index)
+    validation_configs: list[ValidationConfig]
     result_dict: dict[str, dict[int, tuple[int, PatchValidationResult]]]
 
     def to_json(self) -> Any:
         return {
-            bug_id: {
-                patch_idx: (config_idx, patch_result.to_json())
-                for patch_idx, (config_idx, patch_result) in patch_results.items()
-            }
-            for bug_id, patch_results in self.result_dict.items()
+            "validation_configs": [
+                config.to_json() for config in self.validation_configs
+            ],
+            "result_dict": {
+                bug_id: {
+                    patch_idx: (config_idx, patch_result.to_json())
+                    for patch_idx, (config_idx, patch_result) in patch_results.items()
+                }
+                for bug_id, patch_results in self.result_dict.items()
+            },
         }
 
     @classmethod
-    def from_json(cls, d: dict[str, dict[int, tuple[int, dict]]]) -> "ValidationResult":
+    def name(cls) -> str:
+        return VALIDATION_FNAME
+
+    @classmethod
+    def from_json(cls, d: dict) -> "ValidationResult":
         return ValidationResult(
+            [ValidationConfig.from_json(config) for config in d["validation_configs"]],
             {
                 bug_id: {
                     patch_idx: (
@@ -82,31 +93,44 @@ class ValidationResult(JsonSerializable):
                     )
                     for patch_idx, (config_idx, patch_result) in patch_results.items()
                 }
-                for bug_id, patch_results in d.items()
-            }
+                for bug_id, patch_results in d["result_dict"].items()
+            },
         )
 
 
-@dataclass
-class ValidationResults(JsonSpecificDirectoryDumpable):
-    validation_configs: list[ValidationConfig]
-    results: list[ValidationResult]
+#     def to_json(self) -> Any:
+#         return {
+#             "results": [result.to_json() for result in self.results],
+#         }
 
-    @classmethod
-    def name(cls) -> str:
-        return VALIDATION_FNAME
+#     @classmethod
+#     def from_json(cls, d: dict[str, list]) -> "ValidationResults":
+#         return ValidationResults(
+#             [ValidationConfig.from_json(config) for config in d["validation_configs"]],
+#             [ValidationResult.from_json(result) for result in d["results"]],
+#         )
 
-    def to_json(self) -> Any:
-        return {
-            "validation_configs": [
-                config.to_json() for config in self.validation_configs
-            ],
-            "results": [result.to_json() for result in self.results],
-        }
 
-    @classmethod
-    def from_json(cls, d: dict[str, list]) -> "ValidationResults":
-        return ValidationResults(
-            [ValidationConfig.from_json(config) for config in d["validation_configs"]],
-            [ValidationResult.from_json(result) for result in d["results"]],
-        )
+# @dataclass
+# class ValidationResults(JsonSpecificDirectoryDumpable):
+#     validation_configs: list[ValidationConfig]
+#     results: list[ValidationResult]
+
+#     @classmethod
+#     def name(cls) -> str:
+#         return VALIDATION_FNAME
+
+#     def to_json(self) -> Any:
+#         return {
+#             "validation_configs": [
+#                 config.to_json() for config in self.validation_configs
+#             ],
+#             "results": [result.to_json() for result in self.results],
+#         }
+
+#     @classmethod
+#     def from_json(cls, d: dict[str, list]) -> "ValidationResults":
+#         return ValidationResults(
+#             [ValidationConfig.from_json(config) for config in d["validation_configs"]],
+#             [ValidationResult.from_json(result) for result in d["results"]],
+#         )

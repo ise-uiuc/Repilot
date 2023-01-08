@@ -104,19 +104,15 @@ class Repairer:
         config: MetaConfig,
         model: CodeT5ForRealm,
         d4j: Defects4J,
-        report: Report,
         active_connection_analyzer_pairs: List[Tuple[Connection, JdtLspAnalyzer]],
     ) -> None:
         self.config = config
         self.model = model
         self.d4j = d4j
-        self.report = report
         self.active_connection_analyzer_pairs = active_connection_analyzer_pairs
 
     @staticmethod
-    def init(
-        config: MetaConfig, report: Report, d4j: Defects4J, pre_allocate: bool
-    ) -> "Repairer":
+    def init(config: MetaConfig, pre_allocate: bool) -> "Repairer":
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
         # report = Report.create(report_dir, config)
@@ -125,7 +121,7 @@ class Repairer:
             print("Doing pre-allocation..")
             model.pre_allocate()
             print("Done.")
-        return Repairer(config, model, d4j, report, [])
+        return Repairer(config, model, config.d4j(), [])
 
     def server_cmd_maker(self) -> list[str]:
         # IMPORTANT: -data dir should be DIFFERENT for different analyzers!!!
@@ -139,10 +135,12 @@ class Repairer:
         numpy.random.seed(self.config.seed)
         random.seed(self.config.seed)
 
-    def repair(self, config: RepairConfig):
+    def repair(self, report: Report):
+        """Add results to `report` given `config`"""
         self.fix_seed()
-        report_result = cast(RepairResult, self.report.repair_result)
-        report_result.add_repair_config(config)
+        assert report.repair_result is not None
+        repair_result = report.repair_result
+        config = repair_result.repair_config
         pattern = re.compile(config.bug_pattern)
         bugs_considered = (
             self.d4j.single_hunk_bugs if config.hunk_only else self.d4j.all_bugs
@@ -156,7 +154,7 @@ class Repairer:
         }
         for bug_id, bug in bugs_to_repair.items():
             gen.CHART_11 = bug_id == "Chart-11"
-            self.repair_bug(config, bug_id, bug)
+            self.repair_bug(report, bug_id, bug)
 
     def clean_up(self):
         for connection, _ in self.active_connection_analyzer_pairs:
@@ -165,14 +163,16 @@ class Repairer:
             analyzer.join()
         self.active_connection_analyzer_pairs.clear()
 
-    def repair_bug(self, config: RepairConfig, bug_id: str, bug: Bug):
+    def repair_bug(self, report: Report, bug_id: str, bug: Bug):
         try:
-            self.repair_bug_no_cleanup(config, bug_id, bug)
+            self.repair_bug_no_cleanup(report, bug_id, bug)
         finally:
             self.clean_up()
             print("Cleaned up")
 
-    def repair_bug_no_cleanup(self, config: RepairConfig, bug_id: str, bug: Bug):
+    def repair_bug_no_cleanup(self, report: Report, bug_id: str, bug: Bug):
+        assert report.repair_result is not None
+        config = report.repair_result.repair_config
         print("Repair", bug_id)
         self.d4j.checkout(bug_id)
         if not config.method.is_plain():
@@ -260,8 +260,7 @@ class Repairer:
                 print("Time cost:", synthesis_result_batch.time_cost)
                 buggy_file_path = Path(bug.proj_path) / buggy_file.path
                 assert buggy_file_path.exists()
-                report_result = cast(RepairResult, self.report.repair_result)
-                report_result.add(
+                report.repair_result.add(
                     bug_id,
                     hunk_idx,
                     synthesis_result_batch,
@@ -269,7 +268,7 @@ class Repairer:
                     buggy_hunk_start_index,
                     buggy_hunk_end_index,
                 )
-                self.report.save()
+                report.save()
                 # WARNING: Timeout error, if happend, indicates the TIMEOUT_THRESHOULD is too small (unlikely)
                 # or a fatal implementation error!!
                 # except TimeoutError:

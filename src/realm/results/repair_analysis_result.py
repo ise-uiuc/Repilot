@@ -92,9 +92,13 @@ class AvgPatch(JsonSerializable):
 
 
 @dataclass(frozen=True)
-class RepairAnalysisResult(JsonSerializable):
+class RepairAnalysisResult(JsonSpecificDirectoryDumpable):
     result_dict: dict[str, list[AvgPatch]]
     all_appeared: dict[str, set[str]]
+
+    @classmethod
+    def name(cls):
+        return ANALYSIS_FNAME
 
     def to_json(self) -> Any:
         return {
@@ -118,17 +122,17 @@ class RepairAnalysisResult(JsonSerializable):
         )
 
 
-@dataclass(frozen=True)
-class RepairAnalysisResults(JsonSpecificDirectoryDumpable):
-    results: list[RepairAnalysisResult]
+# @dataclass(frozen=True)
+# class RepairAnalysisResults(JsonSpecificDirectoryDumpable):
+#     results: list[RepairAnalysisResult]
 
-    @classmethod
-    def name(cls):
-        return ANALYSIS_FNAME
+#     @classmethod
+#     def name(cls):
+#         return ANALYSIS_FNAME
 
-    def to_json(self) -> Any:
-        return [result.to_json() for result in self.results]
+#     def to_json(self) -> Any:
+#         return [result.to_json() for result in self.results]
 
-    @classmethod
-    def from_json(cls, d: list) -> "RepairAnalysisResults":
-        return RepairAnalysisResults([RepairAnalysisResult.from_json(r) for r in d])
+#     @classmethod
+#     def from_json(cls, d: list) -> "RepairAnalysisResults":
+#         return RepairAnalysisResults([RepairAnalysisResult.from_json(r) for r in d])

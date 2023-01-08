@@ -3,11 +3,12 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
-from .utils import JsonSerializable
+from .d4j import Defects4J
+from .utils import JsonSerializable, JsonSpecificDirectoryDumpable
 
 
 @dataclass(frozen=True)
-class MetaConfig(JsonSerializable):
+class MetaConfig(JsonSpecificDirectoryDumpable):
     """Repair configurations that are not constantly changed once set"""
 
     d4j_home: Path
@@ -18,6 +19,10 @@ class MetaConfig(JsonSerializable):
     # And note to call it with a higher version of Java (e.g., Java 18)
     language_server_cmd: list[str]
     seed: int
+
+    @classmethod
+    def name(cls) -> str:
+        return "meta_config.json"
 
     def to_json(self) -> Any:
         return {
@@ -39,6 +44,9 @@ class MetaConfig(JsonSerializable):
             d["language_server_cmd"],
             d["seed"],
         )
+
+    def d4j(self) -> Defects4J:
+        return Defects4J(self.d4j_home, self.d4j_checkout_root, self.java8_home)
 
 
 class SynthesisMethod(Enum):
@@ -100,12 +108,16 @@ class LMInferenceConfig(JsonSerializable):
 
 
 @dataclass(frozen=True)
-class RepairConfig(JsonSerializable):
+class RepairConfig(JsonSpecificDirectoryDumpable):
     n_samples: int
     lm_inference_config: LMInferenceConfig
     method: SynthesisMethod
     bug_pattern: str
     hunk_only: bool
+
+    @classmethod
+    def name(cls) -> str:
+        return "repair_config.json"
 
     @property
     def batch_size(self) -> int:
@@ -135,14 +147,11 @@ class RepairConfig(JsonSerializable):
 @dataclass(frozen=True)
 class ValidationConfig(JsonSerializable):
     n_cores: int
-    # Which repair groups to validate
-    repair_index_pattern: str
     bug_pattern: str
 
     def to_json(self) -> Any:
         return {
             "n_cores": self.n_cores,
-            "repair_index_pattern": self.repair_index_pattern,
             "bug_pattern": self.bug_pattern,
         }
 
@@ -150,6 +159,5 @@ class ValidationConfig(JsonSerializable):
     def from_json(cls, d: dict) -> "ValidationConfig":
         return ValidationConfig(
             int(d["n_cores"]),
-            str(d["repair_index_pattern"]),
             str(d["bug_pattern"]),
         )

@@ -6,8 +6,7 @@ from realm.config import RepairConfig
 from realm.lsp import TextFile
 from realm.utils import IORetrospective, JsonSerializable
 
-REPAIR_CONFIG_FNAME = "repair_config.json"
-REPAIR_RESULT_PATH_PREFIX = "Repair-"
+# REPAIR_RESULT_PATH_PREFIX = "Repair-"
 
 
 @dataclass(frozen=True)
@@ -121,84 +120,71 @@ class HunkRepairResult:
 # bug_id -> file_id -> hunk_id -> result
 RepairResultDict = dict[str, list[list[HunkRepairResult]]]
 # repair_idx -> repair_result
-RepairResultDicts = list[RepairResultDict]
+# RepairResultDicts = list[RepairResultDict]
 
 
 @dataclass
 class RepairResult(IORetrospective):
-    results: RepairResultDicts
-    repair_configs: list[RepairConfig]
-    is_repair_config_saved: list[bool]
+    result_dict: RepairResultDict
+    repair_config: RepairConfig
 
-    @staticmethod
-    def init() -> "RepairResult":
-        # print(f"Metadata will be saved in {root}")
-        return RepairResult([], [], [])
+    # @staticmethod
+    # def init() -> "RepairResult":
+    #     # print(f"Metadata will be saved in {root}")
+    #     return RepairResult([], [], [])
+    @classmethod
+    def try_load(cls, path: Path) -> "RepairResult | None":
+        if not (RepairConfig.json_save_path(path)).exists():
+            return None
+        return cls.load(path)
 
     @classmethod
     def load(cls, path: Path) -> "RepairResult":
         assert path.exists()
-        repair_configs: list[RepairConfig] = []
-        results: RepairResultDicts = []
-        repair_dirs = list(filter(Path.is_dir, path.iterdir()))
-        repair_dirs.sort(
-            key=lambda dir: int(dir.name[len(REPAIR_RESULT_PATH_PREFIX) :])
-        )
-        for d_repair in repair_dirs:
-            repair_configs.append(
-                RepairConfig.from_json_file(d_repair / REPAIR_CONFIG_FNAME)
-            )
-            result_dict: RepairResultDict = {}
-            for d_bug_id in filter(Path.is_dir, d_repair.iterdir()):
-                bug_id = d_bug_id.name
-                files = result_dict.setdefault(bug_id, [])
-                d_files = [
-                    (tuple(map(int, p.name.split("-"))), p) for p in d_bug_id.iterdir()
-                ]
-                d_files.sort(key=lambda tp: tp[0])
-                for (f_id, h_id), d_hunks in d_files:
-                    assert d_hunks.is_dir()
-                    buggy_hunk = BuggyHunk.from_json_file(d_hunks / "bug.json")
-                    assert len(files) == f_id
-                    if h_id == 0:
-                        hunks: list[HunkRepairResult] = []
-                        files.append(hunks)
-                    else:
-                        hunks = files[-1]
-                    assert len(hunks) == h_id
-                    hunk = HunkRepairResult(buggy_hunk, [])
-                    f_tagged_result_jsons = list(
-                        filter(lambda p: p.name != "bug.json", d_hunks.iterdir())
-                    )
-                    f_tagged_result_jsons.sort(key=lambda f: int(f.stem))
-                    for f_tagged_result_json in f_tagged_result_jsons:
-                        assert f_tagged_result_json.is_file()
-                        tagged_result = TaggedResult.from_json_file(
-                            f_tagged_result_json
-                        )
-                        hunk.results.append(tagged_result)
-                    hunks.append(hunk)
-            results.append(result_dict)
-        return RepairResult(results, repair_configs, [True] * len(repair_configs))
+        assert (RepairConfig.json_save_path(path)).exists()
+        # repair_configs: RepairConfig = []
+        repair_config = RepairConfig.load(path)
+        # results: RepairResultDicts = []
+        # repair_dirs = list(filter(Path.is_dir, path.iterdir()))
+        # repair_dirs.sort(
+        #     key=lambda dir: int(dir.name[len(REPAIR_RESULT_PATH_PREFIX) :])
+        # )
+        # for d_repair in repair_dirs:
+        # repair_configs.append(
+        # )
+        result_dict: RepairResultDict = {}
+        for d_bug_id in filter(Path.is_dir, path.iterdir()):
+            bug_id = d_bug_id.name
+            files = result_dict.setdefault(bug_id, [])
+            d_files = [
+                (tuple(map(int, p.name.split("-"))), p) for p in d_bug_id.iterdir()
+            ]
+            d_files.sort(key=lambda tp: tp[0])
+            for (f_id, h_id), d_hunks in d_files:
+                assert d_hunks.is_dir()
+                buggy_hunk = BuggyHunk.from_json_file(d_hunks / "bug.json")
+                assert len(files) == f_id
+                if h_id == 0:
+                    hunks: list[HunkRepairResult] = []
+                    files.append(hunks)
+                else:
+                    hunks = files[-1]
+                assert len(hunks) == h_id
+                hunk = HunkRepairResult(buggy_hunk, [])
+                f_tagged_result_jsons = list(
+                    filter(lambda p: p.name != "bug.json", d_hunks.iterdir())
+                )
+                f_tagged_result_jsons.sort(key=lambda f: int(f.stem))
+                for f_tagged_result_json in f_tagged_result_jsons:
+                    assert f_tagged_result_json.is_file()
+                    tagged_result = TaggedResult.from_json_file(f_tagged_result_json)
+                    hunk.results.append(tagged_result)
+                hunks.append(hunk)
+        return RepairResult(result_dict, repair_config)
 
-    def check(self):
-        assert len(self.repair_configs) == len(self.is_repair_config_saved)
-        assert len(self.repair_configs) == len(self.results)
-
-    def dump_repair_configs(self, path: Path):
-        self.check()
-        for idx, repair_config in enumerate(self.repair_configs):
-            if self.is_repair_config_saved[idx]:
-                continue
-            path = path / (REPAIR_RESULT_PATH_PREFIX + str(idx))
-            path.mkdir()
-            repair_config.save_json(path / REPAIR_CONFIG_FNAME)
-            self.is_repair_config_saved[idx] = True
-
-    def add_repair_config(self, config: RepairConfig):
-        self.repair_configs.append(config)
-        self.is_repair_config_saved.append(False)
-        self.results.append({})
+    def dump_repair_config(self, path: Path):
+        if not (path := RepairConfig.json_save_path(path)).exists():
+            self.repair_config.save_json(path)
 
     def add(
         self,
@@ -210,9 +196,8 @@ class RepairResult(IORetrospective):
         buggy_hunk_end_index: int,
     ) -> None:
         """Remember to add repair config first"""
-        self.check()
         f_id, h_id = hunk_id
-        result_dict = self.results[-1]
+        result_dict = self.result_dict
         files = result_dict.setdefault(bug_id, [])
         # Ensure that results are added wrt the order [(0,0), (0,1), (0,2), (1,0), (1,1)...]
         if f_id >= len(files):
@@ -233,27 +218,22 @@ class RepairResult(IORetrospective):
         hunk.results.append(TaggedResult(result, False))
 
     def dump(self, path: Path):
-        self.check()
-        self.dump_repair_configs(path)
-        for idx, _ in enumerate(self.repair_configs):
-            repair_dir = REPAIR_RESULT_PATH_PREFIX + str(idx)
-            result_dict = self.results[idx]
-            repair_path = path / repair_dir
-            repair_path.mkdir(exist_ok=True)
-            for bug_id, files in result_dict.items():
-                bug_path = repair_path / bug_id
-                bug_path.mkdir(exist_ok=True)
-                for f_id, hunks in enumerate(files):
-                    for h_id, hunk in enumerate(hunks):
-                        hunk_idx_str = f"{f_id}-{h_id}"
-                        hunk_path = bug_path / hunk_idx_str
-                        hunk_path.mkdir(exist_ok=True)
-                        hunk.buggy_hunk.save_json(hunk_path / "bug.json")
-                        for idx, tagged_result in enumerate(hunk.results):
-                            if tagged_result.is_dumpped:
-                                continue
-                            tagged_result.is_dumpped = True
-                            tagged_result.save_json(hunk_path / f"{idx}.json")
+        self.dump_repair_config(path)
+        result_dict = self.result_dict
+        for bug_id, files in result_dict.items():
+            bug_path = path / bug_id
+            bug_path.mkdir(exist_ok=True)
+            for f_id, hunks in enumerate(files):
+                for h_id, hunk in enumerate(hunks):
+                    hunk_idx_str = f"{f_id}-{h_id}"
+                    hunk_path = bug_path / hunk_idx_str
+                    hunk_path.mkdir(exist_ok=True)
+                    hunk.buggy_hunk.save_json(hunk_path / "bug.json")
+                    for idx, tagged_result in enumerate(hunk.results):
+                        if tagged_result.is_dumpped:
+                            continue
+                        tagged_result.is_dumpped = True
+                        tagged_result.save_json(hunk_path / f"{idx}.json")
 
 
 # for result in result_batch.results:

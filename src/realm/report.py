@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,9 +7,7 @@ from pathlib import Path
 from . import utils
 from .config import MetaConfig
 from .d4j import Defects4J
-from .results import RepairAnalysisResults, RepairResult, ValidationResults
-
-META_CONFIG_FNAME = "meta_config.json"
+from .results import RepairAnalysisResult, RepairResult, ValidationResult
 
 
 @dataclass
@@ -17,21 +16,19 @@ class Report(utils.IORetrospective):
 
     root: Path
     config: MetaConfig
-    repair_result: RepairResult
-    analysis_result: RepairAnalysisResults | None
-    validation_result: ValidationResults | None
+    repair_result: RepairResult | None
+    analysis_result: RepairAnalysisResult | None
+    validation_result: ValidationResult | None
 
     def get_d4j(self) -> Defects4J:
         # TODO (low priority): can be optimized
-        return Defects4J(
-            self.config.d4j_home, self.config.d4j_checkout_root, self.config.java8_home
-        )
+        return self.config.d4j()
 
     def dump_metadata(self, path: Path):
         assert isinstance(path, Path)
-        if not (config_path := path / META_CONFIG_FNAME).exists():
-            self.config.dump(config_path)
-        if not (sys_args_path := path / "sys_args.txt").exists():
+        if not (MetaConfig.json_save_path(path)).exists():
+            self.config.dump(path)
+        if not (sys_args_path := path / f"sys_args_{os.getpid()}.txt").exists():
             with open(sys_args_path, "w") as f:
                 json.dump(sys.argv, f)
         if not (meta_path := path / "meta.txt").exists():
@@ -46,7 +43,8 @@ class Report(utils.IORetrospective):
 
     def dump(self, path: Path):
         self.dump_metadata(path)
-        self.repair_result.dump(path)
+        if self.repair_result is not None:
+            self.repair_result.dump(path)
         if self.analysis_result is not None:
             self.analysis_result.dump(path)
         if self.validation_result is not None:
@@ -57,10 +55,10 @@ class Report(utils.IORetrospective):
 
     @classmethod
     def load(cls, path: Path) -> "Report":
-        meta_config = MetaConfig.load(path / META_CONFIG_FNAME)
+        meta_config = MetaConfig.load(path)
         repair_result = RepairResult.load(path)
-        analysis_result = RepairAnalysisResults.try_load(path)
-        validation_result = ValidationResults.try_load(path)
+        analysis_result = RepairAnalysisResult.try_load(path)
+        validation_result = ValidationResult.try_load(path)
         return Report(
             path,
             meta_config,
