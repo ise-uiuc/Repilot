@@ -1,10 +1,9 @@
-from typing import Any
-from realm.utils import JsonSerializable, JsonSpecificDirectoryDumpable
-from realm.results import AvgPatch
-from realm.config import ValidationConfig
-from pathlib import Path
-from enum import Enum
 from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+from realm.config import ValidationConfig
+from realm.utils import JsonSerializable, JsonSpecificDirectoryDumpable
 
 VALIDATION_FNAME = "validation_result.json"
 

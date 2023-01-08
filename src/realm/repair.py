@@ -1,21 +1,24 @@
-from . import utils, generation as gen
+import random
+import shutil
+import time
+from multiprocessing import Pipe
+from multiprocessing.connection import Connection
+from pathlib import Path
+from typing import List, Tuple, cast
+
+import numpy
+import regex as re
+import torch
+
+from . import generation as gen
+from . import utils
+from .analyzer import JdtLspAnalyzer, Message
+from .config import MetaConfig, RepairConfig
+from .d4j import Bug, Change, Defects4J
+from .lsp import TextFile, spec
 from .model import CodeT5ForRealm, CodeT5Large
 from .report import Report
 from .results import RepairResult
-from .config import MetaConfig, RepairConfig
-from .jdt_lsp import JdtLspAnalyzer, Message
-from .lsp import spec, TextFile
-from .d4j import Change, Defects4J, Bug
-from multiprocessing import Pipe
-from multiprocessing.connection import Connection
-from typing import cast, List, NamedTuple, Optional, Dict, Tuple, Callable
-from pathlib import Path
-import time
-import numpy
-import torch
-import random
-import regex as re
-import shutil
 
 DATA_DIR = Path(".lsp_data")
 
@@ -63,8 +66,8 @@ def remove_buggy_hunk(text_file: TextFile, change: Change) -> Tuple[str, str]:
     (
         start_index,
         end_index,
-        start_pos,
-        end_pos,
+        _,
+        _,
     ) = get_buggy_hunk_start_end_indices_and_positions(text_file, change)
     prefix_start = 0
     suffix_end = len(text_file.content)
@@ -76,14 +79,15 @@ def remove_buggy_hunk(text_file: TextFile, change: Change) -> Tuple[str, str]:
     # insertion(\n)
     # <cursor:infill>
     # (\n)suffix
-    text_file.change(
-        [
-            cast(
-                spec.EntireDocumentChange,
-                {"text": "\n", "range": {"start": start_pos, "end": end_pos}},
-            )
-        ]
-    )
+    text_file.modify(start_index, end_index, "\n")
+    # text_file.change(
+    #     [
+    #         cast(
+    #             spec.EntireDocumentChange,
+    #             {"text": "\n", "range": {"start": start_pos, "end": end_pos}},
+    #         )
+    #     ]
+    # )
 
     text_file.move_cursor(start_index)
     if start_index != 0:

@@ -1,31 +1,12 @@
 import json
 import sys
 from dataclasses import dataclass
-from itertools import zip_longest
 from pathlib import Path
-from typing import Iterator, cast
-
-from joblib import Parallel, delayed
 
 from . import utils
-from .config import MetaConfig, ValidationConfig
-from .generation_defs import AvgSynthesisResult
-from .lsp import TextFile
+from .config import MetaConfig
 from .d4j import Defects4J
-from .results import (
-    AvgFilePatch,
-    AvgPatch,
-    BuggyHunk,
-    HunkRepairResult,
-    Outcome,
-    PatchValidationResult,
-    RepairAnalysisResult,
-    RepairAnalysisResults,
-    RepairResult,
-    TaggedResult,
-    ValidationResult,
-    ValidationResults,
-)
+from .results import RepairAnalysisResults, RepairResult, ValidationResults
 
 META_CONFIG_FNAME = "meta_config.json"
 

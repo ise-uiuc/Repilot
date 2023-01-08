@@ -1,19 +1,19 @@
-from functools import partial
+import csv
 import itertools
+import multiprocessing as mp
+import os
+import subprocess
+from functools import partial
 from os import PathLike
 from pathlib import Path
-from typing import Dict, Iterator, List, NamedTuple
-from unidiff import PatchSet, PatchedFile
-from unidiff.patch import Line
-from realm import utils
-import subprocess
-import multiprocessing as mp
-import csv
-from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, TypeVar
-from realm.utils import chunked
+from typing import Dict, Iterable, Iterator, List, NamedTuple, TypeVar
+
 import git
-import os
+from unidiff import PatchedFile, PatchSet
+from unidiff.patch import Line
+
+from realm import utils
+from realm.utils import chunked
 
 Metadata = Dict[str, List[Dict[str, str]]]
 

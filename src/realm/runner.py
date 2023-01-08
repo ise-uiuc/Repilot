@@ -1,25 +1,24 @@
-import os
 import subprocess
 import time
 from dataclasses import dataclass
 from itertools import zip_longest
 from pathlib import Path
 from typing import Iterator, cast
-import regex as re
 
 import javalang
+import regex as re
 from joblib import Parallel, delayed
 
 from . import utils
 from .config import MetaConfig, RepairConfig, ValidationConfig
 from .d4j import Defects4J
-from .generation_defs import AvgSynthesisResult
 from .lsp import TextFile
 from .repair import Repairer
 from .report import Report
 from .results import (
     AvgFilePatch,
     AvgPatch,
+    AvgSynthesisResult,
     BuggyHunk,
     HunkRepairResult,
     Outcome,
@@ -27,7 +26,6 @@ from .results import (
     RepairAnalysisResult,
     RepairAnalysisResults,
     RepairResult,
-    TaggedResult,
     ValidationResult,
     ValidationResults,
 )

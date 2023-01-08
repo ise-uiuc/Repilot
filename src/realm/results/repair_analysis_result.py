@@ -1,33 +1,12 @@
 from dataclasses import dataclass
-from pathlib import Path
-from realm.config import MetaConfig, RepairConfig
-from realm.generation_defs import SynthesisResultBatch, AvgSynthesisResult
-from realm.utils import JsonSerializable, JsonSpecificDirectoryDumpable
-from .repair_result import RepairResult
 from typing import Any
-from realm.lsp.text import TextFile
 
+from realm.lsp import TextFile
+from realm.utils import JsonSerializable, JsonSpecificDirectoryDumpable
+
+from .repair_result import AvgSynthesisResult
 
 ANALYSIS_FNAME = "repair_analysis.json"
-
-
-# @dataclass(frozen=True)
-# class AvgHunkPatch(JsonSerializable):
-#     avg_result: AvgSynthesisResult
-#     buggy_file_path: Path
-
-#     def to_json(self) -> Any:
-#         return {
-#             "avg_result": self.avg_result.to_json(),
-#             "buggy_file_path": str(self.buggy_file_path),
-#         }
-
-#     @classmethod
-#     def from_json(cls, d: dict) -> "AvgHunkPatch":
-#         return AvgHunkPatch(
-#             AvgSynthesisResult.from_json(d["avg_result"]),
-#             Path(d["buggy_file_path"]),
-#         )
 
 
 @dataclass(frozen=True)

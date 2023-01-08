@@ -1,19 +1,15 @@
 import itertools
-import pickle
 import subprocess
 from multiprocessing import Process
 from multiprocessing.connection import Connection
-import os
 from os import PathLike
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
-import torch
-
+from realm import utils
 from realm.generation_defs import GenerationContext, Memorization
 from realm.lsp import LSPClient, TextFile, spec
 from realm.model import CodeT5ForRealm
-from realm import utils
 
 TIMEOUT_THRESHOULD = 300
 

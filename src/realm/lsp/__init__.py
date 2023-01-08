@@ -1,3 +1,3 @@
-from .text import TextDocument, MutableTextDocument, TextFile
-from .client import LSPClient
 from . import spec
+from .client import LSPClient
+from .text import MutableTextDocument, TextDocument, TextFile

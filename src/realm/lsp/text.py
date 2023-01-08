@@ -2,9 +2,11 @@ from functools import partial
 from operator import add
 from os import PathLike
 from pathlib import Path
-from typing import List, Optional, Protocol, cast, Any
-from . import spec
+from typing import Any, List, Optional, Protocol, cast
+
 from realm import utils
+
+from . import spec
 
 
 class MutableTextDocument(Protocol):
@@ -84,27 +86,27 @@ class MutableTextDocument(Protocol):
     def modify(self, start: int, end: int, content: str):
         self.content = self.content[:start] + content + self.content[end:]
 
-    # From LSP spec: The actual content changes. The content changes describe single state
-    # changes to the document. So if there are two content changes c1 (at
-    # array index 0) and c2 (at array index 1) for a document in state S then
-    # c1 moves the document from S to S' and c2 from S' to S''. So c1 is
-    # computed on the state S and c2 is computed on the state S'.
-    def change(self, text_changes: List[spec.TextDocumentContentChangeEvent]):
-        for text_change in text_changes:
-            if "range" in text_change:
-                text_change = cast(spec.TextChange, text_change)
-                start_pos = text_change["range"]["start"]
-                end_pos = text_change["range"]["end"]
-                start_index = self.form_index(start_pos["line"], start_pos["character"])
-                end_index = self.form_index(end_pos["line"], end_pos["character"])
-                self.content = (
-                    self.content[:start_index]
-                    + text_change["text"]
-                    + self.content[end_index:]
-                )
-            else:
-                text_change = cast(spec.EntireDocumentChange, text_change)
-                self.content = text_change["text"]
+    # # From LSP spec: The actual content changes. The content changes describe single state
+    # # changes to the document. So if there are two content changes c1 (at
+    # # array index 0) and c2 (at array index 1) for a document in state S then
+    # # c1 moves the document from S to S' and c2 from S' to S''. So c1 is
+    # # computed on the state S and c2 is computed on the state S'.
+    # def change(self, text_changes: List[spec.TextDocumentContentChangeEvent]):
+    #     for text_change in text_changes:
+    #         if "range" in text_change:
+    #             text_change = cast(spec.TextChange, text_change)
+    #             start_pos = text_change["range"]["start"]
+    #             end_pos = text_change["range"]["end"]
+    #             start_index = self.form_index(start_pos["line"], start_pos["character"])
+    #             end_index = self.form_index(end_pos["line"], end_pos["character"])
+    #             self.content = (
+    #                 self.content[:start_index]
+    #                 + text_change["text"]
+    #                 + self.content[end_index:]
+    #             )
+    #         else:
+    #             text_change = cast(spec.EntireDocumentChange, text_change)
+    #             self.content = text_change["text"]
 
     def __str__(self) -> str:
         return self.content

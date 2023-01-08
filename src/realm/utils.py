@@ -2,14 +2,11 @@ import io
 import itertools
 import json
 import pickle
-from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import (
     Any,
     Callable,
-    ClassVar,
-    Generic,
     Iterable,
     Iterator,
     List,
@@ -19,7 +16,6 @@ from typing import (
     Type,
     TypeVar,
     cast,
-    no_type_check,
 )
 
 import git
@@ -28,7 +24,7 @@ from unidiff.patch import Line
 
 T = TypeVar("T")
 
-DEVICE = "cuda" if torch.cuda.is_available else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def take_while(
@@ -200,7 +196,7 @@ class IORetrospective(Protocol):
         ...
 
 
-class JsonSerializable(IORetrospective):
+class JsonSerializable(IORetrospective, Protocol):
     def save_json(self, path: Path):
         with open(path, "w") as f:
             json.dump(self.to_json(), f, indent=2)
@@ -226,7 +222,7 @@ class JsonSerializable(IORetrospective):
         ...
 
 
-class JsonSpecificDirectoryDumpable(JsonSerializable):
+class JsonSpecificDirectoryDumpable(JsonSerializable, Protocol):
     @classmethod
     def name(cls) -> str:
         ...

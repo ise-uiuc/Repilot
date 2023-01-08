@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from pathlib import Path
 from enum import Enum, auto
-from .generation_defs import LMInferenceConfig
-from .utils import JsonSerializable
+from pathlib import Path
 from typing import Any
+
+from .utils import JsonSerializable
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,31 @@ SYNTHESIS_METHOD_MAP = {
 }
 
 SYNTHESIS_METHOD_REV_MAP = {value: key for key, value in SYNTHESIS_METHOD_MAP.items()}
+
+
+@dataclass(frozen=True)
+class LMInferenceConfig(JsonSerializable):
+    batch_size: int
+    temperature: float
+    top_k: int
+    max_new_tokens: int
+
+    def to_json(self) -> Any:
+        return {
+            "batch_size": self.batch_size,
+            "temperature": self.temperature,
+            "top_k": self.top_k,
+            "max_new_tokens": self.max_new_tokens,
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "LMInferenceConfig":
+        return LMInferenceConfig(
+            int(d["batch_size"]),
+            float(d["temperature"]),
+            int(d["top_k"]),
+            int(d["max_new_tokens"]),
+        )
 
 
 @dataclass(frozen=True)

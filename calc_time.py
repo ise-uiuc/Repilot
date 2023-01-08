@@ -1,8 +1,9 @@
 import json
 import sys
 from pathlib import Path
-from matplotlib import pyplot as plt
+
 import numpy as np
+from matplotlib import pyplot as plt
 
 folder = Path(sys.argv[1])
 all_files = folder.glob("**/*.json")

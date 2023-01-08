@@ -1,5 +1,6 @@
 """An INCOMPLETE, direct translation of https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/ """
 from typing import Annotated, Any, Dict, List, Literal, TypeAlias, TypedDict
+
 from typing_extensions import NotRequired
 
 number: TypeAlias = int

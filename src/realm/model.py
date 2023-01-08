@@ -1,10 +1,12 @@
-from transformers import T5ForConditionalGeneration, T5Config, AutoTokenizer
-from transformers.tokenization_utils import PreTrainedTokenizer
-from typing import List, Optional, Union, TypeVar, cast
-from realm import utils
-from pathlib import Path
-import torch
 import os
+from pathlib import Path
+from typing import List, Optional, TypeVar, Union, cast
+
+import torch
+from transformers import AutoTokenizer, T5Config, T5ForConditionalGeneration
+from transformers.tokenization_utils import PreTrainedTokenizer
+
+from . import utils
 
 Self = TypeVar("Self")
 
@@ -152,7 +154,7 @@ class CodeT5Large(CodeT5ForRealm):
             free_memory -= 5 * 1024**3
             one_batch_increase = 120 * (1024**2)
             repeat = free_memory // one_batch_increase
-            self.generate(
+            self.generate(  # type: ignore # noqa
                 torch.zeros(self.max_tokens, dtype=torch.long).cuda().repeat(repeat, 1),
                 max_new_tokens=50,
             )

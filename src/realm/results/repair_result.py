@@ -1,20 +1,77 @@
-import io
-import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-import git
-
-from realm.config import MetaConfig, RepairConfig
-from realm.generation_defs import SynthesisResultBatch, AvgSynthesisResult
-from realm.utils import JsonSerializable, IORetrospective
+from realm.config import RepairConfig
 from realm.lsp import TextFile
-
+from realm.utils import IORetrospective, JsonSerializable
 
 REPAIR_CONFIG_FNAME = "repair_config.json"
 REPAIR_RESULT_PATH_PREFIX = "Repair-"
+
+
+@dataclass(frozen=True)
+class SynthesisResult(JsonSerializable):
+    hunk: str | None
+    is_pruned_halfway: bool
+    is_unfinished: bool
+
+    def to_json(self) -> Any:
+        return {
+            "hunk": self.hunk,
+            "is_pruned_halfway": self.is_pruned_halfway,
+            "is_unfinished": self.is_unfinished,
+        }
+
+    @classmethod
+    def from_json(cls, d: Any) -> "SynthesisResult":
+        return SynthesisResult(
+            d["hunk"],
+            bool(d["is_pruned_halfway"]),
+            bool(d["is_unfinished"]),
+        )
+
+
+@dataclass(frozen=True)
+class AvgSynthesisResult(JsonSerializable):
+    result: SynthesisResult
+    avg_time_cost: float
+
+    def to_json(self) -> Any:
+        return {
+            "result": self.result.to_json(),
+            "avg_time_cost": self.avg_time_cost,
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "AvgSynthesisResult":
+        return AvgSynthesisResult(
+            SynthesisResult.from_json(d["result"]), float(d["avg_time_cost"])
+        )
+
+
+@dataclass(frozen=True)
+class SynthesisResultBatch(JsonSerializable):
+    # None indicates a failed generation (e.g., due to being unfinished)
+    results: list[SynthesisResult]
+    time_cost: float
+
+    def to_average_results(self) -> "list[AvgSynthesisResult]":
+        avg_time = self.time_cost / len(self.results)
+        return [AvgSynthesisResult(result, avg_time) for result in self.results]
+
+    def to_json(self) -> Any:
+        return {
+            "results": [result.to_json() for result in self.results],
+            "time_cost": self.time_cost,
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "SynthesisResultBatch":
+        return SynthesisResultBatch(
+            [SynthesisResult.from_json(result) for result in d["results"]],
+            float(d["time_cost"]),
+        )
 
 
 @dataclass(frozen=True)
@@ -137,16 +194,6 @@ class RepairResult(IORetrospective):
             path.mkdir()
             repair_config.save_json(path / REPAIR_CONFIG_FNAME)
             self.is_repair_config_saved[idx] = True
-
-    def report_timeout_error(self):
-        path = self.root / "timeout.times"
-        if path.exists():
-            with open(path) as f:
-                times = int(f.read().strip()) + 1
-        else:
-            times = 1
-        with open(path, "w") as f:
-            f.write(str(times))
 
     def add_repair_config(self, config: RepairConfig):
         self.repair_configs.append(config)

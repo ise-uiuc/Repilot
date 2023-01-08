@@ -1,11 +1,10 @@
-from select import select
 import json
+from itertools import count
+from select import select
 from threading import Condition, Lock, Thread
 from types import NoneType
-from typing import IO, Callable, Dict, Optional, Tuple, TypeVar, Type, cast
-from typing import ParamSpec
-from itertools import count
-import uuid
+from typing import IO, Callable, Dict, Optional, ParamSpec, Tuple, Type, TypeVar, cast
+
 from . import spec
 
 # TODO: support Content-Type
@@ -237,8 +236,8 @@ class LSPClient(Thread):
         return json.loads(response)
 
     initialize = d_call("initialize", spec.InitializeParams)
-    shutdown = d_call("shutdown", NoneType)
-    exit = d_notify("exit", NoneType)
+    shutdown = d_call("shutdown", Type[None])  # type: ignore # fmt: skip
+    exit = d_notify("exit", Type[None])  # type: ignore # fmt: skip
     initialized = d_notify("initialized", spec.InitializedParams)
     workspace_didChangeConfiguration = d_notify(
         "textDocument/didChangeConfiguration", dict

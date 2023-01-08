@@ -1,4 +1,26 @@
-from transformers.tokenization_utils import logger
+import inspect
+import os
+import pickle
+import time
+import typing
+import warnings
+from dataclasses import dataclass
+from multiprocessing.connection import Connection
+from typing import (
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+)
+
+import torch
+from torch import nn
 from transformers.generation_beam_constraints import Constraint
 from transformers.generation_logits_process import (
     LogitsProcessorList,
@@ -6,41 +28,15 @@ from transformers.generation_logits_process import (
     TopKLogitsWarper,
 )
 from transformers.generation_stopping_criteria import StoppingCriteriaList
-from typing import (
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    NamedTuple,
-    Union,
-    Iterable,
-    Callable,
-    cast,
-    Set,
-)
-from dataclasses import dataclass
-from realm import utils
-from realm.lsp.text import TextFile
-from realm.lsp import spec
-from realm.jdt_lsp import JdtLspAnalyzer, Message
-from realm.model import CodeT5ForRealm
-from realm.generation_defs import (
-    Memorization,
-    GenerationContext,
-    LMInferenceConfig,
-    SynthesisResult,
-    SynthesisResultBatch,
-)
-from realm.config import SynthesisMethod
-from multiprocessing.connection import Connection
-from torch import nn
-import torch
-import os
-import inspect
-import warnings
-import pickle
-import typing
-import time
+from transformers.tokenization_utils import logger
+
+from . import utils
+from .analyzer import JdtLspAnalyzer, Message
+from .config import LMInferenceConfig, SynthesisMethod
+from .generation_defs import GenerationContext, Memorization
+from .lsp import TextFile, spec
+from .model import CodeT5ForRealm
+from .results import SynthesisResult, SynthesisResultBatch
 
 JAVA_KEYWORDS = {
     "abstract",

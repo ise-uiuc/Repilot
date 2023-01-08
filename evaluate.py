@@ -1,9 +1,10 @@
-from matplotlib import pyplot as plt
 import json
 import sys
-from pathlib import Path
-from typing import TypedDict, List
 from argparse import ArgumentParser
+from pathlib import Path
+from typing import List, TypedDict
+
+from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 
