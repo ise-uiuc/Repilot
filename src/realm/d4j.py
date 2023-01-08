@@ -20,27 +20,6 @@ Metadata = Dict[str, List[Dict[str, str]]]
 T = TypeVar("T")
 
 
-# print(_get_all_bugs()['Lang'][0])
-
-# ROOT = Path('/home/yuxiang/fastd/Developer/d4j-checkout')
-
-
-# def run_process(*cmd: str):
-#     subprocess.run(cmd)
-
-# TODO: add to main
-# BATCH_SIZE = 64
-# if __name__ == '__main__':
-#     for d_sub in chunked(BATCH_SIZE, data):
-#         processes: List[mp.Process] = []
-#         for d in d_sub:
-#             p = mp.Process(target=run_process, args=d['cmd'])
-#             p.start()
-#             processes.append(p)
-#         for p in processes:
-#             p.join()
-
-
 class Change(NamedTuple):
     start: int
     removed_lines: List[str]
@@ -174,7 +153,9 @@ class Defects4J:
             text=True,
             capture_output=True,
         )
-        return (result.returncode == 0, result.stdout, result.stderr)
+        success = result.returncode == 0
+        assert "FAIL" not in result.stderr if success else "FAIL" in result.stderr
+        return (success, result.stdout, result.stderr)
 
     def test(self, bug_id: str, timeout: int) -> tuple[bool, str, str]:
         bug = self.all_bugs[bug_id]
@@ -190,11 +171,15 @@ class Defects4J:
         failing_tests = Path(bug.proj_path) / "failing_tests"
         assert failing_tests.exists()
         with open(failing_tests) as f:
-            return (
-                (f.read().strip() == ""),
-                result.stdout,
-                result.stderr,
-            )
+            success = f.read().strip() == ""
+
+        failing_test_0 = "Failing tests: 0"
+        assert (
+            result.stdout.startswith(failing_test_0)
+            if success
+            else not result.stdout.startswith(failing_test_0)
+        )
+        return success, result.stdout, result.stderr
 
     def checkout(self, bug_id: str, buggy: bool = True):
         bug_proj_path = self.all_bugs[bug_id].proj_path
