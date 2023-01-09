@@ -339,14 +339,14 @@ class Synthesizer:
                     _start = time.perf_counter()
                     probs[batch_idx, infeasible_indices] = 0.0
                     probs_assign += time.perf_counter() - _start
-            print("Mem first preprocess:", time.perf_counter() - start)
-            print("Probability assigning:", probs_assign)
+            # print("Mem first preprocess:", time.perf_counter() - start)
+            # print("Probability assigning:", probs_assign)
 
             start = time.perf_counter()
             assert probs.shape == torch.Size([self.batch_size, self.model.vocab_size])
             # The sampled ids corresponding to the batches that need to process
             zero_prob_batches = (probs.sum(dim=-1) == 0.0).nonzero().squeeze(1)
-            print("Batch zeroing:", time.perf_counter() - start)
+            # print("Batch zeroing:", time.perf_counter() - start)
             assert len(zero_prob_batches.shape) == 1
             for batch_idx_tensor in zero_prob_batches:
                 batch_idx = batch_idx_tensor.item()
@@ -385,7 +385,7 @@ class Synthesizer:
                 b""
             ] * self.batch_size
 
-            print("Decoding:", time.perf_counter() - start)
+            # print("Decoding:", time.perf_counter() - start)
 
             # Use memorization to do preprocessing and prepare for parallel checking
             # `trying_token_ids_idx`s are the rank position of each `batch_idx` where `batch_needs_to_process[batch_idx]`
@@ -436,10 +436,10 @@ class Synthesizer:
                             )
                         )
                     )
-            print("Real Initialization:", time.perf_counter() - start)
-            print("GPU time in real init:", gpu_time)
-            print("Infeasible checking time in real init:", infeasible_time)
-            print("Batch time in real init:", batch_time)
+            # print("Real Initialization:", time.perf_counter() - start)
+            # print("GPU time in real init:", gpu_time)
+            # print("Infeasible checking time in real init:", infeasible_time)
+            # print("Batch time in real init:", batch_time)
             start = time.perf_counter()
             for batch_idx in filter(
                 batch_needs_to_process.__getitem__, range(self.batch_size)
@@ -562,7 +562,7 @@ class Synthesizer:
                 # try:
                 start = time.perf_counter()
                 next_token_ids = self.pruned_decode(probs)
-                print("Time:", time.perf_counter() - start)
+                # print("Time:", time.perf_counter() - start)
                 # breakpoint()
                 # except RuntimeError:
                 #     return completion_overhead, [], None, generation_log

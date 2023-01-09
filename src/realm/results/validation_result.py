@@ -70,7 +70,7 @@ class ValidationResult(JsonSpecificDirectoryDumpable):
             ],
             "result_dict": {
                 bug_id: {
-                    patch_idx: (config_idx, patch_result.to_json())
+                    int(patch_idx): (config_idx, patch_result.to_json())
                     for patch_idx, (config_idx, patch_result) in patch_results.items()
                 }
                 for bug_id, patch_results in self.result_dict.items()
@@ -87,7 +87,7 @@ class ValidationResult(JsonSpecificDirectoryDumpable):
             [ValidationConfig.from_json(config) for config in d["validation_configs"]],
             {
                 bug_id: {
-                    patch_idx: (
+                    int(patch_idx): (
                         config_idx,
                         PatchValidationResult.from_json(patch_result),
                     )

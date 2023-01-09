@@ -75,3 +75,16 @@ class ValidationDatapoint(utils.JsonSerializable):
             float(d["total_time_consumed"]),
             GenerationDatapoint.from_json(d["gen_datapoint"]),
         )
+
+    def __add__(self, other: "ValidationDatapoint") -> "ValidationDatapoint":
+        return ValidationDatapoint(
+            self.n_parse_success + other.n_parse_success,
+            self.n_comp_success + other.n_comp_success,
+            self.n_test_success + other.n_test_success,
+            self.total_time_consumed + other.total_time_consumed,
+            self.gen_datapoint + other.gen_datapoint,
+        )
+
+    @classmethod
+    def zero(cls) -> "ValidationDatapoint":
+        return ValidationDatapoint(0, 0, 0, 0.0, GenerationDatapoint.zero())

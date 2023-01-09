@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from itertools import zip_longest
 from pathlib import Path
-from typing import Iterator, cast
+from typing import Callable, Iterable, Iterator, TypeVar, cast
 
 import javalang
 import regex as re
@@ -31,6 +31,10 @@ from .results import (
     ValidationResult,
 )
 
+PatchInfo = TypeVar("PatchInfo")
+Datapoint = TypeVar("Datapoint")
+EvaluationResult = TypeVar("EvaluationResult")
+
 
 @dataclass(frozen=True)
 class Runner:
@@ -55,6 +59,7 @@ class Runner:
 
     def transform(self):
         """Incremental data transformation"""
+        # BUG (maybe fixed): incremental update not working
         report = self.report
         assert isinstance(report.repair_result, RepairResult)
         # a_results = report.analysis_result.results
@@ -92,14 +97,13 @@ class Runner:
         # report.analysis_result = RepairAnalysisResults(a_results)
         report.save()
 
-    def transform_if_not_performed(self):
-        if self.report.transformed_result is None:
-            print("Doing data transformation first...")
-            self.transform()
-            print("Done")
+    def transform_with_message(self):
+        print("Doing data transformation first...")
+        self.transform()
+        print("Done")
 
     def validate(self, config: ValidationConfig):
-        self.transform_if_not_performed()
+        self.transform_with_message()
         """Recoverable validation"""
         bug_pattern = re.compile(config.bug_pattern)
         report = self.report
@@ -146,31 +150,91 @@ class Runner:
                     )
                 report.save()
 
-    def evaluate_generation(self) -> dict[str, list[GenerationDatapoint]]:
+    def get_transformed_items(self) -> Iterable[tuple[str, list[AvgPatch]]]:
         assert self.report.repair_result is not None
-        self.transform_if_not_performed()
-        transformed_result = self.report.transformed_result
-        assert transformed_result is not None
-        transformed_result_dict = transformed_result.result_dict
-        result: dict[str, list[GenerationDatapoint]] = {}
-        for bug_id, patches in transformed_result_dict.items():
-            mapped_generation_datapoints = map(
-                lambda patch: GenerationDatapoint(
-                    gen_time=patch.total_gen_time,
-                    n_total=1,
-                    n_unique=utils.binary(lambda patch: not patch.is_duplicate, patch),
-                    n_unfinished=utils.binary(lambda patch: patch.is_unfinished, patch),
-                    n_pruned=utils.binary(lambda patch: patch.is_pruned, patch),
+        self.transform_with_message()
+        assert self.report.transformed_result is not None
+        return self.report.transformed_result.result_dict.items()
+
+    def get_validation_items(
+        self,
+    ) -> Iterable[tuple[str, Iterable[tuple[AvgPatch, PatchValidationResult]]]]:
+        assert self.report.transformed_result is not None
+        assert self.report.validation_result is not None
+        result_dict = self.report.validation_result.result_dict
+        for bug_id, patches in self.get_transformed_items():
+            result = result_dict[bug_id]
+            yield (
+                bug_id,
+                (
+                    (patch, result[patch_idx][1])
+                    for patch_idx, patch in enumerate(patches)
                 ),
-                patches,
             )
-            datapoints = functools.reduce(
-                lambda points, point: points + [points[-1] + point],
-                mapped_generation_datapoints,
-                [GenerationDatapoint.zero()],
+
+    def evaluate_generation(self) -> dict[str, list[GenerationDatapoint]]:
+        return self.evaluate(
+            Runner.get_transformed_items,
+            map_to_generation_datapoint,
+            lambda points, point: [points[-1] + point],
+            [GenerationDatapoint.zero()],
+        )
+
+    def evaluate_validation(self) -> dict[str, list[ValidationDatapoint]]:
+        return self.evaluate(
+            Runner.get_validation_items,
+            map_to_validation_datapoint,
+            lambda points, point: [points[-1] + point],
+            [ValidationDatapoint.zero()],
+        )
+
+    def evaluate(
+        self,
+        patch_infos: "Callable[[Runner], Iterable[tuple[str, Iterable[PatchInfo]]]]",
+        map_to_datapoint: Callable[[PatchInfo], Datapoint],
+        add_reduce: Callable[[EvaluationResult, Datapoint], EvaluationResult],
+        initial_result: EvaluationResult,
+    ) -> dict[str, EvaluationResult]:
+        # assert self.report.repair_result is not None
+        # self.transform_with_message()
+        # transformed_result = self.report.transformed_result
+        # assert transformed_result is not None
+        # transformed_result_dict = transformed_result.result_dict
+        result: dict[str, EvaluationResult] = {}
+        for bug_id, patches in patch_infos(self):
+            mapped_generation_datapoints = map(map_to_datapoint, patches)
+            bug_id_result = functools.reduce(
+                add_reduce, mapped_generation_datapoints, initial_result
             )
-            result[bug_id] = datapoints
+            result[bug_id] = bug_id_result
         return result
+
+    # def evaluate_validation(self) -> dict[str, list[ValidationDatapoint]]:
+    #     generation_result = self.evaluate_generation()
+    #     assert self.report.repair_result is not None
+    #     validation_result = self.report.validation_result
+    #     assert validation_result is not None
+    #     validation_result_dict = validation_result.result_dict
+    #     result: dict[str, list[ValidationResult]] = {}
+    #     for bug_id, patches in list(validation_result_dict.items()):
+    #         generation_datapoints = generation_result[bug_id]
+    #         mapped_validation_datapoints = map(
+    #             lambda patch: ValidationDatapoint(
+    #                 n_parse_success=,
+    #                 n_comp_success=,
+    #                 n_test_success=,
+    #                 total_time_consumed=
+    #                 gen_datapoint=
+    #             ),
+    #             generation_datapoints,
+    #         )
+    #         datapoints = functools.reduce(
+    #             lambda points, point: points + [points[-1] + point],
+    #             mapped_validation_datapoints,
+    #             [GenerationDatapoint.zero()],
+    #         )
+    #         result[bug_id] = datapoints
+    #     return result
 
 
 def validate_patch(
@@ -278,3 +342,31 @@ def iter_files(
             assert bug is not None
             file_patches.append(AvgFilePatch(hunks, bug, buggy_hunk_indices))
         yield file_patches
+
+
+def map_to_generation_datapoint(patch: AvgPatch) -> GenerationDatapoint:
+    return GenerationDatapoint(
+        gen_time=patch.total_gen_time,
+        n_total=1,
+        n_unique=utils.binary_bool(not patch.is_duplicate),
+        n_unfinished=utils.binary_bool(patch.is_unfinished),
+        n_pruned=utils.binary_bool(patch.is_pruned),
+    )
+
+
+def map_to_validation_datapoint(
+    patch_info: tuple[AvgPatch, PatchValidationResult]
+) -> ValidationDatapoint:
+    avg_patch, validation_result = patch_info
+    return ValidationDatapoint(
+        n_parse_success=utils.binary_bool(
+            validation_result.outcome != Outcome.ParseError
+        ),
+        n_comp_success=utils.binary_bool(
+            validation_result.outcome
+            not in [Outcome.ParseError, Outcome.CompilationError]
+        ),
+        n_test_success=utils.binary_bool(validation_result.outcome == Outcome.Success),
+        total_time_consumed=validation_result.time_cost,
+        gen_datapoint=map_to_generation_datapoint(avg_patch),
+    )

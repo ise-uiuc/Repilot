@@ -254,7 +254,8 @@ def log_git_repo(f: io.TextIOBase, tag: str, repo_path: Path, new_line: bool = T
             repo.git.status(),
             RULE,
             f"[{tag}] Git diff:",
-            repo.git.diff(),
+            repo.git.diff(repo.head.commit),
+            repo.git.diff(None),
             RULE,
         ]
     )
@@ -277,6 +278,8 @@ def select(true: U, false: U, is_true: Callable[[T], bool], value: T) -> U:
     return true if is_true(value) else false
 
 
-binary: Callable[[Callable[[T], bool], T], int] = partial(select, 1, 0)  # type: ignore # fmt: off
+binary: Callable[[Callable[[T], bool], T], int] = partial(select, 1, 0)  # type: ignore # fmt: skip
 
 binary_optional: Callable[[T | None], int] = partial(binary, lambda t: t is not None)  # type: ignore # fmt: skip
+
+binary_bool: Callable[[bool], int] = partial(binary, lambda x: x)  # type: ignore # fmt: skip
