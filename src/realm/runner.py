@@ -43,9 +43,11 @@ class Runner:
 
     @staticmethod
     def load(root: Path) -> "Runner":
+        print(f"Loading data from {root}")
         return Runner(Report.load(root))
 
     def repair(self, repairer: Repairer):
+        utils.disable_tokenizer_parallel()
         repairer.repair(self.report)
 
     def analyze(self):

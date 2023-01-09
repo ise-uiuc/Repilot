@@ -1,7 +1,9 @@
-import argparse
 import os
+from argparse import ArgumentParser, Namespace
 from datetime import datetime
+from functools import partial
 from pathlib import Path
+from typing import Callable, TypeVar
 
 import torch
 
@@ -15,7 +17,7 @@ from realm.config import (
 from realm.repair import Repairer
 from realm.runner import Runner
 
-parser = argparse.ArgumentParser("REALM program repair")
+parser = ArgumentParser("REALM program repair")
 subparsers = parser.add_subparsers(title="REALM runner options", dest="option")
 
 # Repair parser
@@ -84,6 +86,21 @@ repair_parser.add_argument(
     help="Whether to do pre-allocation",
 )
 
+# The capability to resume a terminated repair process
+resume_parser = subparsers.add_parser("resume")
+resume_parser.add_argument(
+    "-d",
+    "--dir",
+    required=True,
+    help="The directory that stores the repair results",
+)
+resume_parser.add_argument(
+    "--pre-allocate",
+    required=False,
+    action="store_true",
+    help="Whether to do pre-allocation",
+)
+
 # Analysis parser
 analysis_parser = subparsers.add_parser("analyze")
 analysis_parser.add_argument(
@@ -128,9 +145,7 @@ def random_dir(suffix: str) -> str:
     return datetime.now().strftime(f"results-%Y%m%d-%H%M%S-{suffix}")
 
 
-def repair(args: argparse.Namespace):
-    assert args.option == "repair"
-    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+def create_repair_runner(args: Namespace) -> Runner:
     result_dir = Path(args.dir if args.dir is not None else random_dir(args.method))
     inference_config = LMInferenceConfig(
         args.batch_size, args.temperature, args.top_k, args.n_max_tokens
@@ -147,18 +162,53 @@ def repair(args: argparse.Namespace):
         not args.not_single_hunk_only,
     )
     runner = Runner.create(result_dir, META_CONFIG, repair_config)
-    repairer = Repairer.init(META_CONFIG, args.pre_allocate)
-    Runner.repair(runner, repairer)
+    return runner
 
 
-def analyze(args: argparse.Namespace):
-    runner = Runner.load(Path(args.dir))
-    runner.analyze()
+T = TypeVar("T")
 
 
-def validate(args: argparse.Namespace):
-    runner = Runner.load(Path(args.dir))
-    runner.validate(ValidationConfig(args.n_cores, args.bug_pattern))
+def run_with_runner_action_and_args(
+    runner_creator: Callable[[Namespace], Runner],
+    action: Callable[[Namespace, Runner], T],
+    args: Namespace,
+) -> T:
+    runner = runner_creator(args)
+    return action(args, runner)
+
+
+def load_runner_from_path(args: Namespace) -> Runner:
+    return Runner.load(Path(args.dir))
+
+
+run_with_action_and_args = partial(
+    run_with_runner_action_and_args, load_runner_from_path
+)
+
+
+repair = partial(
+    run_with_runner_action_and_args,
+    create_repair_runner,
+    lambda args, runner: Runner.repair(
+        runner, Repairer.init(META_CONFIG, args.pre_allocate)
+    ),
+)
+
+analyze = partial(run_with_action_and_args, lambda runner, _: Runner.analyze(runner))
+
+validate = partial(
+    run_with_action_and_args,
+    lambda args, runner: Runner.validate(
+        runner, ValidationConfig(args.n_cores, args.bug_pattern)
+    ),
+)
+
+resume = partial(
+    run_with_action_and_args,
+    lambda args, runner: Runner.repair(
+        runner, Repairer.init(runner.report.config, args.pre_allocate)
+    ),
+)
 
 
 if __name__ == "__main__":
@@ -168,6 +218,8 @@ if __name__ == "__main__":
         analyze(args)
     elif args.option == "validate":
         validate(args)
+    elif args.option == "resume":
+        resume(args)
     else:
         assert False
 

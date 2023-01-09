@@ -1,6 +1,7 @@
 import io
 import itertools
 import json
+import os
 import pickle
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -270,3 +271,14 @@ def log_git_repo(f: io.TextIOBase, tag: str, repo_path: Path, new_line: bool = T
     )
     if new_line:
         f.write("\n")
+
+
+U = TypeVar("U")
+
+
+def bind_optional(x: T | None, f: Callable[[T], U]) -> U | None:
+    return None if x is None else f(x)
+
+
+def disable_tokenizer_parallel():
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")

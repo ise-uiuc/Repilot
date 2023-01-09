@@ -18,7 +18,7 @@ from .d4j import Bug, Change, Defects4J
 from .lsp import TextFile, spec
 from .model import CodeT5ForRealm, CodeT5Large
 from .report import Report
-from .results import RepairResult
+from .results import HunkRepairResult, RepairResult
 
 DATA_DIR = Path(".lsp_data")
 
@@ -177,57 +177,93 @@ class Repairer:
         config = report.repair_result.repair_config
         print("Repair", bug_id)
         self.d4j.checkout(bug_id)
-        if not config.method.is_plain():
-            connection_pairs = cast(
-                list[tuple[Connection, Connection]],
-                [Pipe(duplex=True) for _ in range(config.batch_size)],
-            )
-            connection_analyzer_pairs = [
-                (
-                    client_conn,
-                    JdtLspAnalyzer(
-                        analyzer_conn,
-                        self.server_cmd_maker(),
-                        Path(bug.proj_path),
-                        self.model,
-                        str(self.config.java8_home),
-                    ),
+
+        def init_analyzers() -> tuple[list[Connection], list[TextFile]]:
+            if not config.method.is_plain():
+                connection_pairs = cast(
+                    list[tuple[Connection, Connection]],
+                    [Pipe(duplex=True) for _ in range(config.batch_size)],
                 )
-                for analyzer_conn, client_conn in connection_pairs
-            ]
-            connections = [connection for connection, _ in connection_analyzer_pairs]
-            for connection, analyzer in connection_analyzer_pairs:
-                analyzer.start()
-                self.active_connection_analyzer_pairs.append((connection, analyzer))
-            for connection in connections:
-                connection.send(Message(False, JdtLspAnalyzer.init.__name__))
-        else:
-            meaning_less = utils.Meaningless
-            connection_analyzer_pairs = cast(
-                list[tuple[Connection, JdtLspAnalyzer]],
-                [(meaning_less, meaning_less)] * config.batch_size,
-            )
-            connections = cast(list[Connection], [meaning_less] * config.batch_size)
-
-        # Buggy text files
-        buggy_text_files = [
-            TextFile(Path(bug.proj_path) / buggy_file.path)
-            for buggy_file in bug.buggy_files
-        ]
-
-        # Initialize each buggy file for LSP
-        if not config.method.is_plain():
-            assert isinstance(connections, list)
-            for connection in connections:
-                for buggy_text_file in buggy_text_files:
-                    connection.send(
-                        Message(False, JdtLspAnalyzer.open.__name__, buggy_text_file)
+                connection_analyzer_pairs = [
+                    (
+                        client_conn,
+                        JdtLspAnalyzer(
+                            analyzer_conn,
+                            self.server_cmd_maker(),
+                            Path(bug.proj_path),
+                            self.model,
+                            str(self.config.java8_home),
+                        ),
                     )
-            wait_until_all_analyzers_free(connections)
+                    for analyzer_conn, client_conn in connection_pairs
+                ]
+                connections = [
+                    connection for connection, _ in connection_analyzer_pairs
+                ]
+                for connection, analyzer in connection_analyzer_pairs:
+                    analyzer.start()
+                    self.active_connection_analyzer_pairs.append((connection, analyzer))
+                for connection in connections:
+                    connection.send(Message(False, JdtLspAnalyzer.init.__name__))
+            else:
+                meaning_less = utils.Meaningless
+                connection_analyzer_pairs = cast(
+                    list[tuple[Connection, JdtLspAnalyzer]],
+                    [(meaning_less, meaning_less)] * config.batch_size,
+                )
+                connections = cast(list[Connection], [meaning_less] * config.batch_size)
+
+            # Buggy text files
+            buggy_text_files = [
+                TextFile(Path(bug.proj_path) / buggy_file.path)
+                for buggy_file in bug.buggy_files
+            ]
+
+            # Initialize each buggy file for LSP
+            if not config.method.is_plain():
+                assert isinstance(connections, list)
+                for connection in connections:
+                    for buggy_text_file in buggy_text_files:
+                        connection.send(
+                            Message(
+                                False, JdtLspAnalyzer.open.__name__, buggy_text_file
+                            )
+                        )
+                wait_until_all_analyzers_free(connections)
+            return connections, buggy_text_files
 
         # Ready to repair
+        analyzers_initialized = False
         for hunk_idx, buggy_file, change in bug.iter_hunks():
-            buggy_text_file = buggy_text_files[hunk_idx[0]]
+            result_dict = report.repair_result.result_dict
+            f_idx, h_idx = hunk_idx
+
+            def get_files() -> list[list[HunkRepairResult]] | None:
+                return result_dict.get(bug_id)
+
+            def get_hunks(
+                files: list[list[HunkRepairResult]],
+            ) -> list[HunkRepairResult] | None:
+                return files[f_idx] if f_idx < len(files) else None
+
+            def get_n_samples(hunks: list[HunkRepairResult]) -> int | None:
+                return len(hunks[h_idx].results) if h_idx < len(hunks) else None
+
+            # FP experiment
+            n_already_generated = utils.bind_optional(
+                utils.bind_optional(get_files(), get_hunks), get_n_samples
+            )
+            if (
+                n_already_generated is not None
+                and n_already_generated == config.n_samples
+            ):
+                print(f"Skipping {bug_id} {hunk_idx}")
+                continue
+            if not analyzers_initialized:
+                # Only intialized once
+                connections, buggy_text_files = init_analyzers()
+                analyzers_initialized = True
+            buggy_text_file = buggy_text_files[f_idx]
             (
                 buggy_hunk_start_index,
                 buggy_hunk_end_index,
@@ -242,7 +278,10 @@ class Repairer:
             synthesizer = gen.Synthesizer(
                 lm_context, connections, text_file, config.method
             )
-            for idx in range(config.n_samples):
+            n_samples = config.n_samples - (
+                0 if n_already_generated is None else n_already_generated
+            )
+            for idx in range(n_samples):
                 print("Hunk index:", hunk_idx)
                 print("Repair index:", idx)
 
