@@ -5,8 +5,6 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, TypeVar
 
-import torch
-
 from realm.config import (
     LMInferenceConfig,
     MetaConfig,
@@ -135,6 +133,16 @@ validation_parser.add_argument(
     help="Number of cores to use for validation",
 )
 
+# Evaluation parser
+evaluation_parser = subparsers.add_parser("evaluate")
+evaluation_parser.add_argument(
+    "-d",
+    "--dir",
+    required=True,
+    help="The directory that stores the repair results",
+)
+
+
 args = parser.parse_args()
 
 META_CONFIG = MetaConfig.from_json_file(Path("meta_config.json"))
@@ -193,6 +201,10 @@ repair = partial(
     ),
 )
 
+evaluate_generation = partial(
+    run_with_action_and_args, lambda _, runner: Runner.evaluate_generation(runner)
+)
+
 transform = partial(
     run_with_action_and_args, lambda runner, _: Runner.transform(runner)
 )
@@ -221,5 +233,20 @@ if __name__ == "__main__":
         validate(args)
     elif args.option == "resume":
         resume(args)
+    elif args.option == "evaluate":
+        import json
+
+        result = evaluate_generation(args)
+
+        # print(
+        #     json.dumps(
+        #         {
+        #             bug_id: [point.to_json() for point in points]
+        #             for bug_id, points in result.items()
+        #         },
+        #         indent=2,
+        #     )
+        # )
+        # print(result["Chart-1"])
     else:
         assert False

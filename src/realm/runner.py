@@ -159,10 +159,8 @@ class Runner:
                     gen_time=patch.total_gen_time,
                     n_total=1,
                     n_unique=utils.binary(lambda patch: not patch.is_duplicate, patch),
-                    n_unfinished=utils.binary(
-                        lambda patch: not patch.is_unfinished, patch
-                    ),
-                    n_pruned=utils.binary(lambda patch: not patch.is_pruned, patch),
+                    n_unfinished=utils.binary(lambda patch: patch.is_unfinished, patch),
+                    n_pruned=utils.binary(lambda patch: patch.is_pruned, patch),
                 ),
                 patches,
             )
