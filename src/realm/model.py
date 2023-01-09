@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Optional, TypeVar, Union, cast
+from typing import Optional, TypeVar, Union, cast
 
 import torch
 from transformers import AutoTokenizer, T5Config, T5ForConditionalGeneration
@@ -21,7 +21,7 @@ class CodeT5ForRealm(T5ForConditionalGeneration):
         super().__init__(config)
         self.tokenizer = tokenizer
         self.vocab_size: int = self.config.vocab_size  # type: ignore # noqa
-        self.token_map: List[str] = utils.load_and_cache_data(
+        self.token_map: list[str] = utils.load_and_cache_data(
             Path(f"codet5_token_map.pkl"),
             lambda: [
                 tokenizer.decode(
@@ -38,7 +38,7 @@ class CodeT5ForRealm(T5ForConditionalGeneration):
         raise NotImplementedError
 
     @property
-    def end_ids(self) -> List[int]:
+    def end_ids(self) -> list[int]:
         raise NotImplementedError
 
     @property
@@ -136,7 +136,7 @@ class CodeT5Large(CodeT5ForRealm):
         return 2
 
     @property
-    def end_ids(self) -> List[int]:
+    def end_ids(self) -> list[int]:
         return CODET5_LARGE_END_IDS
 
     @property

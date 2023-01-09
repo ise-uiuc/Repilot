@@ -4,7 +4,7 @@ import time
 from multiprocessing import Pipe
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import List, Tuple, cast
+from typing import cast
 
 import numpy
 import regex as re
@@ -24,7 +24,7 @@ DATA_DIR = Path(".lsp_data")
 
 
 def wait_until_all_analyzers_free(
-    realm_conns: List[Connection],
+    realm_conns: list[Connection],
     max_waiting_time: float = 20,
     free_check_time: float = 1.0,
 ):
@@ -61,7 +61,7 @@ def get_buggy_hunk_start_end_indices_and_positions(
     return start_index, end_index, start_pos, end_pos
 
 
-def remove_buggy_hunk(text_file: TextFile, change: Change) -> Tuple[str, str]:
+def remove_buggy_hunk(text_file: TextFile, change: Change) -> tuple[str, str]:
     """Modifies `text_file` and returns the prefix and the suffix"""
     (
         start_index,
@@ -104,7 +104,7 @@ class Repairer:
         config: MetaConfig,
         model: CodeT5ForRealm,
         d4j: Defects4J,
-        active_connection_analyzer_pairs: List[Tuple[Connection, JdtLspAnalyzer]],
+        active_connection_analyzer_pairs: list[tuple[Connection, JdtLspAnalyzer]],
     ) -> None:
         self.config = config
         self.model = model

@@ -2,7 +2,7 @@ from functools import partial
 from operator import add
 from os import PathLike
 from pathlib import Path
-from typing import Any, List, Optional, Protocol, cast
+from typing import Any, Optional, Protocol, cast
 
 from realm import utils
 
@@ -29,11 +29,11 @@ class MutableTextDocument(Protocol):
         return self.get_position(self.cursor)
 
     @property
-    def lines(self) -> List[str]:
+    def lines(self) -> list[str]:
         return self.content.split("\n")
 
     @property
-    def n_chars(self) -> List[int]:
+    def n_chars(self) -> list[int]:
         return [len(line) for line in self.lines]
 
     # # Remember to sync everytime the content changes
@@ -91,7 +91,7 @@ class MutableTextDocument(Protocol):
     # # array index 0) and c2 (at array index 1) for a document in state S then
     # # c1 moves the document from S to S' and c2 from S' to S''. So c1 is
     # # computed on the state S and c2 is computed on the state S'.
-    # def change(self, text_changes: List[spec.TextDocumentContentChangeEvent]):
+    # def change(self, text_changes: list[spec.TextDocumentContentChangeEvent]):
     #     for text_change in text_changes:
     #         if "range" in text_change:
     #             text_change = cast(spec.TextChange, text_change)
@@ -153,7 +153,7 @@ class TextFile(MutableTextDocument, utils.JsonSerializable):
         text_file.move_cursor(int(d["cursor"]))
         return text_file
 
-    def repeat(self, n: int, include_self=False) -> List["TextFile"]:
+    def repeat(self, n: int, include_self=False) -> list["TextFile"]:
         return [self.copy() for _ in range(n - 1)] + [
             self if include_self else self.copy()
         ]

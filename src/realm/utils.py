@@ -3,21 +3,10 @@ import itertools
 import json
 import os
 import pickle
+from functools import partial
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Iterable,
-    Iterator,
-    List,
-    Optional,
-    Protocol,
-    Tuple,
-    Type,
-    TypeVar,
-    cast,
-)
+from typing import Any, Callable, Iterable, Iterator, Optional, Protocol, TypeVar, cast
 
 import git
 import torch
@@ -30,9 +19,9 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def take_while(
     pred: Callable[[T], bool], iterable: Iterable[T]
-) -> Tuple[List[T], Iterator[T]]:
+) -> tuple[list[T], Iterator[T]]:
     iterator = iter(iterable)
-    elements: List[T] = []
+    elements: list[T] = []
     return_iter = iterator
     for elem in iterator:
         if pred(elem):
@@ -45,7 +34,7 @@ def take_while(
 
 def take_while_two(
     pred_first: Callable[[T], bool], pred: Callable[[T, T], bool], iterable: Iterable[T]
-) -> Tuple[List[T], Iterator[T]]:
+) -> tuple[list[T], Iterator[T]]:
     """take_while that looks at two elements at a time"""
     iterator = iter(iterable)
     try:
@@ -54,7 +43,7 @@ def take_while_two(
             raise StopIteration
     except StopIteration:
         return [], iter([])
-    elements: List[T] = [first_elem]
+    elements: list[T] = [first_elem]
     return_iter = iterator
     for elem in iterator:
         if pred(first_elem, elem):
@@ -77,7 +66,7 @@ def line_consecutive(lhs: Line, rhs: Line) -> bool:
     return False
 
 
-def chunked(n: int, data: Iterable[T]) -> Iterator[List[T]]:
+def chunked(n: int, data: Iterable[T]) -> Iterator[list[T]]:
     data_iter = iter(data)
 
     def take(n: int, data_iter: Iterator[T]) -> Iterable[T]:
@@ -144,7 +133,7 @@ class Trie:
 # the Trie using the child node and add the child's character to the common prefix
 # If we reach a TrieNode that has 0 or more than 1 children then we return the common
 # prefix (if it's not empty) or None if the prefix is empty
-def common_prefix(strings: List[str]) -> Optional[str]:
+def common_prefix(strings: list[str]) -> Optional[str]:
     trie = Trie()
     for s in strings:
         if s == "":
@@ -190,7 +179,7 @@ class ConnectionWrapper:
 
 class IORetrospective(Protocol):
     @classmethod
-    def load(cls: Type[T], path: Path) -> T:
+    def load(cls: type[T], path: Path) -> T:
         ...
 
     def dump(self, path: Path):
@@ -206,20 +195,20 @@ class JsonSerializable(IORetrospective, Protocol):
         ...
 
     @classmethod
-    def load(cls: Type[T], path: Path) -> T:
+    def load(cls: type[T], path: Path) -> T:
         return cls.from_json_file(path)  # type: ignore # noqa
 
     def dump(self, path: Path):
         self.save_json(path)
 
     @classmethod
-    def from_json_file(cls: Type[T], path: Path) -> T:
+    def from_json_file(cls: type[T], path: Path) -> T:
         with open(path) as f:
             d = json.load(f)
         return cls.from_json(d)  # type: ignore # noqa
 
     @classmethod
-    def from_json(cls: Type[T], d: Any) -> T:
+    def from_json(cls: type[T], d: Any) -> T:
         ...
 
 
@@ -236,14 +225,14 @@ class JsonSpecificDirectoryDumpable(JsonSerializable, Protocol):
         self.save_json(self.json_save_path(path))
 
     @classmethod
-    def try_load(cls: Type[T], path: Path) -> T | None:
+    def try_load(cls: type[T], path: Path) -> T | None:
         cls_casted = cast(JsonSpecificDirectoryDumpable, cls)
         if not (cls_casted.json_save_path(path)).exists():
             return None
         return cast(T, cls_casted.load(path))
 
     @classmethod
-    def load(cls: Type[T], path: Path) -> T:
+    def load(cls: type[T], path: Path) -> T:
         cls_casted = cast(JsonSpecificDirectoryDumpable, cls)
         path = cls_casted.json_save_path(path)
         assert path.exists()
@@ -282,3 +271,12 @@ def bind_optional(x: T | None, f: Callable[[T], U]) -> U | None:
 
 def disable_tokenizer_parallel():
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+
+def select(true: U, false: U, is_true: Callable[[T], bool], value: T) -> U:
+    return true if is_true(value) else false
+
+
+binary: Callable[[Callable[[T], bool], T], int] = partial(select, 1, 0)  # type: ignore # fmt: off
+
+binary_optional: Callable[[T | None], int] = partial(binary, lambda t: t is not None)  # type: ignore # fmt: skip

@@ -6,7 +6,7 @@ from realm.utils import JsonSerializable, JsonSpecificDirectoryDumpable
 
 from .repair_result import AvgSynthesisResult
 
-ANALYSIS_FNAME = "repair_analysis.json"
+TRANSFORM_FNAME = "repair_transformed.json"
 
 
 @dataclass(frozen=True)
@@ -16,8 +16,20 @@ class AvgFilePatch:
     buggy_hunk_indices: list[tuple[int, int]]
 
     @property
+    def total_gen_time(self) -> float:
+        return sum(hunk.avg_time_cost for hunk in self.hunks)
+
+    @property
     def is_broken(self):
         return any(hunk.result.hunk is None for hunk in self.hunks)
+
+    @property
+    def is_pruned(self):
+        return any(hunk.result.is_pruned_halfway for hunk in self.hunks)
+
+    @property
+    def is_unfinished(self):
+        return any(hunk.result.is_unfinished for hunk in self.hunks)
 
     def to_json(self) -> Any:
         return {
@@ -74,8 +86,20 @@ class AvgPatch(JsonSerializable):
     is_duplicate: bool
 
     @property
+    def total_gen_time(self) -> float:
+        return sum(file_patch.total_gen_time for file_patch in self.file_patches)
+
+    @property
     def is_broken(self) -> bool:
         return any(file_patch.is_broken for file_patch in self.file_patches)
+
+    @property
+    def is_unfinished(self) -> bool:
+        return any(file_patch.is_unfinished for file_patch in self.file_patches)
+
+    @property
+    def is_pruned(self) -> bool:
+        return any(file_patch.is_pruned for file_patch in self.file_patches)
 
     def to_json(self) -> Any:
         return {
@@ -92,13 +116,13 @@ class AvgPatch(JsonSerializable):
 
 
 @dataclass(frozen=True)
-class RepairAnalysisResult(JsonSpecificDirectoryDumpable):
+class RepairTransformedResult(JsonSpecificDirectoryDumpable):
     result_dict: dict[str, list[AvgPatch]]
     all_appeared: dict[str, set[str]]
 
     @classmethod
     def name(cls):
-        return ANALYSIS_FNAME
+        return TRANSFORM_FNAME
 
     def to_json(self) -> Any:
         return {
@@ -112,8 +136,8 @@ class RepairAnalysisResult(JsonSpecificDirectoryDumpable):
         }
 
     @classmethod
-    def from_json(cls, d: dict) -> "RepairAnalysisResult":
-        return RepairAnalysisResult(
+    def from_json(cls, d: dict) -> "RepairTransformedResult":
+        return RepairTransformedResult(
             {
                 bug_id: [AvgPatch.from_json(avg_patch) for avg_patch in avg_patches]
                 for bug_id, avg_patches in d["result_dict"].items()

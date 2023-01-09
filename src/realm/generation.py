@@ -6,18 +6,7 @@ import typing
 import warnings
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
-from typing import (
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    NamedTuple,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import Callable, Dict, Iterable, NamedTuple, Optional, Union, cast
 
 import torch
 from torch import nn
@@ -96,9 +85,9 @@ CHART_11 = True
 
 @dataclass
 class GenerationState:
-    gen_contexts: List[GenerationContext]
-    batch_is_failed: List[bool]
-    batch_is_unfinished: List[bool]
+    gen_contexts: list[GenerationContext]
+    batch_is_failed: list[bool]
+    batch_is_unfinished: list[bool]
 
     @staticmethod
     def init(batch_size: int) -> "GenerationState":
@@ -128,7 +117,7 @@ class LspContext(NamedTuple):
 
 def get_completions(
     analyzer: Connection, uri: str, pos: spec.Position
-) -> Optional[List[dict]]:
+) -> Optional[list[dict]]:
     # completion_result = analyzer.client.textDocument_completion({
     #     'textDocument': {
     #         'uri': uri
@@ -176,7 +165,7 @@ class Synthesizer:
     def __init__(
         self,
         lm_context: LMContext,
-        connections: List[Connection],
+        connections: list[Connection],
         text_file: TextFile,
         gen_method: SynthesisMethod,
     ) -> None:
@@ -194,7 +183,7 @@ class Synthesizer:
         assert len(connections) == self.batch_size
 
         # States that are initialized everytime calling `synthesize``
-        self.lsp_contexts: Optional[List[LspContext]] = None
+        self.lsp_contexts: Optional[list[LspContext]] = None
         self.mem: Optional[Memorization] = None
         self.gen_state: Optional[GenerationState] = None
 
@@ -235,7 +224,7 @@ class Synthesizer:
         )
         assert len(self.gen_state.gen_contexts) == self.batch_size
         assert len(self.gen_state.batch_is_failed) == self.batch_size
-        results: List[SynthesisResult] = []
+        results: list[SynthesisResult] = []
         for batch_idx in range(self.batch_size):
             if self.gen_state.batch_is_failed[batch_idx]:
                 results.append(SynthesisResult(None, True, False))
@@ -319,15 +308,15 @@ class Synthesizer:
 
         # Invariant: not batch_needs_to_process[idx] === next_token_ids[idx] is determined
         while any(batch_needs_to_process):
-            # all_infeasible_indices: List[Tuple[int, int]] = []
+            # all_infeasible_indices: list[tuple[int, int]] = []
             start = time.perf_counter()
             probs_assign = 0.0
             if self.use_mem:
                 assert self.mem is not None
-                mem_infeasible_token_ids: List[List[int]] = []
-                mem_feasible_token_ids: List[Set[int]] = []
-                # mem_completions: List[Optional[List[dict]]] = []
-                mem_denied_tokens: List[utils.Trie] = []
+                mem_infeasible_token_ids: list[list[int]] = []
+                mem_feasible_token_ids: list[set[int]] = []
+                # mem_completions: list[Optional[list[dict]]] = []
+                mem_denied_tokens: list[utils.Trie] = []
                 for batch_idx in range(self.batch_size):
                     gen_context = gen_contexts[batch_idx]
                     input_state = pickle.dumps(gen_context.generated_ids)
@@ -392,7 +381,7 @@ class Synthesizer:
                 batch_is_denied = [False] * self.batch_size
 
             # The map from batch_idx to trying_token_ids_idx
-            trying_token_ids_idx_given_batch: List[int | bytes] = [
+            trying_token_ids_idx_given_batch: list[int | bytes] = [
                 b""
             ] * self.batch_size
 
@@ -656,12 +645,12 @@ class Synthesizer:
         num_beam_groups: Optional[int] = None,
         diversity_penalty: Optional[float] = None,
         prefix_allowed_tokens_fn: Optional[
-            Callable[[int, torch.Tensor], List[int]]
+            Callable[[int, torch.Tensor], list[int]]
         ] = None,
         logits_processor: Optional[LogitsProcessorList] = LogitsProcessorList(),
         renormalize_logits: Optional[bool] = None,
         stopping_criteria: Optional[StoppingCriteriaList] = StoppingCriteriaList(),
-        constraints: Optional[List[Constraint]] = None,
+        constraints: Optional[list[Constraint]] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         output_scores: Optional[bool] = None,
@@ -670,13 +659,13 @@ class Synthesizer:
         forced_eos_token_id: Optional[int] = None,
         remove_invalid_values: Optional[bool] = None,
         synced_gpus: Optional[bool] = False,
-        exponential_decay_length_penalty: Optional[Tuple[Union[int, float]]] = None,
+        exponential_decay_length_penalty: Optional[tuple[Union[int, float]]] = None,
         **model_kwargs,
     ):
         inputs = self.inputs
         model = self.model
 
-        # 1. Set generation parameters if not already defined
+        # 1. set generation parameters if not already defined
         bos_token_id = (
             bos_token_id if bos_token_id is not None else model.config.bos_token_id
         )
@@ -893,7 +882,7 @@ class Synthesizer:
 
 # Get the exact identifier token position
 
-# def get_id_token(generated_tokens: List[str]) -> str:
+# def get_id_token(generated_tokens: list[str]) -> str:
 #     result = ''
 #     first_unmatched_char = None
 #     for token in reversed(generated_tokens):
@@ -918,15 +907,15 @@ class Synthesizer:
 # def get_feasible_token_ids(
 #     token_map,
 #     generation_log: GenerationLog,
-#     memoized_result: Optional[List[bool]],
-#     generated_tokens: List[str],
-#     generated_ids: List[int],
+#     memoized_result: Optional[list[bool]],
+#     generated_tokens: list[str],
+#     generated_ids: list[int],
 #     lsp_context: LspContext,
 #     # Should be ranked (higher probability first)
-#     considered_token_ids: List[int],
+#     considered_token_ids: list[int],
 #     top_k: int,
-#     completion_overhead: List[float]
-# ) -> List[int]:
+#     completion_overhead: list[float]
+# ) -> list[int]:
 #     print("RUNNING feasibility check")
 #     # Trick to mitigate false positives of the langauge server (e.g., Chart-11, PathIterator)
 #     # NOTE: do not do it now. Just evaluate on both
@@ -937,7 +926,7 @@ class Synthesizer:
 #     analyzer = lsp_context.analyzer
 #     text_file = lsp_context.text_file
 #     # analyzer.client.stop()
-#     result: List[int] = []
+#     result: list[int] = []
 #     denied = utils.Trie()
 #     # all_feasible_tokens = Trie()
 #     # all_possible_completions = Trie()

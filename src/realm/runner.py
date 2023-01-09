@@ -1,3 +1,4 @@
+import functools
 import subprocess
 import time
 from dataclasses import dataclass
@@ -20,11 +21,13 @@ from .results import (
     AvgPatch,
     AvgSynthesisResult,
     BuggyHunk,
+    GenerationDatapoint,
     HunkRepairResult,
     Outcome,
     PatchValidationResult,
-    RepairAnalysisResult,
     RepairResult,
+    RepairTransformedResult,
+    ValidationDatapoint,
     ValidationResult,
 )
 
@@ -50,18 +53,18 @@ class Runner:
         utils.disable_tokenizer_parallel()
         repairer.repair(self.report)
 
-    def analyze(self):
-        """Incremental analysis"""
+    def transform(self):
+        """Incremental data transformation"""
         report = self.report
         assert isinstance(report.repair_result, RepairResult)
         # a_results = report.analysis_result.results
         # for repair_idx, result in enumerate(report.repair_result.results):
         # if repair_idx == len(a_results):
         #     a_results.append(RepairAnalysisResult({}, {}))
-        if report.analysis_result is None:
-            report.analysis_result = RepairAnalysisResult({}, {})
-        result_dict = report.analysis_result.result_dict
-        all_appeared = report.analysis_result.all_appeared
+        if report.transformed_result is None:
+            report.transformed_result = RepairTransformedResult({}, {})
+        result_dict = report.transformed_result.result_dict
+        all_appeared = report.transformed_result.all_appeared
         for bug_id, files in report.repair_result.result_dict.items():
             patches = result_dict.setdefault(bug_id, [])
             appeared = all_appeared.setdefault(bug_id, set())
@@ -89,26 +92,29 @@ class Runner:
         # report.analysis_result = RepairAnalysisResults(a_results)
         report.save()
 
+    def transform_if_not_performed(self):
+        if self.report.transformed_result is None:
+            print("Doing data transformation first...")
+            self.transform()
+            print("Done")
+
     def validate(self, config: ValidationConfig):
+        self.transform_if_not_performed()
         """Recoverable validation"""
         bug_pattern = re.compile(config.bug_pattern)
         report = self.report
         d4j = report.get_d4j()
-        if report.analysis_result is None:
-            print("Doing analysis first...")
-            self.analyze()
-            print("Done")
-        assert report.analysis_result is not None
+        assert report.transformed_result is not None
         if report.validation_result is None:
             report.validation_result = ValidationResult([], {})
         report.validation_result.validation_configs.append(config)
         val_config_idx = len(report.validation_result.validation_configs) - 1
-        analysis_result = report.analysis_result
+        transformed = report.transformed_result
         validation_result = report.validation_result
         validation_result_dict = validation_result.result_dict
-        analysis_result_dict = analysis_result.result_dict
+        transformed_result_dict = transformed.result_dict
         unvalidated_analysis_results: list[list[tuple[str, int, AvgPatch]]] = []
-        for bug_id, patches in analysis_result_dict.items():
+        for bug_id, patches in transformed_result_dict.items():
             if bug_pattern.fullmatch(bug_id) is None:
                 continue
             validated_patches = validation_result_dict.setdefault(bug_id, {})
@@ -139,6 +145,34 @@ class Runner:
                         val_result,
                     )
                 report.save()
+
+    def evaluate_generation(self) -> dict[str, list[GenerationDatapoint]]:
+        assert self.report.repair_result is not None
+        self.transform_if_not_performed()
+        transformed_result = self.report.transformed_result
+        assert transformed_result is not None
+        transformed_result_dict = transformed_result.result_dict
+        result: dict[str, list[GenerationDatapoint]] = {}
+        for bug_id, patches in transformed_result_dict.items():
+            mapped_generation_datapoints = map(
+                lambda patch: GenerationDatapoint(
+                    gen_time=patch.total_gen_time,
+                    n_total=1,
+                    n_unique=utils.binary(lambda patch: not patch.is_duplicate, patch),
+                    n_unfinished=utils.binary(
+                        lambda patch: not patch.is_unfinished, patch
+                    ),
+                    n_pruned=utils.binary(lambda patch: not patch.is_pruned, patch),
+                ),
+                patches,
+            )
+            datapoints = functools.reduce(
+                lambda points, point: points + [points[-1] + point],
+                mapped_generation_datapoints,
+                [GenerationDatapoint.zero()],
+            )
+            result[bug_id] = datapoints
+        return result
 
 
 def validate_patch(

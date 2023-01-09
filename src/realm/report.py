@@ -7,7 +7,7 @@ from pathlib import Path
 from . import utils
 from .config import MetaConfig
 from .d4j import Defects4J
-from .results import RepairAnalysisResult, RepairResult, ValidationResult
+from .results import RepairResult, RepairTransformedResult, ValidationResult
 
 
 @dataclass
@@ -17,7 +17,7 @@ class Report(utils.IORetrospective):
     root: Path
     config: MetaConfig
     repair_result: RepairResult | None
-    analysis_result: RepairAnalysisResult | None
+    transformed_result: RepairTransformedResult | None
     validation_result: ValidationResult | None
 
     def get_d4j(self) -> Defects4J:
@@ -45,8 +45,8 @@ class Report(utils.IORetrospective):
         self.dump_metadata(path)
         if self.repair_result is not None:
             self.repair_result.dump(path)
-        if self.analysis_result is not None:
-            self.analysis_result.dump(path)
+        if self.transformed_result is not None:
+            self.transformed_result.dump(path)
         if self.validation_result is not None:
             self.validation_result.dump(path)
         # for idx, config in enumerate(self.validation_configs):
@@ -57,12 +57,12 @@ class Report(utils.IORetrospective):
     def load(cls, path: Path) -> "Report":
         meta_config = MetaConfig.load(path)
         repair_result = RepairResult.load(path)
-        analysis_result = RepairAnalysisResult.try_load(path)
+        transformed_result = RepairTransformedResult.try_load(path)
         validation_result = ValidationResult.try_load(path)
         return Report(
             path,
             meta_config,
             repair_result,
-            analysis_result,
+            transformed_result,
             validation_result,
         )

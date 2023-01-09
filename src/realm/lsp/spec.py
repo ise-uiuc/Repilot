@@ -1,5 +1,5 @@
 """An INCOMPLETE, direct translation of https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/ """
-from typing import Annotated, Any, Dict, List, Literal, TypeAlias, TypedDict
+from typing import Annotated, Any, Dict, Literal, TypeAlias, TypedDict
 
 from typing_extensions import NotRequired
 
@@ -10,15 +10,15 @@ decimal: TypeAlias = number
 string: TypeAlias = str
 boolean: TypeAlias = bool
 null: TypeAlias = None
-array: TypeAlias = List
+array: TypeAlias = list
 object: TypeAlias = Any
 
 # NOTE: used an experimenting feature of mypy: --enable-recursive-aliases
 LSPObject: TypeAlias = Dict[str, Any]
 LSPAny: TypeAlias = (
-    LSPObject | List["LSPAny"] | string | integer | uinteger | decimal | boolean | null
+    LSPObject | list["LSPAny"] | string | integer | uinteger | decimal | boolean | null
 )
-LSPArray: TypeAlias = List[LSPAny]
+LSPArray: TypeAlias = list[LSPAny]
 
 
 class Message(TypedDict):
@@ -143,7 +143,7 @@ class Registration(TypedDict):
 
 
 class RegistrationParams(TypedDict):
-    registrations: List[Registration]
+    registrations: list[Registration]
 
 
 ProgressToken: TypeAlias = integer | string
@@ -256,7 +256,7 @@ class InitializeParams(WorkDoneProgressParams):
     initializationOptions: NotRequired[LSPAny]
     capabilities: ClientCapabilities
     trace: NotRequired[TraceValue]
-    workspaceFolders: NotRequired[List[WorkspaceFolder] | null]
+    workspaceFolders: NotRequired[list[WorkspaceFolder] | null]
 
 
 class InitializedParams(TypedDict):
@@ -274,7 +274,7 @@ class DidSaveTextDocumentParams(TypedDict):
 
 class DidChangeTextDocumentParams(TypedDict):
     textDocument: VersionedTextDocumentIdentifier
-    contentChanges: List[TextDocumentContentChangeEvent]
+    contentChanges: list[TextDocumentContentChangeEvent]
 
 
 class TextDocumentPositionParams(TypedDict):

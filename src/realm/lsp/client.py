@@ -2,12 +2,11 @@ import json
 from itertools import count
 from select import select
 from threading import Condition, Lock, Thread
-from types import NoneType
-from typing import IO, Callable, Dict, Optional, ParamSpec, Tuple, Type, TypeVar, cast
+from typing import IO, Callable, Dict, Optional, ParamSpec, TypeVar, cast
 
 from . import spec
 
-# TODO: support Content-Type
+# TODO: support Content-type
 HEADER = "Content-Length: "
 
 SHUTDOWN_ID = 0
@@ -58,18 +57,18 @@ def response(
 
 
 P = ParamSpec("P")
-RPC = Tuple[str, dict]
+RPC = tuple[str, dict]
 T = TypeVar("T")
 
 
-def d_call(method: str, _: Type[T]) -> Callable[["LSPClient", T], spec.ResponseMessage]:
+def d_call(method: str, _: type[T]) -> Callable[["LSPClient", T], spec.ResponseMessage]:
     def impl(self: "LSPClient", params: T) -> spec.ResponseMessage:
         return self.call(method, params)
 
     return impl
 
 
-def d_notify(method: str, _: Type[T]) -> Callable[["LSPClient", T], None]:
+def d_notify(method: str, _: type[T]) -> Callable[["LSPClient", T], None]:
     def impl(self: "LSPClient", params: T) -> None:
         self.notify(method, params)
 
@@ -236,8 +235,8 @@ class LSPClient(Thread):
         return json.loads(response)
 
     initialize = d_call("initialize", spec.InitializeParams)
-    shutdown = d_call("shutdown", Type[None])  # type: ignore # fmt: skip
-    exit = d_notify("exit", Type[None])  # type: ignore # fmt: skip
+    shutdown = d_call("shutdown", type[None])  # type: ignore # fmt: skip
+    exit = d_notify("exit", type[None])  # type: ignore # fmt: skip
     initialized = d_notify("initialized", spec.InitializedParams)
     workspace_didChangeConfiguration = d_notify(
         "textDocument/didChangeConfiguration", dict
@@ -957,7 +956,7 @@ class LSPClient(Thread):
     # def _did_change(
     #     file_path: PathLike,
     #     version: int,
-    #     changes: List[spec.TextDocumentContentChangeEvent],
+    #     changes: list[spec.TextDocumentContentChangeEvent],
     # ) -> RPC:  # type: ignore[misc] # noqa
     #     return 'textDocument/didChange', {
     #         'textDocument': {

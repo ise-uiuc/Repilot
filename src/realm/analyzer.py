@@ -4,7 +4,7 @@ from multiprocessing import Process
 from multiprocessing.connection import Connection
 from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, Optional, cast
 
 from realm import utils
 from realm.generation_defs import GenerationContext, Memorization
@@ -39,7 +39,7 @@ class JdtLspAnalyzer(Process):
     def __init__(
         self,
         conn: Connection,
-        server_cmd: List[str],
+        server_cmd: list[str],
         proj_path: PathLike,
         model: CodeT5ForRealm,
         java8_home: str,
@@ -792,13 +792,13 @@ class JdtLspAnalyzer(Process):
     def feasible(
         self,
         # generation_log: GenerationLog,
-        generated_ids: List[int],
-        generated_tokens: List[str],
+        generated_ids: list[int],
+        generated_tokens: list[str],
         uri: str,
         token_id: int,
         token: str,
         pos: spec.Position,
-        # completion_overhead: List[float],
+        # completion_overhead: list[float],
     ) -> bool:
         """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
         # input_state = pickle.dumps(generated_ids + [token_id])
@@ -861,7 +861,7 @@ class JdtLspAnalyzer(Process):
             # self.memorization.infeasible_token_ids[input_state] = False
             return False
 
-    def get_completions(self, uri: str, pos: spec.Position) -> Optional[List[dict]]:
+    def get_completions(self, uri: str, pos: spec.Position) -> Optional[list[dict]]:
         new_completion_result = self.completion(
             {
                 "textDocument": {"uri": uri},

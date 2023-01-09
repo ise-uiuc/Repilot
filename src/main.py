@@ -87,14 +87,14 @@ repair_parser.add_argument(
 )
 
 # The capability to resume a terminated repair process
-resume_parser = subparsers.add_parser("resume")
-resume_parser.add_argument(
+resuming_parser = subparsers.add_parser("resume")
+resuming_parser.add_argument(
     "-d",
     "--dir",
     required=True,
     help="The directory that stores the repair results",
 )
-resume_parser.add_argument(
+resuming_parser.add_argument(
     "--pre-allocate",
     required=False,
     action="store_true",
@@ -102,8 +102,10 @@ resume_parser.add_argument(
 )
 
 # Analysis parser
-analysis_parser = subparsers.add_parser("analyze")
-analysis_parser.add_argument(
+transformation_parser = subparsers.add_parser(
+    "transform", help="Transform the hunk-based repair result to a per bug based one"
+)
+transformation_parser.add_argument(
     "-d",
     "--dir",
     required=True,
@@ -134,9 +136,6 @@ validation_parser.add_argument(
 )
 
 args = parser.parse_args()
-
-if args.option == "repair":
-    _EMPTY = torch.empty((1,)).cuda()
 
 META_CONFIG = MetaConfig.from_json_file(Path("meta_config.json"))
 
@@ -194,7 +193,9 @@ repair = partial(
     ),
 )
 
-analyze = partial(run_with_action_and_args, lambda runner, _: Runner.analyze(runner))
+transform = partial(
+    run_with_action_and_args, lambda runner, _: Runner.transform(runner)
+)
 
 validate = partial(
     run_with_action_and_args,
@@ -214,15 +215,11 @@ resume = partial(
 if __name__ == "__main__":
     if args.option == "repair":
         repair(args)
-    elif args.option == "analyze":
-        analyze(args)
+    elif args.option == "transform":
+        transform(args)
     elif args.option == "validate":
         validate(args)
     elif args.option == "resume":
         resume(args)
     else:
         assert False
-
-    if os.getenv("KEEP") is not None:
-        print("Type anything to exit")
-        input()

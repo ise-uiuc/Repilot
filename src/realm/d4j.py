@@ -6,7 +6,7 @@ import subprocess
 from functools import partial
 from os import PathLike
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, NamedTuple, TypeVar
+from typing import Dict, Iterable, Iterator, NamedTuple, TypeVar
 
 import git
 from unidiff import PatchedFile, PatchSet
@@ -15,24 +15,24 @@ from unidiff.patch import Line
 from realm import utils
 from realm.utils import chunked
 
-Metadata = Dict[str, List[Dict[str, str]]]
+Metadata = Dict[str, list[Dict[str, str]]]
 
 T = TypeVar("T")
 
 
 class Change(NamedTuple):
     start: int
-    removed_lines: List[str]
-    added_lines: List[str]
+    removed_lines: list[str]
+    added_lines: list[str]
 
 
 class BuggyFile(NamedTuple):
     path: str
-    changes: List[Change]
+    changes: list[Change]
 
     @staticmethod
     def from_patch_file(reversed: bool, patch_file: PatchedFile) -> "BuggyFile":
-        changes: List[Change] = []
+        changes: list[Change] = []
         lines_iter: Iterator[Line] = (line for hunk in patch_file for line in hunk)
 
         try:
@@ -46,7 +46,7 @@ class BuggyFile(NamedTuple):
                         lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
                         itertools.chain([start_line], lines_iter),
                     )
-                    removed_lines: List[Line] = []
+                    removed_lines: list[Line] = []
                 elif start_line.is_removed:
                     assert last_context.is_context
                     removed_lines, line_iter = utils.take_while_two(
@@ -97,7 +97,7 @@ class BuggyFile(NamedTuple):
 
 
 class Bug(NamedTuple):
-    buggy_files: List[BuggyFile]
+    buggy_files: list[BuggyFile]
     proj_path: str
 
     def iter_hunks(self) -> Iterator[tuple[tuple[int, int], BuggyFile, Change]]:
@@ -201,7 +201,7 @@ class Defects4J:
         repo.git.execute(["git", "clean", "-xfd"])
         repo.close()
 
-    def buggy_files(self, bug: dict) -> List[BuggyFile]:
+    def buggy_files(self, bug: dict) -> list[BuggyFile]:
         patch_file = (
             self.d4j_home
             / "framework"
@@ -250,14 +250,14 @@ class Defects4J:
             ],
         }
 
-    def _get_all_checkout_meta(self, bugs: Metadata) -> List[Dict[str, str]]:
+    def _get_all_checkout_meta(self, bugs: Metadata) -> list[Dict[str, str]]:
         return [
             self._get_checkout_meta(proj, bug)
             for proj, proj_bugs in bugs.items()
             for bug in proj_bugs
         ]
 
-    def _get_metadata(self) -> List[Dict[str, str]]:
+    def _get_metadata(self) -> list[Dict[str, str]]:
         all_bugs = self._get_all_bugs()
         data = self._get_all_checkout_meta(all_bugs)
         return data

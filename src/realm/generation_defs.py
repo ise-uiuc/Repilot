@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
+from typing import Dict, Optional
 
 from realm import utils
 
@@ -8,9 +8,9 @@ GenerationState = bytes
 
 @dataclass
 class Memorization:
-    infeasible_token_ids: Dict[GenerationState, List[int]]
-    feasible_token_ids: Dict[GenerationState, Set[int]]
-    completions: Dict[GenerationState, Optional[List[dict]]]
+    infeasible_token_ids: Dict[GenerationState, list[int]]
+    feasible_token_ids: Dict[GenerationState, set[int]]
+    completions: Dict[GenerationState, Optional[list[dict]]]
     denied_tokens: Dict[GenerationState, utils.Trie]
 
     @staticmethod
@@ -20,5 +20,5 @@ class Memorization:
 
 @dataclass
 class GenerationContext:
-    generated_tokens: List[str]
-    generated_ids: List[int]
+    generated_tokens: list[str]
+    generated_ids: list[int]
