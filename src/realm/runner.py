@@ -51,7 +51,9 @@ class Runner:
     @staticmethod
     def load(root: Path) -> "Runner":
         print(f"Loading data from {root}")
-        return Runner(Report.load(root))
+        report = Report.load(root)
+        print("Done")
+        return Runner(report)
 
     def repair(self, repairer: Repairer):
         utils.disable_tokenizer_parallel()
@@ -158,7 +160,7 @@ class Runner:
 
     def get_validation_items(
         self,
-    ) -> Iterable[tuple[str, Iterable[tuple[AvgPatch, PatchValidationResult]]]]:
+    ) -> Iterable[tuple[str, Iterable[tuple[AvgPatch, PatchValidationResult | None]]]]:
         assert self.report.transformed_result is not None
         assert self.report.validation_result is not None
         result_dict = self.report.validation_result.result_dict
@@ -167,7 +169,10 @@ class Runner:
             yield (
                 bug_id,
                 (
-                    (patch, result[patch_idx][1])
+                    (
+                        patch,
+                        result[patch_idx][1] if patch_idx in result else None,
+                    )
                     for patch_idx, patch in enumerate(patches)
                 ),
             )
@@ -176,15 +181,16 @@ class Runner:
         return self.evaluate(
             Runner.get_transformed_items,
             map_to_generation_datapoint,
-            lambda points, point: [points[-1] + point],
+            lambda points, point: points + [points[-1] + point],
             [GenerationDatapoint.zero()],
         )
 
     def evaluate_validation(self) -> dict[str, list[ValidationDatapoint]]:
+        self.transform_with_message()
         return self.evaluate(
             Runner.get_validation_items,
             map_to_validation_datapoint,
-            lambda points, point: [points[-1] + point],
+            lambda points, point: points + [points[-1] + point],
             [ValidationDatapoint.zero()],
         )
 
@@ -355,18 +361,25 @@ def map_to_generation_datapoint(patch: AvgPatch) -> GenerationDatapoint:
 
 
 def map_to_validation_datapoint(
-    patch_info: tuple[AvgPatch, PatchValidationResult]
+    patch_info: tuple[AvgPatch, PatchValidationResult | None]
 ) -> ValidationDatapoint:
     avg_patch, validation_result = patch_info
+    gen_datapoint = map_to_generation_datapoint(avg_patch)
     return ValidationDatapoint(
         n_parse_success=utils.binary_bool(
-            validation_result.outcome != Outcome.ParseError
+            validation_result is not None
+            and validation_result.outcome != Outcome.ParseError
         ),
         n_comp_success=utils.binary_bool(
-            validation_result.outcome
+            validation_result is not None
+            and validation_result.outcome
             not in [Outcome.ParseError, Outcome.CompilationError]
         ),
-        n_test_success=utils.binary_bool(validation_result.outcome == Outcome.Success),
-        total_time_consumed=validation_result.time_cost,
-        gen_datapoint=map_to_generation_datapoint(avg_patch),
+        n_test_success=utils.binary_bool(
+            validation_result is not None
+            and validation_result.outcome == Outcome.Success
+        ),
+        total_time_consumed=gen_datapoint.gen_time
+        + (0 if validation_result is None else validation_result.time_cost),
+        gen_datapoint=gen_datapoint,
     )

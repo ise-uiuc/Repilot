@@ -605,13 +605,22 @@ class Synthesizer:
             if unfinished_sequences.max() == 0:
                 break
             if len(input_ids[0]) == max_length:
-                for batch_idx in range(self.batch_size):
-                    self.gen_state.batch_is_unfinished[
-                        batch_idx
-                    ] = unfinished_sequences[batch_idx]
                 break
             # IMPORTANT: codet5 output format: <mask0>....<mask1>....<mask2>...
             # Mask ids are 32099, 32098, 32097...
+        for batch_idx in range(self.batch_size):
+            is_unfinished = unfinished_sequences[batch_idx].item() == 1
+            self.gen_state.batch_is_unfinished[batch_idx] = is_unfinished
+            if os.getenv("TRY") is not None:
+                generated_ids = self.gen_state.gen_contexts[batch_idx].generated_ids
+                input_state = pickle.dumps(
+                    generated_ids[:-1] if is_unfinished else generated_ids
+                )
+                infeasible = self.mem.infeasible_token_ids.setdefault(input_state, [])
+                if is_unfinished and len(input_ids[0]) > 0:
+                    infeasible.append(input_ids[batch_idx, -1])
+                if not is_unfinished and len(input_ids[0]) > 0:
+                    infeasible.extend(model.end_ids)
         return
 
     # Rewritten from huggingface/transformers, not changed so much

@@ -137,9 +137,17 @@ validation_parser.add_argument(
 evaluation_parser = subparsers.add_parser("evaluate")
 evaluation_parser.add_argument(
     "-d",
-    "--dir",
+    "--dirs",
     required=True,
-    help="The directory that stores the repair results",
+    nargs="+",
+    help="The directories for comparison that store the repair results",
+)
+evaluation_parser.add_argument(
+    "-t",
+    "--tags",
+    required=True,
+    nargs="+",
+    help="The directories for comparison that store the repair results",
 )
 
 
@@ -148,12 +156,13 @@ args = parser.parse_args()
 META_CONFIG = MetaConfig.from_json_file(Path("meta_config.json"))
 
 
-def random_dir(suffix: str) -> str:
-    return datetime.now().strftime(f"results-%Y%m%d-%H%M%S-{suffix}")
+def random_dir(config: RepairConfig) -> str:
+    return datetime.now().strftime(
+        f"results-%Y%m%d-%H%M%S-{config.method}-{config.batch_size}_{config.n_samples * config.batch_size}-{config.bug_pattern}"
+    )
 
 
 def create_repair_runner(args: Namespace) -> Runner:
-    result_dir = Path(args.dir if args.dir is not None else random_dir(args.method))
     inference_config = LMInferenceConfig(
         args.batch_size, args.temperature, args.top_k, args.n_max_tokens
     )
@@ -168,17 +177,19 @@ def create_repair_runner(args: Namespace) -> Runner:
         args.bug_pattern,
         not args.not_single_hunk_only,
     )
+    result_dir = Path(args.dir if args.dir is not None else random_dir(repair_config))
     runner = Runner.create(result_dir, META_CONFIG, repair_config)
     return runner
 
 
 T = TypeVar("T")
+U = TypeVar("U")
 
 
 def run_with_runner_action_and_args(
-    runner_creator: Callable[[Namespace], Runner],
-    action: Callable[[Namespace, Runner], T],
-    args: Namespace,
+    runner_creator: Callable[[U], Runner],
+    action: Callable[[U, Runner], T],
+    args: U,
 ) -> T:
     runner = runner_creator(args)
     return action(args, runner)
@@ -203,6 +214,10 @@ repair = partial(
 
 evaluate_generation = partial(
     run_with_action_and_args, lambda _, runner: Runner.evaluate_generation(runner)
+)
+
+evaluate_validation = partial(
+    run_with_action_and_args, lambda _, runner: Runner.evaluate_validation(runner)
 )
 
 transform = partial(
@@ -236,7 +251,16 @@ if __name__ == "__main__":
     elif args.option == "evaluate":
         import json
 
-        result = evaluate_generation(args)
+        from matplotlib import pyplot as plt
+
+        from realm.ploting import plot_generation, plot_validation
+
+        for tag, dir in zip(args.tags, args.dirs):
+            runner = Runner.load(Path(dir))
+            result = runner.evaluate_generation()
+            plot_generation(result, tag)  # type: ignore
+        plt.legend()
+        plt.savefig("plot.png")
 
         # print(
         #     json.dumps(
