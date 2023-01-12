@@ -162,31 +162,11 @@ def random_dir(config: RepairConfig) -> str:
     )
 
 
-def create_repair_runner(args: Namespace) -> Runner:
-    inference_config = LMInferenceConfig(
-        args.batch_size, args.temperature, args.top_k, args.n_max_tokens
-    )
-    repair_config = RepairConfig(
-        args.n_samples,
-        inference_config,
-        {
-            "pruned-nomem": SynthesisMethod.PRUNED_NO_MEM,
-            "pruned-mem": SynthesisMethod.PRUNED_MEM,
-            "plain": SynthesisMethod.PLAIN,
-        }[args.method],
-        args.bug_pattern,
-        not args.not_single_hunk_only,
-    )
-    result_dir = Path(args.dir if args.dir is not None else random_dir(repair_config))
-    runner = Runner.create(result_dir, META_CONFIG, repair_config)
-    return runner
-
-
 T = TypeVar("T")
 U = TypeVar("U")
 
 
-def run_with_runner_action_and_args(
+def run(
     runner_creator: Callable[[U], Runner],
     action: Callable[[U, Runner], T],
     args: U,
@@ -195,48 +175,61 @@ def run_with_runner_action_and_args(
     return action(args, runner)
 
 
-def load_runner_from_path(args: Namespace) -> Runner:
-    return Runner.load(Path(args.dir))
+def run_by_loading(action: Callable[[Namespace, Runner], T], args: Namespace) -> T:
+    def load_runner(args: Namespace) -> Runner:
+        return Runner.load(Path(args.dir))
+
+    return run(load_runner, action, args)
 
 
-run_with_action_and_args = partial(
-    run_with_runner_action_and_args, load_runner_from_path
-)
+def repair(args: Namespace) -> None:
+    def create_repair_runner(args: Namespace) -> Runner:
+        inference_config = LMInferenceConfig(
+            args.batch_size, args.temperature, args.top_k, args.n_max_tokens
+        )
+        repair_config = RepairConfig(
+            args.n_samples,
+            inference_config,
+            {
+                "pruned-nomem": SynthesisMethod.PRUNED_NO_MEM,
+                "pruned-mem": SynthesisMethod.PRUNED_MEM,
+                "plain": SynthesisMethod.PLAIN,
+            }[args.method],
+            args.bug_pattern,
+            not args.not_single_hunk_only,
+        )
+        result_dir = Path(
+            args.dir if args.dir is not None else random_dir(repair_config)
+        )
+        runner = Runner.create(result_dir, META_CONFIG, repair_config)
+        return runner
+
+    def repair_action(args: Namespace, runner: Runner) -> None:
+        repairer = Repairer.init(runner.report.config, args.pre_allocate)
+        runner.repair(repairer)
+
+    return run(create_repair_runner, repair_action, args)
 
 
-repair = partial(
-    run_with_runner_action_and_args,
-    create_repair_runner,
-    lambda args, runner: Runner.repair(
-        runner, Repairer.init(META_CONFIG, args.pre_allocate)
-    ),
-)
+def resume(args: Namespace) -> None:
+    def action(args: Namespace, runner: Runner) -> None:
+        repairer = Repairer.init(runner.report.config, args.pre_allocate)
+        runner.repair(repairer)
 
-evaluate_generation = partial(
-    run_with_action_and_args, lambda _, runner: Runner.evaluate_generation(runner)
-)
+    return run_by_loading(action, args)
 
-evaluate_validation = partial(
-    run_with_action_and_args, lambda _, runner: Runner.evaluate_validation(runner)
-)
 
-transform = partial(
-    run_with_action_and_args, lambda runner, _: Runner.transform(runner)
-)
+def transform(args: Namespace) -> None:
+    return run_by_loading(lambda _, runner: Runner.transform(runner), args)
 
-validate = partial(
-    run_with_action_and_args,
-    lambda args, runner: Runner.validate(
-        runner, ValidationConfig(args.n_cores, args.bug_pattern)
-    ),
-)
 
-resume = partial(
-    run_with_action_and_args,
-    lambda args, runner: Runner.repair(
-        runner, Repairer.init(runner.report.config, args.pre_allocate)
-    ),
-)
+def validate(args: Namespace) -> None:
+    return run_by_loading(
+        lambda args, runner: Runner.validate(
+            runner, ValidationConfig(args.n_cores, args.bug_pattern)
+        ),
+        args,
+    )
 
 
 if __name__ == "__main__":

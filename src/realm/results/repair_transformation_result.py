@@ -12,7 +12,7 @@ TRANSFORM_FNAME = "repair_transformed.json"
 @dataclass(frozen=True)
 class AvgFilePatch:
     hunks: list[AvgSynthesisResult]
-    bug: TextFile
+    # bug: TextFile
     buggy_hunk_indices: list[tuple[int, int]]
 
     @property
@@ -35,7 +35,7 @@ class AvgFilePatch:
         return {
             "hunks": [hunk.to_json() for hunk in self.hunks],
             # "patch": None if self.patch is None else self.patch.to_json(),
-            "bug": self.bug.to_json(),
+            # "bug": self.bug.to_json(),
             "buggy_hunk_indices": self.buggy_hunk_indices,
         }
 
@@ -44,17 +44,17 @@ class AvgFilePatch:
         return AvgFilePatch(
             [AvgSynthesisResult.from_json(hunk) for hunk in d["hunks"]],
             # TextFile.from_json(p) if (p := d["patch"]) is not None else None,
-            TextFile.from_json(d["bug"]),
+            # TextFile.from_json(d["bug"]),
             d["buggy_hunk_indices"],
         )
 
-    def compute_patch(self) -> TextFile | None:
+    def compute_patch(self, bug: TextFile) -> TextFile | None:
         assert self.buggy_hunk_indices == sorted(
             self.buggy_hunk_indices, reverse=True, key=lambda tp: tp[0]
         )
         assert len(self.hunks) > 0
         assert len(self.hunks) == len(self.buggy_hunk_indices)
-        patch = self.bug.copy()
+        patch = bug.copy()
         # [first_hunk, *rest_hunks] = hunks
         # last_success = first_hunk.result.successful_result
         # if last_success is None:
@@ -117,7 +117,8 @@ class AvgPatch(JsonSerializable):
 
 @dataclass(frozen=True)
 class RepairTransformedResult(JsonSpecificDirectoryDumpable):
-    result_dict: dict[str, list[AvgPatch]]
+    # bug_id -> (bug_specs, list[patch])
+    result_dict: dict[str, tuple[list[TextFile], list[AvgPatch]]]
     all_appeared: dict[str, set[str]]
 
     @classmethod
@@ -127,8 +128,11 @@ class RepairTransformedResult(JsonSpecificDirectoryDumpable):
     def to_json(self) -> Any:
         return {
             "result_dict": {
-                bug_id: [avg_patch.to_json() for avg_patch in avg_patches]
-                for bug_id, avg_patches in self.result_dict.items()
+                bug_id: (
+                    [text_file.to_json() for text_file in text_files],
+                    [avg_patch.to_json() for avg_patch in avg_patches],
+                )
+                for bug_id, (text_files, avg_patches) in self.result_dict.items()
             },
             "all_appeared": {
                 bug_id: list(appeared) for bug_id, appeared in self.all_appeared.items()
@@ -139,8 +143,11 @@ class RepairTransformedResult(JsonSpecificDirectoryDumpable):
     def from_json(cls, d: dict) -> "RepairTransformedResult":
         return RepairTransformedResult(
             {
-                bug_id: [AvgPatch.from_json(avg_patch) for avg_patch in avg_patches]
-                for bug_id, avg_patches in d["result_dict"].items()
+                bug_id: (
+                    [TextFile.from_json(text_file) for text_file in text_files],
+                    [AvgPatch.from_json(avg_patch) for avg_patch in avg_patches],
+                )
+                for bug_id, (text_files, avg_patches) in d["result_dict"].items()
             },
             {bug_id: set(appeared) for bug_id, appeared in d["all_appeared"].items()},
         )

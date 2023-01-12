@@ -73,11 +73,13 @@ class Runner:
         result_dict = report.transformed_result.result_dict
         all_appeared = report.transformed_result.all_appeared
         for bug_id, files in report.repair_result.result_dict.items():
-            patches = result_dict.setdefault(bug_id, [])
+            buggy_files, patches = result_dict.setdefault(bug_id, ([], []))
             appeared = all_appeared.setdefault(bug_id, set())
-            for patch_idx, patch in enumerate(iter_files(files)):
+            for patch_idx, (buggy_text_files, patch) in enumerate(iter_files(files)):
                 if patch_idx < len(patches):
                     continue
+                if len(buggy_files) == 0:
+                    buggy_files.extend(buggy_text_files)
                 if any(
                     hunk.result.hunk is None for file in patch for hunk in file.hunks
                 ):
@@ -94,7 +96,7 @@ class Runner:
                         appeared.add(concat_hunk_str)
                         is_duplicate = False
                 patches.append(AvgPatch(patch, is_duplicate))
-            result_dict[bug_id] = patches
+            # result_dict[bug_id] = patches
         # a_results.append(RepairAnalysisResult(result_dict))
         # report.analysis_result = RepairAnalysisResults(a_results)
         report.save()
@@ -119,8 +121,10 @@ class Runner:
         validation_result = report.validation_result
         validation_result_dict = validation_result.result_dict
         transformed_result_dict = transformed.result_dict
-        unvalidated_analysis_results: list[list[tuple[str, int, AvgPatch]]] = []
-        for bug_id, patches in transformed_result_dict.items():
+        unvalidated_analysis_results: list[
+            list[tuple[str, int, list[TextFile], AvgPatch]]
+        ] = []
+        for bug_id, (buggy_text_files, patches) in transformed_result_dict.items():
             if bug_pattern.fullmatch(bug_id) is None:
                 continue
             validated_patches = validation_result_dict.setdefault(bug_id, {})
@@ -131,7 +135,9 @@ class Runner:
                     and not patch.is_broken
                     and patch_idx not in validated_patches
                 ):
-                    unvalidated_analysis_results[-1].append((bug_id, patch_idx, patch))
+                    unvalidated_analysis_results[-1].append(
+                        (bug_id, patch_idx, buggy_text_files, patch)
+                    )
         # Validate n_cores bugs with different bug_ids in parallel
         for zipped_result in zip_longest(*unvalidated_analysis_results):
             zipped_results = filter(lambda r: r is not None, zipped_result)
@@ -140,10 +146,12 @@ class Runner:
                 val_results: list[PatchValidationResult] = Parallel(
                     n_jobs=len(result_batch)
                 )(
-                    delayed(validate_patch)(d4j, bug_id, avg_patch)
-                    for (bug_id, _, avg_patch) in result_batch
+                    delayed(validate_patch)(d4j, bug_id, buggy_text_files, avg_patch)
+                    for (bug_id, _, buggy_text_files, avg_patch) in result_batch
                 )
-                for (bug_id, val_idx, _), val_result in zip(result_batch, val_results):
+                for (bug_id, val_idx, _, _), val_result in zip(
+                    result_batch, val_results
+                ):
                     assert bug_id in validation_result_dict
                     assert val_idx not in validation_result_dict[bug_id]
                     validation_result_dict[bug_id][val_idx] = (
@@ -152,11 +160,19 @@ class Runner:
                     )
                 report.save()
 
-    def get_transformed_items(self) -> Iterable[tuple[str, list[AvgPatch]]]:
+    def get_transformed_items(
+        self,
+    ) -> Iterable[tuple[str, list[AvgPatch]]]:
         assert self.report.repair_result is not None
         self.transform_with_message()
         assert self.report.transformed_result is not None
-        return self.report.transformed_result.result_dict.items()
+        return (
+            (bug_id, patches)
+            for bug_id, (
+                _,
+                patches,
+            ) in self.report.transformed_result.result_dict.items()
+        )
 
     def get_validation_items(
         self,
@@ -244,7 +260,7 @@ class Runner:
 
 
 def validate_patch(
-    d4j: Defects4J, bug_id: str, patch: AvgPatch
+    d4j: Defects4J, bug_id: str, bugs: list[TextFile], patch: AvgPatch
 ) -> PatchValidationResult:
     start_time = time.perf_counter()
     assert not patch.is_duplicate
@@ -253,8 +269,9 @@ def validate_patch(
         return time.perf_counter() - start_time
 
     patch_files: list[TextFile] = []
-    for patch_file in patch.file_patches:
-        patch_text_file = patch_file.compute_patch()
+    assert len(patch.file_patches) == len(bugs)
+    for patch_file, bug in zip(patch.file_patches, bugs):
+        patch_text_file = patch_file.compute_patch(bug)
         assert patch_text_file is not None
         assert patch_text_file.path.exists()
         patch_files.append(patch_text_file)
@@ -303,7 +320,7 @@ _AvgResult = tuple[AvgSynthesisResult, BuggyHunk]
 
 def iter_files(
     file_results: list[list[HunkRepairResult]],
-) -> Iterator[list[AvgFilePatch]]:
+) -> Iterable[tuple[list[TextFile], list[AvgFilePatch]]]:
     # For one bug
     # items = list(hunk_dict.items())
     # items.sort(key=lambda kv: kv[0])
@@ -335,6 +352,7 @@ def iter_files(
 
     for file_groups in zip(*(zip(*group) for group in groups)):
         assert len(file_groups) > 0
+        buggy_files: list[TextFile] = []
         file_patches: list[AvgFilePatch] = []
         for file_group in file_groups:
             hunks: list[AvgSynthesisResult] = []
@@ -346,8 +364,9 @@ def iter_files(
                 buggy_hunk_indices.append((buggy_hunk.start, buggy_hunk.end))
                 hunks.append(avg_result)
             assert bug is not None
-            file_patches.append(AvgFilePatch(hunks, bug, buggy_hunk_indices))
-        yield file_patches
+            buggy_files.append(bug)
+            file_patches.append(AvgFilePatch(hunks, buggy_hunk_indices))
+        yield buggy_files, file_patches
 
 
 def map_to_generation_datapoint(patch: AvgPatch) -> GenerationDatapoint:
