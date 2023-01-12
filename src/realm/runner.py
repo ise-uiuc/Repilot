@@ -193,43 +193,67 @@ class Runner:
                 ),
             )
 
-    def evaluate_generation(self) -> dict[str, list[GenerationDatapoint]]:
-        return self.evaluate(
-            Runner.get_transformed_items,
-            map_to_generation_datapoint,
-            lambda points, point: points + [points[-1] + point],
-            [GenerationDatapoint.zero()],
-        )
+    # def evaluate_generation(self) -> dict[str, list[GenerationDatapoint]]:
+    #     return self.evaluate(
+    #         Runner.get_transformed_items,
+    #         map_to_generation_datapoint,
+    #         lambda points, point: points + [points[-1] + point],
+    #         [GenerationDatapoint.zero()],
+    #     )
 
-    def evaluate_validation(self) -> dict[str, list[ValidationDatapoint]]:
-        self.transform_with_message()
-        return self.evaluate(
-            Runner.get_validation_items,
-            map_to_validation_datapoint,
-            lambda points, point: points + [points[-1] + point],
-            [ValidationDatapoint.zero()],
-        )
+    # def evaluate_validation(self) -> dict[str, list[ValidationDatapoint]]:
+    #     self.transform_with_message()
+    #     return self.evaluate(
+    #         Runner.get_validation_items,
+    #         map_to_validation_datapoint,
+    #         lambda points, point: points + [points[-1] + point],
+    #         [ValidationDatapoint.zero()],
+    #     )
 
-    def evaluate(
-        self,
-        patch_infos: "Callable[[Runner], Iterable[tuple[str, Iterable[PatchInfo]]]]",
-        map_to_datapoint: Callable[[PatchInfo], Datapoint],
-        add_reduce: Callable[[EvaluationResult, Datapoint], EvaluationResult],
-        initial_result: EvaluationResult,
-    ) -> dict[str, EvaluationResult]:
-        # assert self.report.repair_result is not None
+    def evaluate_generation(self) -> dict[str, GenerationDatapoint]:
         # self.transform_with_message()
-        # transformed_result = self.report.transformed_result
-        # assert transformed_result is not None
-        # transformed_result_dict = transformed_result.result_dict
-        result: dict[str, EvaluationResult] = {}
-        for bug_id, patches in patch_infos(self):
-            mapped_generation_datapoints = map(map_to_datapoint, patches)
-            bug_id_result = functools.reduce(
-                add_reduce, mapped_generation_datapoints, initial_result
+        # assert self.report.transformed_result is not None
+        return {
+            bug_id: functools.reduce(
+                GenerationDatapoint.__add__,
+                map(map_to_generation_datapoint, patches),
+                GenerationDatapoint.zero(),
             )
-            result[bug_id] = bug_id_result
-        return result
+            for bug_id, patches in self.get_transformed_items()
+        }
+
+    def evaluate_validation(self) -> dict[str, ValidationDatapoint]:
+        assert self.report.transformed_result is not None
+        assert self.report.validation_result is not None
+        return {
+            bug_id: functools.reduce(
+                ValidationDatapoint.__add__,
+                map(map_to_validation_datapoint, patches),
+                ValidationDatapoint.zero(),
+            )
+            for bug_id, patches in self.get_validation_items()
+        }
+
+    # def evaluate(
+    #     self,
+    #     patch_infos: "Callable[[Runner], Iterable[tuple[str, Iterable[PatchInfo]]]]",
+    #     map_to_datapoint: Callable[[PatchInfo], Datapoint],
+    #     add_reduce: Callable[[EvaluationResult, Datapoint], EvaluationResult],
+    #     initial_result: EvaluationResult,
+    # ) -> dict[str, EvaluationResult]:
+    #     # assert self.report.repair_result is not None
+    #     # self.transform_with_message()
+    #     # transformed_result = self.report.transformed_result
+    #     # assert transformed_result is not None
+    #     # transformed_result_dict = transformed_result.result_dict
+    #     result: dict[str, EvaluationResult] = {}
+    #     for bug_id, patches in patch_infos(self):
+    #         mapped_generation_datapoints = map(map_to_datapoint, patches)
+    #         bug_id_result = functools.reduce(
+    #             add_reduce, mapped_generation_datapoints, initial_result
+    #         )
+    #         result[bug_id] = bug_id_result
+    #     return result
 
     # def evaluate_validation(self) -> dict[str, list[ValidationDatapoint]]:
     #     generation_result = self.evaluate_generation()

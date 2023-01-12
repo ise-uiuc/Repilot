@@ -246,13 +246,13 @@ if __name__ == "__main__":
 
         from matplotlib import pyplot as plt
 
-        from realm.ploting import plot_generation, plot_validation
+        from realm.ploting import plot_generation
 
+        plt.figure(figsize=(20, 20))
         for tag, dir in zip(args.tags, args.dirs):
             runner = Runner.load(Path(dir))
             result = runner.evaluate_generation()
-            plot_generation(result, tag)  # type: ignore
-        plt.legend()
+            plot_generation(result.items())  # type: ignore
         plt.savefig("plot.png")
 
         # print(
