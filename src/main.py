@@ -12,6 +12,7 @@ from realm.config import (
     SynthesisMethod,
     ValidationConfig,
 )
+from realm.ploting import plot_runners
 from realm.repair import Repairer
 from realm.runner import Runner
 
@@ -164,15 +165,16 @@ def random_dir(config: RepairConfig) -> str:
 
 T = TypeVar("T")
 U = TypeVar("U")
+V = TypeVar("V")
 
 
 def run(
-    runner_creator: Callable[[U], Runner],
-    action: Callable[[U, Runner], T],
-    args: U,
+    runner_creator: Callable[[U], V],
+    action: Callable[[U, V], T],
+    arg: U,
 ) -> T:
-    runner = runner_creator(args)
-    return action(args, runner)
+    runner = runner_creator(arg)
+    return action(arg, runner)
 
 
 def run_by_loading(action: Callable[[Namespace, Runner], T], args: Namespace) -> T:
@@ -232,6 +234,11 @@ def validate(args: Namespace) -> None:
     )
 
 
+def evaluate(args: Namespace):
+    runners = [Runner.load(Path(dir)) for dir in args.dirs]
+    plot_runners(runners)
+
+
 if __name__ == "__main__":
     if args.option == "repair":
         repair(args)
@@ -242,28 +249,6 @@ if __name__ == "__main__":
     elif args.option == "resume":
         resume(args)
     elif args.option == "evaluate":
-        import json
-
-        from matplotlib import pyplot as plt
-
-        from realm.ploting import plot_generation
-
-        plt.figure(figsize=(20, 20))
-        for tag, dir in zip(args.tags, args.dirs):
-            runner = Runner.load(Path(dir))
-            result = runner.evaluate_generation()
-            plot_generation(result.items())  # type: ignore
-        plt.savefig("plot.png")
-
-        # print(
-        #     json.dumps(
-        #         {
-        #             bug_id: [point.to_json() for point in points]
-        #             for bug_id, points in result.items()
-        #         },
-        #         indent=2,
-        #     )
-        # )
-        # print(result["Chart-1"])
+        evaluate(args)
     else:
         assert False

@@ -4,9 +4,10 @@ import multiprocessing as mp
 import os
 import subprocess
 from functools import partial
+from itertools import groupby
 from os import PathLike
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, NamedTuple, TypeVar
+from typing import Any, Dict, Iterator, NamedTuple, TypeVar
 
 import git
 from unidiff import PatchedFile, PatchSet
@@ -134,6 +135,19 @@ class Defects4J:
     def split_bug_id(bug_id: str) -> tuple[str, str]:
         proj, id_str = bug_id.split("-")
         return proj, id_str
+
+    @staticmethod
+    def group_by_project(data_dict: dict[str, T]) -> list[tuple[str, dict[str, T]]]:
+        def key_fn(item: tuple[str, Any]) -> str:
+            bug_id, _ = item
+            return Defects4J.split_bug_id(bug_id)[0]
+
+        data_items = list(data_dict.items())
+        data_items.sort(key=key_fn)
+        results: list[tuple[str, dict[str, T]]] = []
+        for project, group in groupby(data_items, key_fn):
+            results.append((project, {bug_id: data for bug_id, data in group}))
+        return results
 
     @staticmethod
     def form_bug_id(proj: str, id_str: str) -> str:
