@@ -175,7 +175,7 @@ class Defects4J:
         bug = self.all_bugs[bug_id]
         env = dict(os.environ, JAVA_HOME=str(self.java8_home))
         result = subprocess.run(
-            [self.d4j_executable, "test"],
+            ["cpulimit", "-i", "-l", "200", self.d4j_executable, "test"],
             env=env,
             cwd=bug.proj_path,
             timeout=timeout,

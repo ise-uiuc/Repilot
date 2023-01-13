@@ -76,9 +76,9 @@ def plot_runners(
     def validation_datapoint_getter(datapoint: ValidationDatapoint) -> list[int]:
         return [
             datapoint.n_test_success,
-            datapoint.n_comp_success - datapoint.n_test_success,
+            # datapoint.n_comp_success - datapoint.n_test_success,
             # datapoint.n_parse_success - datapoint.n_comp_success,
-            datapoint.gen_datapoint.n_total - datapoint.n_parse_success,
+            # datapoint.gen_datapoint.n_total - datapoint.n_parse_success,
             # - datapoint.gen_datapoint.n_unfinished
             # - datapoint.gen_datapoint.n_pruned
             # - datapoint.n_test_success
@@ -87,7 +87,7 @@ def plot_runners(
         ]
 
     # validation_names = ["Test Suc.", "Comp. Suc.", "Parse. Suc", "Total"]
-    validation_names = ["Test Suc.", "Comp. Suc.", "Total"]
+    validation_names = ["Test Suc."]  # , "Comp. Suc.", "Total"]
 
     target = Path("plots")
     target.mkdir(exist_ok=True)
