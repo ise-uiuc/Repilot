@@ -236,7 +236,7 @@ def validate(args: Namespace) -> None:
 
 def evaluate(args: Namespace):
     runners = [Runner.load(Path(dir)) for dir in args.dirs]
-    plot_runners(runners)
+    plot_runners(args.tags, runners)
 
 
 if __name__ == "__main__":

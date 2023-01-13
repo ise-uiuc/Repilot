@@ -14,7 +14,7 @@ Datapoint = TypeVar("Datapoint")
 Project = str
 RunnerId = str
 
-COLORS = ["#1D2F6F", "#F390FA", "#6EAF46", "#FAC748"]
+COLORS = ["#1D1F5F", "#FF99FF", "#6EAF46", "#FAC748"]
 
 
 def transpose(
@@ -43,30 +43,32 @@ def transpose(
 
 
 def plot_runners(
+    tags: list[str],
     runners: list[Runner],
 ) -> None:
-    plt.figure(figsize=(16, 30))
+    assert len(tags) == len(runners)
     generation_results = transpose(
         [
-            (str(runner.report.root), runner.evaluate_generation_grouped())
-            for runner in runners
+            (tag, runner.evaluate_generation_grouped())
+            for tag, runner in zip(tags, runners)
         ]
     )
 
     def generation_datapoint_getter(datapoint: GenerationDatapoint) -> list[int]:
         return [
             datapoint.n_unique - datapoint.n_unfinished - datapoint.n_pruned,
-            datapoint.n_unfinished,
-            datapoint.n_pruned,
+            # datapoint.n_unfinished,
+            # datapoint.n_pruned,
             datapoint.n_total - datapoint.n_unique,
         ]
 
-    generation_names = ["Unique", "Unfinished", "Pruned", "Duplicate"]
+    # generation_names = ["Unique", "Unfinished", "Pruned", "Duplicate"]
+    generation_names = ["Unique", "Duplicate"]
 
     validation_results = transpose(
         [
-            (str(runner.report.root), runner.evaluate_validation_grouped())
-            for runner in runners
+            (tag, runner.evaluate_validation_grouped())
+            for tag, runner in zip(tags, runners)
             if runner.report.validation_result is not None
         ]
     )
@@ -75,7 +77,7 @@ def plot_runners(
         return [
             datapoint.n_test_success,
             datapoint.n_comp_success - datapoint.n_test_success,
-            datapoint.n_parse_success - datapoint.n_comp_success,
+            # datapoint.n_parse_success - datapoint.n_comp_success,
             datapoint.gen_datapoint.n_total - datapoint.n_parse_success,
             # - datapoint.gen_datapoint.n_unfinished
             # - datapoint.gen_datapoint.n_pruned
@@ -84,14 +86,15 @@ def plot_runners(
             # - datapoint.n_parse_success,
         ]
 
-    validation_names = ["Test Suc.", "Comp. Suc.", "Parse. Suc", "Total"]
+    # validation_names = ["Test Suc.", "Comp. Suc.", "Parse. Suc", "Total"]
+    validation_names = ["Test Suc.", "Comp. Suc.", "Total"]
 
     target = Path("plots")
     target.mkdir(exist_ok=True)
 
     for project, generation_result in generation_results:
         plt.clf()
-        plt.autoscale(True)
+        plt.title(f"Generation results for {project}")
         plot_bars(
             generation_datapoint_getter,
             generation_names,
@@ -103,7 +106,7 @@ def plot_runners(
         plt.savefig(target / f"plot-gen-{project}.png")
     for project, validation_result in validation_results:
         plt.clf()
-        plt.autoscale(True)
+        plt.title(f"Validation results for {project}")
         plot_bars(
             validation_datapoint_getter,
             validation_names,
@@ -135,6 +138,7 @@ def plot_bars(
     n_clusters = len(data_dicts)
     offsets = get_offsets(n_clusters, width, cluster_in_between_gap)
     all_labels = set(key for _, data_dict in data_dicts for key in data_dict)
+    plt.figure(figsize=(16, len(all_labels)))
     label_offset = {label: idx for idx, label in enumerate(all_labels)}
     gap = cluster_gap + width * n_clusters + (n_clusters - 1) * cluster_in_between_gap
     ticks = list(utils.stride(0.0, gap, len(all_labels)))
@@ -151,6 +155,8 @@ def plot_bars(
             [f"{cluster_name}-{name}" for name in point_names],
             color,
         )
+    plt.xlabel("Bug IDs")
+    plt.xlabel("Number of patches")
     plt.yticks(ticks, all_labels)
     plt.legend()
 
@@ -171,16 +177,21 @@ def plot_bar(
     starting_values = torch.zeros(len(offsets))
     for idx in range(len(names)):
         datapoints = stacked_data[:, idx]
-        plt.barh(
+        bar = plt.barh(
             offsets,
             datapoints,
             left=starting_values,
             height=width,
             color=color,
-            alpha=(1.0 - idx * 0.2),
+            alpha=(1.0 - idx * 0.32),
             label=names[idx],
         )
-        starting_values += datapoints
+        plt.bar_label(bar)
+        # for rect, offset, datapoint in zip(bar, offsets, datapoints):
+        #     width = rect.get_width()
+        #     y = rect.get_y()
+        #     plt.text(width, y + rect.get_width() / 2, str(datapoint.item()), ha='center', va='bottom')
+        # starting_values += datapoints
     # plt.tight_layout()
     # assert len(xs) == len(labels)
 
