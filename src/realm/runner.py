@@ -210,6 +210,16 @@ class Runner:
     #         [ValidationDatapoint.zero()],
     #     )
 
+    def evaluate_generation_grouped(
+        self,
+    ) -> list[tuple[str, dict[str, GenerationDatapoint]]]:
+        return Defects4J.group_by_project(self.evaluate_generation())
+
+    def evaluate_validation_grouped(
+        self,
+    ) -> list[tuple[str, dict[str, ValidationDatapoint]]]:
+        return Defects4J.group_by_project(self.evaluate_validation())
+
     def evaluate_generation(self) -> dict[str, GenerationDatapoint]:
         # self.transform_with_message()
         # assert self.report.transformed_result is not None
@@ -424,5 +434,7 @@ def map_to_validation_datapoint(
         ),
         total_time_consumed=gen_datapoint.gen_time
         + (0 if validation_result is None else validation_result.time_cost),
-        gen_datapoint=gen_datapoint,
+        gen_datapoint=(
+            GenerationDatapoint.zero() if validation_result is None else gen_datapoint
+        ),
     )

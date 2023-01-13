@@ -283,3 +283,9 @@ binary: Callable[[Callable[[T], bool], T], int] = partial(select, 1, 0)  # type:
 binary_optional: Callable[[T | None], int] = partial(binary, lambda t: t is not None)  # type: ignore # fmt: skip
 
 binary_bool: Callable[[bool], int] = partial(binary, lambda x: x)  # type: ignore # fmt: skip
+
+
+def stride(init: float, step: float, times: int) -> Iterable[float]:
+    for _ in range(times):
+        yield init
+        init += step
