@@ -143,7 +143,7 @@ def common_prefix(strings: list[str]) -> Optional[str]:
     common = ""
     curr = trie.root
     while curr:
-        if curr.is_end_of_word and len(curr.children) > 1:
+        if curr.is_end_of_word:
             return common if len(common) > 0 else None
         if len(curr.children) == 1:
             ch = list(curr.children.keys())[0]
@@ -289,3 +289,20 @@ def stride(init: float, step: float, times: int) -> Iterable[float]:
     for _ in range(times):
         yield init
         init += step
+
+
+def longest_common_prefix(strings: list[str]) -> str:
+    """Leetcode benchmark fastest way"""
+    prefix = ""
+    index = 0
+    while True:
+        try:
+            c = strings[0][index]
+            if all(string[index] == c for string in strings):
+                prefix += c
+                index += 1
+            else:
+                break
+        except IndexError:
+            break
+    return prefix
