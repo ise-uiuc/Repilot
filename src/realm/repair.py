@@ -214,8 +214,10 @@ class Repairer:
                 connections = cast(list[Connection], [meaning_less] * config.batch_size)
 
             # Buggy text files
+            base_path = Path(bug.proj_path).parent.absolute()
+            proj_path = Path(bug.proj_path).relative_to(base_path)
             buggy_text_files = [
-                TextFile(Path(bug.proj_path) / buggy_file.path)
+                TextFile.read(base_path, proj_path / buggy_file.path)
                 for buggy_file in bug.buggy_files
             ]
 

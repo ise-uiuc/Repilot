@@ -244,6 +244,34 @@ class Runner:
             for bug_id, patches in self.get_validation_items()
         }
 
+    def evaluate_validation_first_one_grouped(
+        self, get_number: Callable[[ValidationDatapoint], int]
+    ) -> list[tuple[str, dict[str, ValidationDatapoint]]]:
+        return Defects4J.group_by_project(
+            self.evaluate_validation_first_one(get_number)
+        )
+
+    def evaluate_validation_first_one(
+        self, get_number: Callable[[ValidationDatapoint], int]
+    ) -> dict[str, ValidationDatapoint]:
+        assert self.report.validation_result is not None
+
+        def reduce_fn(
+            lhs: ValidationDatapoint, rhs: ValidationDatapoint
+        ) -> ValidationDatapoint:
+            if get_number(lhs) == 1:
+                return lhs
+            return lhs + rhs
+
+        return {
+            bug_id: functools.reduce(
+                reduce_fn,
+                map(map_to_validation_datapoint, patches),
+                ValidationDatapoint.zero(),
+            )
+            for bug_id, patches in self.get_validation_items()
+        }
+
     # def evaluate(
     #     self,
     #     patch_infos: "Callable[[Runner], Iterable[tuple[str, Iterable[PatchInfo]]]]",
@@ -326,7 +354,7 @@ def validate_patch(
                 f.write(str(type(e)))
                 f.write("\n")
                 f.write(str(e))
-        patch_text_file.write()
+        patch_text_file.write(d4j.d4j_checkout_root)
     comp_success, comp_stdout, comp_stderr = d4j.compile(bug_id)
     if not comp_success:
         return PatchValidationResult(

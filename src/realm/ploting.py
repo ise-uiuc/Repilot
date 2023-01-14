@@ -86,8 +86,41 @@ def plot_runners(
             # - datapoint.n_parse_success,
         ]
 
+    def validation_avg_plausible(datapoint: ValidationDatapoint) -> list[int]:
+        # TODO: fix the type
+        return [
+            datapoint.n_comp_success / datapoint.gen_datapoint.n_total,  # type: ignore # fmt: skip
+            # datapoint.n_comp_success - datapoint.n_test_success,
+            # datapoint.n_parse_success - datapoint.n_comp_success,
+            # datapoint.gen_datapoint.n_total - datapoint.n_parse_success,
+            # - datapoint.gen_datapoint.n_unfinished
+            # - datapoint.gen_datapoint.n_pruned
+            # - datapoint.n_test_success
+            # - datapoint.n_comp_success
+            # - datapoint.n_parse_success,
+        ]
+
     # validation_names = ["Test Suc.", "Comp. Suc.", "Parse. Suc", "Total"]
     validation_names = ["Test Suc."]  # , "Comp. Suc.", "Total"]
+
+    # validation_first_plausible_results = transpose(
+    #     [
+    #         (
+    #             tag,
+    #             runner.evaluate_validation_first_one_grouped(
+    #                 lambda p: p.n_test_success
+    #             ),
+    #         )
+    #         for tag, runner in zip(tags, runners)
+    #         if runner.report.validation_result is not None
+    #     ]
+    # )
+
+    # def validation_plausible_getter(datapoint: ValidationDatapoint) -> list[int]:
+    #     assert datapoint.n_test_success <= 1
+    #     return [datapoint.gen_datapoint.n_total if datapoint.n_test_success == 1 else 0]
+
+    validation_plausible_names = ["Total generated patches"]
 
     target = Path("plots")
     target.mkdir(exist_ok=True)
@@ -108,7 +141,7 @@ def plot_runners(
         plt.clf()
         plt.title(f"Validation results for {project}")
         plot_bars(
-            validation_datapoint_getter,
+            validation_avg_plausible,
             validation_names,
             validation_result,
             5 * 1.65,
@@ -116,6 +149,22 @@ def plot_runners(
             5 * 1.5,
         )
         plt.savefig(target / f"plot-val-{project}.png")
+
+    for (
+        project,
+        validation_result,
+    ) in validation_results:
+        plt.clf()
+        plt.title(f"First plausible cost for {project}")
+        plot_bars(
+            validation_avg_plausible,
+            validation_plausible_names,
+            validation_result,
+            5 * 1.65,
+            5 * 0.4,
+            5 * 1.5,
+        )
+        plt.savefig(target / f"plot-val_first_plausible-{project}.png")
 
 
 def plot_bars(
@@ -132,7 +181,8 @@ def plot_bars(
     # groups, data = cast(
     #     tuple[list[str], list[dict[str, Datapoint]]], tuple(zip(*data_dicts))
     # )
-    # assert len(groups) == len(data)
+    # assert len(groups) == len(data)cess,
+
     # list[tuple[str, list[tuple[str, Datapoint]]]]
     # transformed: dict[str, list[tuple[str, Datapoint]]] = {}
     n_clusters = len(data_dicts)
@@ -171,10 +221,10 @@ def plot_bar(
     plt.style.use("ggplot")
     # labels = list(data_dict.keys())
     # offsets = [label_offset[label] + offset for label in labels]
-    stacked_data = torch.tensor(list(data_dict.values()))
+    stacked_data = torch.tensor(list(data_dict.values()), dtype=torch.float64)
     assert stacked_data.shape[1] == len(names)
     assert stacked_data.shape[0] == len(offsets)
-    starting_values = torch.zeros(len(offsets))
+    starting_values = torch.zeros(len(offsets), dtype=torch.float64)
     for idx in range(len(names)):
         datapoints = stacked_data[:, idx]
         bar = plt.barh(

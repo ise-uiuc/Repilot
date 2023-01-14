@@ -122,17 +122,19 @@ class TextDocument(MutableTextDocument):
 
 
 class TextFile(MutableTextDocument, utils.JsonSerializable):
-    def __init__(self, path: PathLike, content: Optional[str] = None) -> None:
+    def __init__(self, path: PathLike, content: str) -> None:
         self._path = Path(path)
         self.cursor = 0
-        if content is None:
-            with open(path) as f:
-                self.content = f.read()
-        else:
-            self.content = content
+        self.content = content
 
-    def write(self):
-        with open(self.path, "w") as f:
+    @staticmethod
+    def read(base: Path, path: Path) -> "TextFile":
+        with open(base / path) as f:
+            content = f.read()
+        return TextFile(path, content)
+
+    def write(self, base: Path):
+        with open(base / self.path, "w") as f:
             f.write(self.content)
 
     def copy(self) -> "TextFile":
