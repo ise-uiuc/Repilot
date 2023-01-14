@@ -1,11 +1,12 @@
 import inspect
+import logging
 import os
 import pickle
 import time
 import typing
 import warnings
-import logging
-logging.basicConfig(filename='realm.log', encoding='utf-8', level=logging.INFO)
+
+logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Callable, Dict, Iterable, NamedTuple, Optional, Union, cast
@@ -329,7 +330,12 @@ class Synthesizer:
                     self.model.token_map[id] for id in next_token_ids_list
                 )
                 logging.info(f"ACTIVE: {continuation}")
-                return cast(torch.LongTensor, torch.tensor(next_token_ids_list, dtype=torch.long, device=utils.DEVICE))
+                return cast(
+                    torch.LongTensor,
+                    torch.tensor(
+                        next_token_ids_list, dtype=torch.long, device=utils.DEVICE
+                    ),
+                )
 
     def pruned_decode(self, probs: torch.Tensor) -> torch.LongTensor:
         """Stateful method that updates the generated token ids and tokens (excluding special
@@ -340,7 +346,8 @@ class Synthesizer:
         gen_contexts = self.gen_state.gen_contexts
         special_value = self.model.vocab_size
         next_token_ids = torch.full(
-            (self.batch_size,), special_value, dtype=torch.long, device=utils.DEVICE)
+            (self.batch_size,), special_value, dtype=torch.long, device=utils.DEVICE
+        )
         next_token_ids[batch_is_failed] = self.model.end_id
         # Keeps track of batches whose next token is not determined
         batch_needs_to_process = [not failed for failed in batch_is_failed]
@@ -412,9 +419,10 @@ class Synthesizer:
                             assert self.mem is not None
                             prev_state = pickle.dumps(generated_ids[:-1])
                             last_token_id = generated_ids[-1]
-                            self.mem.infeasible_token_ids[prev_state].append(
-                                last_token_id
+                            infeasible_token_ids = (
+                                self.mem.infeasible_token_ids.setdefault(prev_state, [])
                             )
+                            infeasible_token_ids.append(last_token_id)
                         next_token_ids[batch_idx] = self.model.end_id
 
             start = time.perf_counter()
