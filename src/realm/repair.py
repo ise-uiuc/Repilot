@@ -271,12 +271,15 @@ class Repairer:
                 _,
             ) = get_buggy_hunk_start_end_indices_and_positions(buggy_text_file, change)
             text_file = buggy_text_file.copy()
+            buggy_hunk = "".join(change.removed_lines)
+            buggy_hunk = buggy_hunk[:-1] if buggy_hunk.endswith("\n") else buggy_hunk
+            print("Buggy hunk:", repr(buggy_hunk))
             prefix, suffix = remove_buggy_hunk(text_file, change)
             lm_context = gen.LMContext(
                 self.model, prefix, suffix, config.lm_inference_config
             )
             synthesizer = gen.Synthesizer(
-                lm_context, connections, text_file, config.method
+                lm_context, connections, text_file, config.method, buggy_hunk
             )
             n_samples = config.n_samples - (
                 0 if n_already_generated is None else n_already_generated

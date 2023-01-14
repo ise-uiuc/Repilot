@@ -5,7 +5,7 @@ from multiprocessing.connection import Connection
 from os import PathLike
 from pathlib import Path
 from typing import Any, Dict, Optional, cast
-
+import pickle
 from realm import utils
 from realm.generation_defs import GenerationContext, Memorization
 from realm.lsp import LSPClient, TextFile, spec
@@ -54,6 +54,7 @@ class JdtLspAnalyzer(Process):
         self.verbose = verbose
         self.counter = itertools.count(0)
         self.model = model
+        self.mem: dict[bytes, Optional[list[dict]]] = {}
 
     def init_lsp(self):
         self.process = subprocess.Popen(
@@ -801,7 +802,6 @@ class JdtLspAnalyzer(Process):
         # completion_overhead: list[float],
     ) -> bool:
         """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
-        # input_state = pickle.dumps(generated_ids + [token_id])
         # if self.use_mem and input_state in self.mem.completions:
         #     # Due to memorization, each input_state be called on this function only once
         #     # => token_id in self.mem.(in)feasible_token_ids[state of generated_ids]
@@ -810,6 +810,11 @@ class JdtLspAnalyzer(Process):
         # else:
         # TODO: memorize completions
         completions = self.get_completions(uri, pos)
+
+        # Memorize
+        input_state = pickle.dumps(generated_ids + [token_id])
+        self.mem.setdefault(input_state, completions)
+
         # self.mem.completions[input_state] = completions
         # completion_overhead.append(time.time() - start_time)
         context = {
@@ -860,6 +865,30 @@ class JdtLspAnalyzer(Process):
             print("Denied", token)  # , token, completions)
             # self.memorization.infeasible_token_ids[input_state] = False
             return False
+
+    def continuation(self, generated_ids: list[int], text_file: TextFile) -> str | None:
+        state = pickle.dumps(generated_ids)
+        if state in self.mem:
+            completions = self.mem[state]
+        else:
+            self.change(text_file)
+            completions = self.get_completions(
+                text_file.path.as_uri(), text_file.get_cursor_position()
+            )
+        if completions is None:
+            return None
+        # continuations = (
+        #     item if not (item := target[len(source) :]).endswith("(") else item[:-1]
+        #     for c in completions
+        #     if (target := c["target"]).startswith(source := c["source"])
+        # )
+        continuations: list[str] = [
+            target[len(source) :]
+            for c in completions
+            if (target := c["target"]).startswith(source := c["source"])
+        ]
+        completion = utils.longest_common_prefix(continuations)
+        return completion
 
     def get_completions(self, uri: str, pos: spec.Position) -> Optional[list[dict]]:
         new_completion_result = self.completion(
