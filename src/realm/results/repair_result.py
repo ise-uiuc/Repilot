@@ -228,7 +228,8 @@ class RepairResult(IORetrospective):
                     hunk_idx_str = f"{f_id}-{h_id}"
                     hunk_path = bug_path / hunk_idx_str
                     hunk_path.mkdir(exist_ok=True)
-                    hunk.buggy_hunk.save_json(hunk_path / "bug.json")
+                    if not (hunk_path / "bug.json").exists():
+                        hunk.buggy_hunk.save_json(hunk_path / "bug.json")
                     for idx, tagged_result in enumerate(hunk.results):
                         if tagged_result.is_dumpped:
                             continue
