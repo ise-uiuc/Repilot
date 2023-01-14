@@ -6,7 +6,7 @@ from multiprocessing.connection import Connection
 from os import PathLike
 from pathlib import Path
 from typing import Any, Dict, Optional, cast
-import pickle
+
 from realm import utils
 from realm.generation_defs import GenerationContext, Memorization
 from realm.lsp import LSPClient, TextFile, spec
@@ -878,16 +878,16 @@ class JdtLspAnalyzer(Process):
             )
         if completions is None:
             return None
-        # continuations = (
-        #     item if not (item := target[len(source) :]).endswith("(") else item[:-1]
-        #     for c in completions
-        #     if (target := c["target"]).startswith(source := c["source"])
-        # )
-        continuations: list[str] = [
-            target[len(source) :]
+        continuations = [
+            item if not (item := target[len(source) :]).endswith("(") else item[:-1]
             for c in completions
             if (target := c["target"]).startswith(source := c["source"])
         ]
+        # continuations: list[str] = [
+        #     target[len(source) :]
+        #     for c in completions
+        #     if (target := c["target"]).startswith(source := c["source"])
+        # ]
         completion = utils.longest_common_prefix(continuations)
         return completion
 
