@@ -1,9 +1,12 @@
 import inspect
+import logging
 import os
 import pickle
 import time
 import typing
 import warnings
+
+logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Callable, Dict, Iterable, NamedTuple, Optional, Union, cast
@@ -168,6 +171,7 @@ class Synthesizer:
         connections: list[Connection],
         text_file: TextFile,
         gen_method: SynthesisMethod,
+        buggy_hunk: str,
     ) -> None:
         # Constants
         self.model = lm_context.model
@@ -180,6 +184,7 @@ class Synthesizer:
         self.hunk_start_cursor = self.text_file.cursor
         self.gen_method = gen_method
         self.connections = connections
+        self.buggy_hunk = buggy_hunk
         assert len(connections) == self.batch_size
 
         # States that are initialized everytime calling `synthesize``
@@ -196,6 +201,18 @@ class Synthesizer:
         ]
         if self.use_mem and self.mem is None:
             self.mem = Memorization.init()
+            state = pickle.dumps(
+                self.model.tokenizer.tokenize(self.buggy_hunk, add_special_tokens=False)
+            )
+            state_with_newline = pickle.dumps(
+                self.model.tokenizer.tokenize(
+                    self.buggy_hunk + "\n", add_special_tokens=False
+                )
+            )
+            self.mem.infeasible_token_ids[state] = [id for id in self.model.end_ids]
+            self.mem.infeasible_token_ids[state_with_newline] = [
+                id for id in self.model.end_ids
+            ]
 
     @property
     def use_mem(self) -> bool:
@@ -276,10 +293,51 @@ class Synthesizer:
                 gen_contexts[batch_idx].generated_tokens.append(next_token)
         return next_token_ids
 
-    def pruned_decode(
-        self,
-        probs: torch.Tensor,
-    ) -> torch.LongTensor:
+    def active_decode(self, probs: torch.Tensor) -> torch.LongTensor:
+        assert self.batch_size == 1
+        assert self.gen_state is not None
+        assert self.lsp_contexts is not None
+        assert len(self.gen_state.gen_contexts) == 1
+        assert len(self.lsp_contexts) == 1
+        gen_context = self.gen_state.gen_contexts[0]
+        generated_tokens = gen_context.generated_tokens
+        lsp_context = self.lsp_contexts[0]
+        if len(generated_tokens) == 0 or not char_may_trigger_completion(
+            generated_tokens[-1][-1]
+        ):
+            return self.pruned_decode(probs)
+        else:
+            lsp_context.analyzer.send(
+                (
+                    Message(
+                        True,
+                        JdtLspAnalyzer.continuation.__name__,
+                        gen_context.generated_ids,
+                        lsp_context.text_file,
+                    )
+                )
+            )
+            continuation: str | None = lsp_context.analyzer.recv()
+            if continuation is None or continuation == "":
+                return self.pruned_decode(probs)
+            else:
+                next_token_ids_list = self.model.tokenizer.encode(
+                    continuation, add_special_tokens=False
+                )
+                lsp_context.text_file.add(continuation)
+                gen_context.generated_ids.append(next_token_ids_list)
+                gen_context.generated_tokens.extend(
+                    self.model.token_map[id] for id in next_token_ids_list
+                )
+                logging.info(f"ACTIVE: {continuation}")
+                return cast(
+                    torch.LongTensor,
+                    torch.tensor(
+                        next_token_ids_list, dtype=torch.long, device=utils.DEVICE
+                    ),
+                )
+
+    def pruned_decode(self, probs: torch.Tensor) -> torch.LongTensor:
         """Stateful method that updates the generated token ids and tokens (excluding special
         tokens) and returns the 'real' generation"""
         assert self.gen_state is not None
@@ -288,8 +346,8 @@ class Synthesizer:
         gen_contexts = self.gen_state.gen_contexts
         special_value = self.model.vocab_size
         next_token_ids = torch.full(
-            (self.batch_size,), special_value, dtype=torch.long
-        ).to(utils.DEVICE)
+            (self.batch_size,), special_value, dtype=torch.long, device=utils.DEVICE
+        )
         next_token_ids[batch_is_failed] = self.model.end_id
         # Keeps track of batches whose next token is not determined
         batch_needs_to_process = [not failed for failed in batch_is_failed]
@@ -554,7 +612,11 @@ class Synthesizer:
             assert len(probs.shape) == 2
             assert probs.shape == torch.Size((self.batch_size, model.vocab_size))
 
-            if self.is_plain or CHART_11:  # or count > 10:
+            # ACTIVE
+            if self.batch_size == 1 and os.getenv("ACTIVE") is not None:
+                next_token_ids = self.active_decode(probs)
+
+            elif self.is_plain or CHART_11:  # or count > 10:
                 # shape: (1)
                 start = time.perf_counter()
                 next_token_ids = self.plain_decode(probs)
@@ -580,11 +642,13 @@ class Synthesizer:
                 )
 
             # update generated ids, model inputs, and length for next step
-            # TODO: modify use_cache for active completion
-            # use_cache = len(next_token_ids) == 1
-            # use_cache = False
-            input_ids = torch.cat([input_ids, next_token_ids[:, None]], dim=-1)
-            # model_kwargs['use_cache'] = use_cache
+            use_cache = self.batch_size != 1 or len(next_token_ids) == 1
+            # An ad-hoc solution for active completion (batch size must equals 1)
+            if self.batch_size == 1:
+                input_ids = torch.cat([input_ids, next_token_ids[None, :]], dim=-1)
+            else:
+                input_ids = torch.cat([input_ids, next_token_ids[:, None]], dim=-1)
+            model_kwargs["use_cache"] = use_cache
             model_kwargs = model._update_model_kwargs_for_generation(
                 outputs,
                 model_kwargs,
@@ -597,7 +661,11 @@ class Synthesizer:
             # if eos_token was found in one sentence, set sentence to finished
             # if eos_token_id is not None:
             unfinished_sequences = unfinished_sequences.mul(
-                torch.isin(next_token_ids, self.end_ids_tensor, invert=True).long()
+                torch.isin(
+                    next_token_ids if self.batch_size != 1 else next_token_ids[-1:],
+                    self.end_ids_tensor,
+                    invert=True,
+                ).long()
             )
             assert len(unfinished_sequences) == self.batch_size
 
