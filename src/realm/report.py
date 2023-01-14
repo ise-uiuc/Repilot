@@ -3,11 +3,14 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, TypeVar
 
 from . import utils
 from .config import MetaConfig
 from .d4j import Defects4J
 from .results import RepairResult, RepairTransformedResult, ValidationResult
+
+Result = TypeVar("Result")
 
 
 @dataclass
@@ -16,9 +19,30 @@ class Report(utils.IORetrospective):
 
     root: Path
     config: MetaConfig
-    repair_result: RepairResult | None
-    transformed_result: RepairTransformedResult | None
-    validation_result: ValidationResult | None
+    _repair_result: RepairResult | None | tuple[()]
+    _transformed_result: RepairTransformedResult | None | tuple[()]
+    _validation_result: ValidationResult | None | tuple[()]
+
+    @property
+    def repair_result(self) -> RepairResult | None:
+        if self._repair_result == ():
+            self._repair_result = RepairResult.load(self.root)
+        assert not isinstance(self._repair_result, tuple)
+        return self._repair_result
+
+    @property
+    def transformed_result(self) -> RepairTransformedResult | None:
+        if self._transformed_result == ():
+            self._transformed_result = RepairTransformedResult.load(self.root)
+        assert not isinstance(self._transformed_result, tuple)
+        return self._transformed_result
+
+    @property
+    def validation_result(self) -> ValidationResult | None:
+        if self._validation_result == ():
+            self._validation_result = ValidationResult.load(self.root)
+        assert not isinstance(self._validation_result, tuple)
+        return self._validation_result
 
     def get_d4j(self) -> Defects4J:
         # TODO (low priority): can be optimized
@@ -56,9 +80,9 @@ class Report(utils.IORetrospective):
     @classmethod
     def load(cls, path: Path) -> "Report":
         meta_config = MetaConfig.load(path)
-        repair_result = RepairResult.load(path)
-        transformed_result = RepairTransformedResult.try_load(path)
-        validation_result = ValidationResult.try_load(path)
+        repair_result = ()  # RepairResult.load(path)
+        transformed_result = ()  # RepairTransformedResult.try_load(path)
+        validation_result = ()  # ValidationResult.try_load(path)
         return Report(
             path,
             meta_config,
