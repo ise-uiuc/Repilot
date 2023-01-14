@@ -122,36 +122,37 @@ class TextDocument(MutableTextDocument):
 
 
 class TextFile(MutableTextDocument, utils.JsonSerializable):
-    def __init__(self, path: PathLike, content: str) -> None:
+    def __init__(self, path: PathLike, content: str, root: Path | None) -> None:
         self._path = Path(path)
         self.cursor = 0
         self.content = content
+        self.root = root
 
     @staticmethod
-    def read(base: Path, path: Path) -> "TextFile":
-        with open(base / path) as f:
+    def read(root: Path, path: Path) -> "TextFile":
+        with open(root / path) as f:
             content = f.read()
-        return TextFile(path, content)
+        return TextFile(path, content, root)
 
-    def write(self, base: Path):
-        with open(base / self.path, "w") as f:
+    def write(self):
+        with open(self.path, "w") as f:
             f.write(self.content)
 
     def copy(self) -> "TextFile":
-        text_file = TextFile(self.path, self.content)
+        text_file = TextFile(self._path, self.content, self.root)
         text_file.cursor = self.cursor
         return text_file
 
     def to_json(self) -> Any:
         return {
-            "path": str(self.path),
+            "path": str(self._path),
             "content": self.content,
             "cursor": self.cursor,
         }
 
     @classmethod
     def from_json(cls, d: Any) -> "TextFile":
-        text_file = TextFile(Path(d["path"]), d["content"])
+        text_file = TextFile(Path(d["path"]), d["content"], None)
         text_file.move_cursor(int(d["cursor"]))
         return text_file
 
@@ -162,4 +163,5 @@ class TextFile(MutableTextDocument, utils.JsonSerializable):
 
     @property
     def path(self) -> Path:
-        return self._path
+        assert self.root is not None
+        return self.root / self._path
