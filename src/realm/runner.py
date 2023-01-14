@@ -335,7 +335,7 @@ def validate_patch(
     for patch_file, bug in zip(patch.file_patches, bugs):
         patch_text_file = patch_file.compute_patch(bug)
         assert patch_text_file is not None
-        assert patch_text_file.path.exists()
+        assert (d4j.d4j_checkout_root / patch_text_file.path).exists()
         patch_files.append(patch_text_file)
     assert len(set(p.path for p in patch_files)) == 1
     # Checkout the fixed version and then apply patches b/c we do not consider test file changes
