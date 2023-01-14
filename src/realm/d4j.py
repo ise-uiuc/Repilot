@@ -161,7 +161,7 @@ class Defects4J:
         bug = self.all_bugs[bug_id]
         env = dict(os.environ, JAVA_HOME=str(self.java8_home))
         result = subprocess.run(
-            [self.d4j_executable, "compile"],
+            [str(self.d4j_executable), "compile"],
             env=env,
             cwd=bug.proj_path,
             text=True,
@@ -172,10 +172,17 @@ class Defects4J:
         return (success, result.stdout, result.stderr)
 
     def test(self, bug_id: str, timeout: int) -> tuple[bool, str, str]:
+        """Test a partial test suite first and then the entire suite"""
+        success, stdout, stderr = self.test_with_option(bug_id, timeout, entire_test_suite=False)
+        if not success:
+            return success, stdout, stderr
+        return self.test_with_option(bug_id, timeout, entire_test_suite=True)
+
+    def test_with_option(self, bug_id: str, timeout: int, entire_test_suite: bool) -> tuple[bool, str, str]:
         bug = self.all_bugs[bug_id]
         env = dict(os.environ, JAVA_HOME=str(self.java8_home))
         result = subprocess.run(
-            [self.d4j_executable, "test"],
+            [str(self.d4j_executable), "test"] + ([] if entire_test_suite else ["-r"]),
             env=env,
             cwd=bug.proj_path,
             timeout=timeout,

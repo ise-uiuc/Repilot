@@ -141,7 +141,7 @@ def plot_runners(
         plt.clf()
         plt.title(f"Validation results for {project}")
         plot_bars(
-            validation_avg_plausible,
+            validation_datapoint_getter,
             validation_names,
             validation_result,
             5 * 1.65,
