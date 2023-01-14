@@ -30,19 +30,31 @@ class Report(utils.IORetrospective):
         assert not isinstance(self._repair_result, tuple)
         return self._repair_result
 
+    @repair_result.setter
+    def repair_result(self, value: RepairResult | None):
+        self._repair_result = value
+
     @property
     def transformed_result(self) -> RepairTransformedResult | None:
         if self._transformed_result == ():
-            self._transformed_result = RepairTransformedResult.load(self.root)
+            self._transformed_result = RepairTransformedResult.try_load(self.root)
         assert not isinstance(self._transformed_result, tuple)
         return self._transformed_result
+
+    @transformed_result.setter
+    def transformed_result(self, value: RepairTransformedResult | None):
+        self._transformed_result = value
 
     @property
     def validation_result(self) -> ValidationResult | None:
         if self._validation_result == ():
-            self._validation_result = ValidationResult.load(self.root)
+            self._validation_result = ValidationResult.try_load(self.root)
         assert not isinstance(self._validation_result, tuple)
         return self._validation_result
+
+    @validation_result.setter
+    def validation_result(self, value: ValidationResult | None):
+        self._validation_result = value
 
     def get_d4j(self) -> Defects4J:
         # TODO (low priority): can be optimized
