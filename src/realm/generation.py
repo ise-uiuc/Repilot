@@ -419,9 +419,10 @@ class Synthesizer:
                             assert self.mem is not None
                             prev_state = pickle.dumps(generated_ids[:-1])
                             last_token_id = generated_ids[-1]
-                            self.mem.infeasible_token_ids[prev_state].append(
-                                last_token_id
+                            infeasible_token_ids = (
+                                self.mem.infeasible_token_ids.setdefault(prev_state, [])
                             )
+                            infeasible_token_ids.append(last_token_id)
                         next_token_ids[batch_idx] = self.model.end_id
 
             start = time.perf_counter()

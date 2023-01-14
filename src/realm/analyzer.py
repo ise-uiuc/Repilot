@@ -6,7 +6,7 @@ from multiprocessing.connection import Connection
 from os import PathLike
 from pathlib import Path
 from typing import Any, Dict, Optional, cast
-
+import pickle
 from realm import utils
 from realm.generation_defs import GenerationContext, Memorization
 from realm.lsp import LSPClient, TextFile, spec
