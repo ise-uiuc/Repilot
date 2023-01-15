@@ -159,6 +159,11 @@ class Runner:
                         val_config_idx,
                         val_result,
                     )
+                # Temporary method to prevent memory leakage
+                import os
+
+                if os.getenv("KILL") is not None:
+                    os.system('pkill -SIGKILL -u yuxiang -f "run.dev.tests"')
                 report.save()
 
     def get_transformed_items(
