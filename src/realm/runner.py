@@ -144,7 +144,8 @@ class Runner:
             for result_batch in utils.chunked(config.n_cores, zipped_results):
                 assert len(result_batch) == len(set(r[0] for r in result_batch))
                 val_results: list[PatchValidationResult] = Parallel(
-                    n_jobs=len(result_batch)
+                    n_jobs=len(result_batch),
+                    backend="multiprocessing",
                 )(
                     delayed(validate_patch)(d4j, bug_id, buggy_text_files, avg_patch)
                     for (bug_id, _, buggy_text_files, avg_patch) in result_batch
