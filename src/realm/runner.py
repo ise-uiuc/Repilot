@@ -163,7 +163,7 @@ class Runner:
                 import os
 
                 if os.getenv("KILL") is not None:
-                    os.system('pkill -SIGKILL -u yuxiang -f "run.dev.tests"')
+                    os.system('pkill -SIGKILL -u yuxiang -f "javac1.7"')
                 report.save()
 
     def get_transformed_items(
