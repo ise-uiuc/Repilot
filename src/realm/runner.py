@@ -138,8 +138,10 @@ class Runner:
                     unvalidated_analysis_results[-1].append(
                         (bug_id, patch_idx, buggy_text_files, patch)
                     )
+        n_unvalidated = sum(1 for xs in unvalidated_analysis_results for _ in xs)
         # Validate n_cores bugs with different bug_ids in parallel
         for zipped_result in zip_longest(*unvalidated_analysis_results):
+            print("#Unvalidated:", n_unvalidated)
             zipped_results = filter(lambda r: r is not None, zipped_result)
             for result_batch in utils.chunked(config.n_cores, zipped_results):
                 assert len(result_batch) == len(set(r[0] for r in result_batch))
@@ -159,6 +161,7 @@ class Runner:
                         val_config_idx,
                         val_result,
                     )
+                    n_unvalidated -= 1
                 # Temporary method to prevent memory leakage
                 import os
 
