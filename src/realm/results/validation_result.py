@@ -59,7 +59,7 @@ class PatchValidationResult(JsonSerializable):
 
 @dataclass
 class ValidationResult(JsonSpecificDirectoryDumpable):
-    # bug_id -> patch_id -> (result, validation_config_index)
+    # bug_id -> patch_id -> (validation_config_index, result)
     validation_configs: list[ValidationConfig]
     result_dict: dict[str, dict[int, tuple[int, PatchValidationResult]]]
 

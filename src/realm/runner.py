@@ -173,8 +173,8 @@ class Runner:
         self,
     ) -> Iterable[tuple[str, list[AvgPatch]]]:
         assert self.report.repair_result is not None
-        # For speed of ploting, there is no warning if the transformed result is partial
-        # self.transform_with_message()
+        ## For speed of ploting, there is no warning if the transformed result is partial
+        self.transform_with_message()
         assert self.report.transformed_result is not None
         return (
             (bug_id, patches)
