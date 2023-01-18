@@ -245,9 +245,11 @@ def transform(args: Namespace) -> None:
 def validate(args: Namespace) -> None:
     cache_save_path = args.cache_save_path
     if cache_save_path is not None:
+        print("Loading cache")
         cache: ValidationCache | None = ValidationCache.from_json_file(
             Path(cache_save_path)
         )
+        print("Done")
     else:
         cache = None
     return run_by_loading(
