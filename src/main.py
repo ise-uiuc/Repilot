@@ -1,4 +1,4 @@
-import os
+import json
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
 from functools import partial
@@ -14,6 +14,7 @@ from realm.config import (
 )
 from realm.ploting import plot_runners
 from realm.repair import Repairer
+from realm.results import ValidationCache, concat_hunks
 from realm.runner import Runner
 
 parser = ArgumentParser("REALM program repair")
@@ -151,6 +152,18 @@ evaluation_parser.add_argument(
     help="The directories for comparison that store the repair results",
 )
 
+cache_parser = subparsers.add_parser("cache", help="Cache validation results")
+cache_parser.add_argument(
+    "-d",
+    "--dirs",
+    required=True,
+    nargs="+",
+    help="The directories for comparison that store the repair results",
+)
+cache_parser.add_argument(
+    "--cache-save-path",
+    required=True,
+)
 
 args = parser.parse_args()
 
@@ -239,6 +252,24 @@ def evaluate(args: Namespace):
     plot_runners(args.tags, runners)
 
 
+def save_validation_cache(args: Namespace):
+    runners = [Runner.load(Path(dir)) for dir in args.dirs]
+    f_cache = Path(args.cache_save_path)
+    if f_cache.exists():
+        data = ValidationCache.from_json_file(f_cache)
+    else:
+        data = ValidationCache({})
+    for runner in runners:
+        for bug_id, patches in runner.get_validation_items():
+            bug_id_dict = data.result_dict.setdefault(bug_id, {})
+            for avg_patch, val_result in patches:
+                if val_result is None:
+                    continue
+                concat_hunk_str = concat_hunks(avg_patch.file_patches)
+                bug_id_dict.setdefault(concat_hunk_str, val_result)
+    data.save_json(f_cache)
+
+
 if __name__ == "__main__":
     if args.option == "repair":
         repair(args)
@@ -250,5 +281,7 @@ if __name__ == "__main__":
         resume(args)
     elif args.option == "evaluate":
         evaluate(args)
+    elif args.option == "cache":
+        save_validation_cache(args)
     else:
         assert False

@@ -58,6 +58,35 @@ class PatchValidationResult(JsonSerializable):
 
 
 @dataclass
+class ValidationCache(JsonSerializable):
+    """Stores already validated patches"""
+
+    # bug_id -> concat_hunk_str -> result
+    result_dict: dict[str, dict[str, PatchValidationResult]]
+
+    def to_json(self) -> Any:
+        return {
+            bug_id: {
+                concat_hunk_str: result.to_json()
+                for concat_hunk_str, result in results.items()
+            }
+            for bug_id, results in self.result_dict.items()
+        }
+
+    @classmethod
+    def from_json(cls, d: dict[str, dict[str, Any]]) -> "ValidationCache":
+        return ValidationCache(
+            {
+                bug_id: {
+                    concat_hunk_str: PatchValidationResult.from_json(result)
+                    for concat_hunk_str, result in results.items()
+                }
+                for bug_id, results in d.items()
+            }
+        )
+
+
+@dataclass
 class ValidationResult(JsonSpecificDirectoryDumpable):
     # bug_id -> patch_id -> (validation_config_index, result)
     validation_configs: list[ValidationConfig]

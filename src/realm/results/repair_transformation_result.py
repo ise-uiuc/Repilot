@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from realm.lsp import TextFile
 from realm.utils import JsonSerializable, JsonSpecificDirectoryDumpable
@@ -151,6 +151,14 @@ class RepairTransformedResult(JsonSpecificDirectoryDumpable):
             },
             {bug_id: set(appeared) for bug_id, appeared in d["all_appeared"].items()},
         )
+
+
+def concat_hunks(file_patches: list[AvgFilePatch]) -> str:
+    return "".join(
+        cast(str, hunk_patch.result.hunk)
+        for file_patch in file_patches
+        for hunk_patch in file_patch.hunks
+    )
 
 
 # @dataclass(frozen=True)

@@ -12,5 +12,11 @@ from .repair_transformation_result import (
     AvgFilePatch,
     AvgPatch,
     RepairTransformedResult,
+    concat_hunks,
 )
-from .validation_result import Outcome, PatchValidationResult, ValidationResult
+from .validation_result import (
+    Outcome,
+    PatchValidationResult,
+    ValidationCache,
+    ValidationResult,
+)

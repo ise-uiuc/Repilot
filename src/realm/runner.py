@@ -1,4 +1,5 @@
 import functools
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from .results import (
     RepairTransformedResult,
     ValidationDatapoint,
     ValidationResult,
+    concat_hunks,
 )
 
 PatchInfo = TypeVar("PatchInfo")
@@ -85,11 +87,7 @@ class Runner:
                 ):
                     is_duplicate = False
                 else:
-                    concat_hunk_str = "".join(
-                        cast(str, hunk_patch.result.hunk)
-                        for file_patch in patch
-                        for hunk_patch in file_patch.hunks
-                    )
+                    concat_hunk_str = concat_hunks(patch)
                     if concat_hunk_str in appeared:
                         is_duplicate = True
                     else:
@@ -163,8 +161,6 @@ class Runner:
                     )
                     n_unvalidated -= 1
                 # Temporary method to prevent memory leakage
-                import os
-
                 if os.getenv("KILL") is not None:
                     os.system('pkill -SIGKILL -u $USER -f "javac1.7"')
                 report.save()
@@ -173,8 +169,8 @@ class Runner:
         self,
     ) -> Iterable[tuple[str, list[AvgPatch]]]:
         assert self.report.repair_result is not None
-        ## For speed of ploting, there is no warning if the transformed result is partial
-        self.transform_with_message()
+        # For speed of ploting, there is no warning if the transformed result is partial
+        # self.transform_with_message()
         assert self.report.transformed_result is not None
         return (
             (bug_id, patches)
