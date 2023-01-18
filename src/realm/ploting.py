@@ -1,3 +1,5 @@
+import json
+import os
 from itertools import groupby
 from pathlib import Path
 from typing import Callable, Iterable, TypeVar, cast
@@ -6,7 +8,7 @@ import torch
 from matplotlib import pyplot as plt
 
 from . import utils
-from .results import GenerationDatapoint, ValidationDatapoint
+from .results import GenerationDatapoint, ValidationDatapoint, concat_hunks
 from .runner import Runner
 
 Datapoint = TypeVar("Datapoint")
@@ -74,6 +76,14 @@ def plot_runners(
     ]
     validation_results = transpose(raw_validation_results)
 
+    target = Path(os.getenv("PLOT_DIR", "plots"))
+    target.mkdir(exist_ok=True)
+
+    print("Generation Summary")
+    for tag, runner in zip(tags, runners):
+        print(f"{tag} Unique: {runner.evaluate_unique_generation_summary()}")
+        print(f"{tag} Total: {runner.evaluate_generation_summary()}")
+
     # Print averaged summary
     # TODO: now the points' total and unique is the same. To change this, modify
     # `map_validaton_datapoint`
@@ -82,24 +92,34 @@ def plot_runners(
         if runner.report.validation_result is None:
             continue
         proj_summary, summary = runner.evaluate_validation_summary()
+
         plausible_fixes = {
-            proj: [
-                bug_id
-                for bug_id, bug_id_result in bug_id_results.items()
-                if bug_id_result.n_test_success > 0
-            ]
-            for proj, bug_id_results in raw_results
+            proj: {
+                bug_id: [concat_hunks(patch) for patch in patches]
+                for bug_id, patches in proj_values.items()
+            }
+            for proj, proj_values in runner.get_plausible_patches_grouped().items()
         }
+        # {
+        #     proj: [
+        #         bug_id
+        #         for bug_id, bug_id_result in bug_id_results.items()
+        #         if bug_id_result.n_test_success > 0
+        #     ]
+        #     for proj, bug_id_results in raw_results
+        # }
         # n_plausible = {proj: v.n_test_success for proj, v in proj_summary.items()}
         print(tag, "Metadata", summary)
         print(
             tag,
-            f"Compilation rate: {summary.unique_compilation_rate()}",
-            f"Plausible rate: {summary.unique_plausible_rate()}",
+            f"Compilation rate: {summary.compilable_by_parsable()}",
+            f"Plausible rate: {summary.compilable_by_parsable()}",
             f"Plausible fixes: {sum(1 for fixes in plausible_fixes.values() for fix in fixes)}",
         )
         print("Plausible fixes (project)")
         print({k: len(v) for k, v in plausible_fixes.items()})
+        with open(target / f"{tag}_plausible_details.json", "w") as f:
+            json.dump(plausible_fixes, f, indent=2)
 
     def validation_datapoint_getter(datapoint: ValidationDatapoint) -> list[int]:
         return [
@@ -167,11 +187,6 @@ def plot_runners(
     #     return [datapoint.gen_datapoint.n_total if datapoint.n_test_success == 1 else 0]
 
     validation_plausible_names = ["Plausible rate"]
-
-    import os
-
-    target = Path(os.getenv("PLOT_DIR", "plots"))
-    target.mkdir(exist_ok=True)
 
     for project, generation_result in generation_results:
         plt.clf()

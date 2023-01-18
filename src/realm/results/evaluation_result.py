@@ -57,6 +57,12 @@ class ValidationDatapoint(utils.JsonSerializable):
     total_time_consumed: float
     gen_datapoint: GenerationDatapoint
 
+    def compilable_by_parsable(self) -> float:
+        return self.n_comp_success / self.n_parse_success
+
+    def plausible_by_parsable(self) -> float:
+        return self.n_test_success / self.n_parse_success
+
     def unique_compilation_rate(self) -> float:
         return self.n_comp_success / self.gen_datapoint.n_unique
 

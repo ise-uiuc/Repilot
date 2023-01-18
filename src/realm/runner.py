@@ -240,6 +240,29 @@ class Runner:
     ) -> list[tuple[str, dict[str, ValidationDatapoint]]]:
         return Defects4J.group_by_project(self.evaluate_validation())
 
+    def get_plausible_patches_grouped(
+        self,
+    ) -> dict[str, dict[str, list[list[AvgFilePatch]]]]:
+        result: dict[str, dict[str, list[list[AvgFilePatch]]]] = {}
+        validation_dict = {
+            bug_id: list(patches) for bug_id, patches in self.get_validation_items()
+        }
+        validation_dict_grouped = Defects4J.group_by_project(validation_dict)
+        for proj, proj_dict in validation_dict_grouped:
+            proj_result = result.setdefault(proj, {})
+            for bug_id, patches in proj_dict.items():
+                results = []
+                for patch, val_result in patches:
+                    if val_result is not None and val_result.outcome == Outcome.Success:
+                        # Assertions
+                        for file_patch in patch.file_patches:
+                            for hunk in file_patch.hunks:
+                                assert hunk.result.hunk is not None
+                        results.append(patch.file_patches)
+                if len(results) > 0:
+                    proj_result[bug_id] = results
+        return result
+
     def evaluate_generation(self) -> dict[str, GenerationDatapoint]:
         # self.transform_with_message()
         # assert self.report.transformed_result is not None
@@ -276,6 +299,34 @@ class Runner:
         }
         summary = functools.reduce(add, proj_summary.values(), zero)
         return proj_summary, summary
+
+    def evaluate_unique_generation_summary(self) -> GenerationDatapoint:
+        return functools.reduce(
+            GenerationDatapoint.__add__,
+            map(
+                map_to_unique_generation_datapoint,
+                (
+                    patch
+                    for _, patches in self.get_transformed_items()
+                    for patch in patches
+                ),
+            ),
+            GenerationDatapoint.zero(),
+        )
+
+    def evaluate_generation_summary(self) -> GenerationDatapoint:
+        return functools.reduce(
+            GenerationDatapoint.__add__,
+            map(
+                map_to_generation_datapoint,
+                (
+                    patch
+                    for _, patches in self.get_transformed_items()
+                    for patch in patches
+                ),
+            ),
+            GenerationDatapoint.zero(),
+        )
 
     # def evaluate_validation_first_one_grouped(
     #     self, get_number: Callable[[ValidationDatapoint], int]
@@ -466,6 +517,16 @@ def iter_files(
         yield buggy_files, file_patches
 
 
+def map_to_unique_generation_datapoint(patch: AvgPatch) -> GenerationDatapoint:
+    return GenerationDatapoint(
+        gen_time=0.0 if patch.is_duplicate else patch.total_gen_time,
+        n_total=utils.binary_bool(not patch.is_duplicate),
+        n_unique=utils.binary_bool(not patch.is_duplicate),
+        n_unfinished=utils.binary_bool(patch.is_unfinished),
+        n_pruned=utils.binary_bool(patch.is_pruned),
+    )
+
+
 def map_to_generation_datapoint(patch: AvgPatch) -> GenerationDatapoint:
     return GenerationDatapoint(
         gen_time=patch.total_gen_time,
@@ -497,7 +558,5 @@ def map_to_validation_datapoint(
         ),
         total_time_consumed=gen_datapoint.gen_time
         + (0 if validation_result is None else validation_result.time_cost),
-        gen_datapoint=(
-            GenerationDatapoint.zero() if validation_result is None else gen_datapoint
-        ),
+        gen_datapoint=gen_datapoint,
     )
