@@ -134,6 +134,10 @@ validation_parser.add_argument(
     type=int,
     help="Number of cores to use for validation",
 )
+validation_parser.add_argument(
+    "--cache-save-path",
+    required=False,
+)
 
 # Evaluation parser
 evaluation_parser = subparsers.add_parser("evaluate")
@@ -239,9 +243,16 @@ def transform(args: Namespace) -> None:
 
 
 def validate(args: Namespace) -> None:
+    cache_save_path = args.cache_save_path
+    if cache_save_path is not None:
+        cache: ValidationCache | None = ValidationCache.from_json_file(
+            Path(cache_save_path)
+        )
+    else:
+        cache = None
     return run_by_loading(
         lambda args, runner: Runner.validate(
-            runner, ValidationConfig(args.n_cores, args.bug_pattern)
+            runner, ValidationConfig(args.n_cores, args.bug_pattern), cache
         ),
         args,
     )

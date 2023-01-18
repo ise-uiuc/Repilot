@@ -28,6 +28,7 @@ from .results import (
     PatchValidationResult,
     RepairResult,
     RepairTransformedResult,
+    ValidationCache,
     ValidationDatapoint,
     ValidationResult,
     concat_hunks,
@@ -104,7 +105,7 @@ class Runner:
         self.transform()
         print("Done")
 
-    def validate(self, config: ValidationConfig):
+    def validate(self, config: ValidationConfig, cache: ValidationCache | None):
         self.transform_with_message()
         """Recoverable validation"""
         bug_pattern = re.compile(config.bug_pattern)
@@ -129,13 +130,26 @@ class Runner:
             unvalidated_analysis_results.append([])
             for patch_idx, patch in enumerate(patches):
                 if (
-                    not patch.is_duplicate
-                    and not patch.is_broken
-                    and patch_idx not in validated_patches
+                    patch.is_duplicate
+                    or patch.is_broken
+                    or patch_idx in validated_patches
                 ):
-                    unvalidated_analysis_results[-1].append(
-                        (bug_id, patch_idx, buggy_text_files, patch)
+                    print(f"[{bug_id}, {patch_idx}] Skipped (dup/broken/validated)")
+                    continue
+                if cache is not None:
+                    concat_hunk_str = concat_hunks(patch.file_patches)
+                    bug_id_cache = cache.result_dict.get(bug_id)
+                    bug_id_result = utils.bind_optional(
+                        bug_id_cache, lambda c: c.get(concat_hunk_str)
                     )
+                    if bug_id_result is not None:
+                        print(f"[{bug_id}] Skipped (cache):")
+                        print(concat_hunk_str)
+                        validated_patches[patch_idx] = (-1, bug_id_result)
+                        continue
+                unvalidated_analysis_results[-1].append(
+                    (bug_id, patch_idx, buggy_text_files, patch)
+                )
         n_unvalidated = sum(1 for xs in unvalidated_analysis_results for _ in xs)
         # Validate n_cores bugs with different bug_ids in parallel
         for zipped_result in zip_longest(*unvalidated_analysis_results):
