@@ -65,13 +65,41 @@ def plot_runners(
     # generation_names = ["Unique", "Unfinished", "Pruned", "Duplicate"]
     generation_names = ["Unique", "Duplicate"]
 
-    validation_results = transpose(
-        [
-            (tag, runner.evaluate_validation_grouped())
-            for tag, runner in zip(tags, runners)
-            if runner.report.validation_result is not None
-        ]
-    )
+    validated_runners = [
+        runner for runner in runners if runner.report.validation_result is not None
+    ]
+    raw_validation_results = [
+        (tag, runner.evaluate_validation_grouped())
+        for tag, runner in zip(tags, validated_runners)
+    ]
+    validation_results = transpose(raw_validation_results)
+
+    # Print averaged summary
+    # TODO: now the points' total and unique is the same. To change this, modify
+    # `map_validaton_datapoint`
+    print("Validation Summary")
+    for tag, runner, (_, raw_results) in zip(tags, runners, raw_validation_results):
+        if runner.report.validation_result is None:
+            continue
+        proj_summary, summary = runner.evaluate_validation_summary()
+        plausible_fixes = {
+            proj: [
+                bug_id
+                for bug_id, bug_id_result in bug_id_results.items()
+                if bug_id_result.n_test_success > 0
+            ]
+            for proj, bug_id_results in raw_results
+        }
+        # n_plausible = {proj: v.n_test_success for proj, v in proj_summary.items()}
+        print(tag, "Metadata", summary)
+        print(
+            tag,
+            f"Compilation rate: {summary.unique_compilation_rate()}",
+            f"Plausible rate: {summary.unique_plausible_rate()}",
+            f"Plausible fixes: {sum(1 for fixes in plausible_fixes.values() for fix in fixes)}",
+        )
+        print("Plausible fixes (project)")
+        print({k: len(v) for k, v in plausible_fixes.items()})
 
     def validation_datapoint_getter(datapoint: ValidationDatapoint) -> list[int]:
         return [
@@ -89,7 +117,7 @@ def plot_runners(
     def validation_avg_plausible(datapoint: ValidationDatapoint) -> list[int]:
         # TODO: fix the type
         return [
-            datapoint.n_comp_success / datapoint.gen_datapoint.n_total,  # type: ignore # fmt: skip
+            datapoint.n_test_success / datapoint.gen_datapoint.n_total,  # type: ignore # fmt: skip
             # datapoint.n_comp_success - datapoint.n_test_success,
             # datapoint.n_parse_success - datapoint.n_comp_success,
             # datapoint.gen_datapoint.n_total - datapoint.n_parse_success,
@@ -103,6 +131,24 @@ def plot_runners(
     # validation_names = ["Test Suc.", "Comp. Suc.", "Parse. Suc", "Total"]
     validation_names = ["Test Suc."]  # , "Comp. Suc.", "Total"]
 
+    def validation_avg_compilable(datapoint: ValidationDatapoint) -> list[int]:
+        # TODO: fix the type
+        return [
+            datapoint.n_comp_success / datapoint.gen_datapoint.n_total,  # type: ignore # fmt: skip
+            # datapoint.n_comp_success - datapoint.n_test_success,
+            # datapoint.n_parse_success - datapoint.n_comp_success,
+            # datapoint.gen_datapoint.n_total - datapoint.n_parse_success,
+            # - datapoint.gen_datapoint.n_unfinished
+            # - datapoint.gen_datapoint.n_pruned
+            # - datapoint.n_test_success
+            # - datapoint.n_comp_success
+            # - datapoint.n_parse_success,
+        ]
+
+    validation_avg_compilable_names = ["Compilation Rate"]
+
+    # validation_names = ["Test Suc.", "Comp. Suc.", "Parse. Suc", "Total"]
+    validation_names = ["Test Suc."]  # , "Comp. Suc.", "Total"]
     # validation_first_plausible_results = transpose(
     #     [
     #         (
@@ -120,9 +166,11 @@ def plot_runners(
     #     assert datapoint.n_test_success <= 1
     #     return [datapoint.gen_datapoint.n_total if datapoint.n_test_success == 1 else 0]
 
-    validation_plausible_names = ["Total generated patches"]
+    validation_plausible_names = ["Plausible rate"]
 
-    target = Path("plots")
+    import os
+
+    target = Path(os.getenv("PLOT_DIR", "plots"))
     target.mkdir(exist_ok=True)
 
     for project, generation_result in generation_results:
@@ -137,6 +185,7 @@ def plot_runners(
             5 * 1.5,
         )
         plt.savefig(target / f"plot-gen-{project}.png")
+    plt.close()
     for project, validation_result in validation_results:
         plt.clf()
         plt.title(f"Validation results for {project}")
@@ -150,12 +199,30 @@ def plot_runners(
         )
         plt.savefig(target / f"plot-val-{project}.png")
 
+    plt.close()
     for (
         project,
         validation_result,
     ) in validation_results:
         plt.clf()
-        plt.title(f"First plausible cost for {project}")
+        plt.title(f"Plausible rate for {project}")
+        plot_bars(
+            validation_avg_compilable,
+            validation_avg_compilable_names,
+            validation_result,
+            5 * 1.65,
+            5 * 0.4,
+            5 * 1.5,
+        )
+        plt.savefig(target / f"plot-compilation_rate-{project}.png")
+
+    plt.close()
+    for (
+        project,
+        validation_result,
+    ) in validation_results:
+        plt.clf()
+        plt.title(f"Plausible rate for {project}")
         plot_bars(
             validation_avg_plausible,
             validation_plausible_names,
@@ -164,7 +231,7 @@ def plot_runners(
             5 * 0.4,
             5 * 1.5,
         )
-        plt.savefig(target / f"plot-val_first_plausible-{project}.png")
+        plt.savefig(target / f"plot-plausible_rate-{project}.png")
 
 
 def plot_bars(

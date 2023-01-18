@@ -173,7 +173,8 @@ class Runner:
         self,
     ) -> Iterable[tuple[str, list[AvgPatch]]]:
         assert self.report.repair_result is not None
-        self.transform_with_message()
+        # For speed of ploting, there is no warning if the transformed result is partial
+        # self.transform_with_message()
         assert self.report.transformed_result is not None
         return (
             (bug_id, patches)
@@ -253,33 +254,46 @@ class Runner:
             for bug_id, patches in self.get_validation_items()
         }
 
-    def evaluate_validation_first_one_grouped(
-        self, get_number: Callable[[ValidationDatapoint], int]
-    ) -> list[tuple[str, dict[str, ValidationDatapoint]]]:
-        return Defects4J.group_by_project(
-            self.evaluate_validation_first_one(get_number)
-        )
-
-    def evaluate_validation_first_one(
-        self, get_number: Callable[[ValidationDatapoint], int]
-    ) -> dict[str, ValidationDatapoint]:
-        assert self.report.validation_result is not None
-
-        def reduce_fn(
-            lhs: ValidationDatapoint, rhs: ValidationDatapoint
-        ) -> ValidationDatapoint:
-            if get_number(lhs) == 1:
-                return lhs
-            return lhs + rhs
-
-        return {
-            bug_id: functools.reduce(
-                reduce_fn,
-                map(map_to_validation_datapoint, patches),
-                ValidationDatapoint.zero(),
-            )
-            for bug_id, patches in self.get_validation_items()
+    def evaluate_validation_summary(
+        self,
+    ) -> tuple[dict[str, ValidationDatapoint], ValidationDatapoint]:
+        result_grouped = self.evaluate_validation_grouped()
+        add = ValidationDatapoint.__add__
+        zero = ValidationDatapoint.zero()
+        proj_summary = {
+            proj: functools.reduce(add, proj_dict.values(), zero)
+            for proj, proj_dict in result_grouped
         }
+        summary = functools.reduce(add, proj_summary.values(), zero)
+        return proj_summary, summary
+
+    # def evaluate_validation_first_one_grouped(
+    #     self, get_number: Callable[[ValidationDatapoint], int]
+    # ) -> list[tuple[str, dict[str, ValidationDatapoint]]]:
+    #     return Defects4J.group_by_project(
+    #         self.evaluate_validation_first_one(get_number)
+    #     )
+
+    # def evaluate_validation_first_one(
+    #     self, get_number: Callable[[ValidationDatapoint], int]
+    # ) -> dict[str, ValidationDatapoint]:
+    #     assert self.report.validation_result is not None
+
+    #     def reduce_fn(
+    #         lhs: ValidationDatapoint, rhs: ValidationDatapoint
+    #     ) -> ValidationDatapoint:
+    #         if get_number(lhs) == 1:
+    #             return lhs
+    #         return lhs + rhs
+
+    #     return {
+    #         bug_id: functools.reduce(
+    #             reduce_fn,
+    #             map(map_to_validation_datapoint, patches),
+    #             ValidationDatapoint.zero(),
+    #         )
+    #         for bug_id, patches in self.get_validation_items()
+    #     }
 
     # def evaluate(
     #     self,
