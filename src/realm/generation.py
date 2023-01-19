@@ -6,7 +6,7 @@ import time
 import typing
 import warnings
 
-logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
+# logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Callable, Dict, Iterable, NamedTuple, Optional, Union, cast
@@ -307,6 +307,7 @@ class Synthesizer:
         ):
             return self.pruned_decode(probs)
         else:
+            # TODO: memorize active completion and the encode(completion) result and try not to exclude the '('
             lsp_context.analyzer.send(
                 (
                     Message(
@@ -329,7 +330,7 @@ class Synthesizer:
                 gen_context.generated_tokens.extend(
                     self.model.token_map[id] for id in next_token_ids_list
                 )
-                logging.info(f"ACTIVE: {continuation}")
+                # logging.info(f"ACTIVE: {continuation}")
                 return cast(
                     torch.LongTensor,
                     torch.tensor(
