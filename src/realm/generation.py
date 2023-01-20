@@ -6,7 +6,7 @@ import time
 import typing
 import warnings
 
-logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
+# logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Callable, Dict, Iterable, NamedTuple, Optional, Union, cast
@@ -192,6 +192,10 @@ class Synthesizer:
         self.lsp_contexts: Optional[list[LspContext]] = None
         self.mem: Optional[Memorization] = None
         self.gen_state: Optional[GenerationState] = None
+        self.mem_active: dict[bytes, torch.Tensor] | None = None
+
+        if ACTIVE:
+            assert self.use_mem
 
         # self.all_ids = torch.tensor(range(self.model.vocab_size)).to(utils.DEVICE).repeat(self.batch_size, 1)
 
@@ -200,6 +204,8 @@ class Synthesizer:
         self.lsp_contexts = [
             LspContext(self.text_file.copy(), conn) for conn in self.connections
         ]
+        if ACTIVE and self.mem_active is None:
+            self.mem_active = {}
         if self.use_mem and self.mem is None:
             self.mem = Memorization.init()
             state = pickle.dumps(
@@ -542,7 +548,10 @@ class Synthesizer:
                         mem_denied_tokens[batch_idx].insert(trying_token)
             # print("Checking:", time.perf_counter() - start)
         assert (next_token_ids == special_value).sum().item() == 0
-        return cast(torch.LongTensor, next_token_ids), active_completion_ret
+        return (
+            cast(torch.LongTensor, next_token_ids),
+            active_completion_ret,
+        )
 
     @typing.no_type_check
     def sample(
@@ -689,29 +698,46 @@ class Synthesizer:
             if len(input_ids[0]) + 1 == max_length:
                 break
 
-            if (
-                ACTIVE
-                and isinstance(active_completion, str)
-                and len(active_completion) > 0
-            ):
-                # breakpoint()
-                assert self.batch_size == 1
-                next_token_ids_list = self.tokenize(active_completion)
-                lsp_context = self.lsp_contexts[0]
-                gen_context = self.gen_state.gen_contexts[0]
-                lsp_context.text_file.add(active_completion)
-                gen_context.generated_ids.extend(next_token_ids_list)
-                gen_context.generated_tokens.extend(
-                    self.model.token_map[id] for id in next_token_ids_list
+            if ACTIVE:
+                input_state_after_pruning = pickle.dumps(
+                    self.gen_state.gen_contexts[0].generated_ids
                 )
-                logging.info(f"ACTIVE: {active_completion}")
-                active_completion_tensor = torch.tensor(
-                    next_token_ids_list, dtype=torch.long, device=utils.DEVICE
+                assert self.mem_active is not None
+                potential_next_token_ids = self.mem_active.get(
+                    input_state_after_pruning
                 )
-                # assert active_completion_tensor.shape[0] == next_token_ids.shape[0]
-                next_token_ids = torch.cat((next_token_ids, active_completion_tensor))
+                if potential_next_token_ids is not None:
+                    # logging.info(
+                    #     f"ACTIVE(HIT): {''.join(self.model.token_map[idx] for idx in potential_next_token_ids)}"
+                    # )
+                    # assert isinstance(input_state_after_pruning, bytes)
+                    # potential_next_token_ids = self.mem_active.get(input_state_after_pruning)
+                    # if potential_next_token_ids is not None:
+                    assert potential_next_token_ids[0] == next_token_ids[0]
+                    next_token_ids = potential_next_token_ids
+                elif isinstance(active_completion, str) and len(active_completion) > 0:
+                    # breakpoint()
+                    assert self.batch_size == 1
+                    next_token_ids_list = self.tokenize(active_completion)
+                    lsp_context = self.lsp_contexts[0]
+                    gen_context = self.gen_state.gen_contexts[0]
+                    lsp_context.text_file.add(active_completion)
+                    gen_context.generated_ids.extend(next_token_ids_list)
+                    gen_context.generated_tokens.extend(
+                        self.model.token_map[id] for id in next_token_ids_list
+                    )
+                    # logging.info(f"ACTIVE: {active_completion}")
+                    active_completion_tensor = torch.tensor(
+                        next_token_ids_list, dtype=torch.long, device=utils.DEVICE
+                    )
+                    # assert active_completion_tensor.shape[0] == next_token_ids.shape[0]
+                    next_token_ids = torch.cat(
+                        (next_token_ids, active_completion_tensor)
+                    )
+                    self.mem_active[input_state_after_pruning] = next_token_ids
             # update generated ids, model inputs, and length for next step
-            use_cache = self.batch_size != 1 or len(next_token_ids) == 1
+            # use_cache = self.batch_size != 1 or len(next_token_ids) == 1
+            use_cache = True
             # An ad-hoc solution for active completion (batch size must equals 1)
             if self.batch_size == 1:
                 input_ids = torch.cat([input_ids, next_token_ids[None, :]], dim=-1)

@@ -808,8 +808,8 @@ class JdtLspAnalyzer(Process):
         completions = self.get_completions(uri, pos)
 
         # Memorize
-        input_state = pickle.dumps(generated_ids + [token_id])
-        self.mem.setdefault(input_state, completions)
+        # input_state = pickle.dumps(generated_ids + [token_id])
+        # self.mem.setdefault(input_state, completions)
 
         # self.mem.completions[input_state] = completions
         # completion_overhead.append(time.time() - start_time)
@@ -864,29 +864,29 @@ class JdtLspAnalyzer(Process):
             # self.memorization.infeasible_token_ids[input_state] = False
             return False
 
-    def continuation(self, generated_ids: list[int], text_file: TextFile) -> str | None:
-        state = pickle.dumps(generated_ids)
-        if state in self.mem:
-            completions = self.mem[state]
-        else:
-            self.change(text_file)
-            completions = self.get_completions(
-                text_file.path.as_uri(), text_file.get_cursor_position()
-            )
-        if completions is None:
-            return None
-        continuations = [
-            item if not (item := target[len(source) :]).endswith("(") else item[:-1]
-            for c in completions
-            if (target := c["target"]).startswith(source := c["source"])
-        ]
-        # continuations: list[str] = [
-        #     target[len(source) :]
-        #     for c in completions
-        #     if (target := c["target"]).startswith(source := c["source"])
-        # ]
-        completion = utils.longest_common_prefix(continuations)
-        return completion
+    # def continuation(self, generated_ids: list[int], text_file: TextFile) -> str | None:
+    #     state = pickle.dumps(generated_ids)
+    #     if state in self.mem:
+    #         completions = self.mem[state]
+    #     else:
+    #         self.change(text_file)
+    #         completions = self.get_completions(
+    #             text_file.path.as_uri(), text_file.get_cursor_position()
+    #         )
+    #     if completions is None:
+    #         return None
+    #     continuations = [
+    #         item if not (item := target[len(source) :]).endswith("(") else item[:-1]
+    #         for c in completions
+    #         if (target := c["target"]).startswith(source := c["source"])
+    #     ]
+    #     # continuations: list[str] = [
+    #     #     target[len(source) :]
+    #     #     for c in completions
+    #     #     if (target := c["target"]).startswith(source := c["source"])
+    #     # ]
+    #     completion = utils.longest_common_prefix(continuations)
+    #     return completion
 
     def get_completions(self, uri: str, pos: spec.Position) -> Optional[list[dict]]:
         new_completion_result = self.completion(
