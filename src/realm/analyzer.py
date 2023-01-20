@@ -764,32 +764,27 @@ class JdtLspAnalyzer(Process):
         gen_context: GenerationContext,
         trying_token_id: int,
         trying_token: str,
-    ) -> int:
+    ) -> bool | str:
         """Use language server to check validity"""
         text_file.add(trying_token)
         self.change(text_file)
         pos = text_file.get_cursor_position()
-        if self.feasible(
+        result = self.feasible(
             gen_context.generated_ids,
             gen_context.generated_tokens,
             text_file.path.as_uri(),
             trying_token_id,
             trying_token,
             pos,
-        ):
+        )
+        if result == True:
             return True
-            #     if self.use_mem:
-            #         feasible_indices.add(trying_token_id_item)
-            #     return trying_token_id_item
-            # else:
-            #     text_file.delete(len(trying_token))
-        return False
-        # Token is infeasible if the program runs to this line
-        # By setting the probability to 0.0, this token will not be selected.
-        # considered_probs[trying_token_indirect_id] = 0.
-        # if self.use_mem:
-        #     infeasible_indices.append(trying_token_id_item)
-        #     denied_trie.insert(trying_token)
+        elif result == False:
+            return False
+        else:
+            assert isinstance(result, list)
+            assert len(result) > 0
+            return utils.longest_common_prefix(result)
 
     def feasible(
         self,
@@ -801,7 +796,7 @@ class JdtLspAnalyzer(Process):
         token: str,
         pos: spec.Position,
         # completion_overhead: list[float],
-    ) -> bool:
+    ) -> bool | list[str]:
         """Returns whether `token` is feasible at `pos` of the file located at `uri`"""
         # if self.use_mem and input_state in self.mem.completions:
         #     # Due to memorization, each input_state be called on this function only once
@@ -832,31 +827,33 @@ class JdtLspAnalyzer(Process):
             print("UNKNOWN:", token)
             # breakpoint()
             return True
-        filtered_completions = [
-            c for c in completions if c["target"].startswith(c["source"])
+        # filtered_completions = [
+        #     c for c in completions if c["target"].startswith(c["source"])
+        # ]
+        continuations = [
+            # item if not (item := target[len(source) :]).endswith("(") else item[:-1]
+            target[len(source) :]
+            for c in completions
+            if (target := c["target"]).startswith(source := c["source"])
         ]
         # else:
         #     print(uri)
         #     print(completion_result['error'])
         #     print(completion_result['error']['data'])
         #     raise RuntimeError
-        if len(filtered_completions) > 0:
+        if len(continuations) > 0:
             # generation_log.append({
             #     'context': context,
             #     'result': filtered_completions,
             # })
             # , token, completions)
-            print(
-                "Accepted:",
-                token,
-                f"{filtered_completions[0]['source']} -> {filtered_completions[0]['target']}",
-            )
+            print("Accepted:", token, f"Completions[0]: {continuations[0]}")
             # if 'lastFraction' in completions:
             #     breakpoint()
             # print("Yes!")
             # print(completions)
             # self.memorization.infeasible_token_ids[input_state] = True
-            return True
+            return continuations
         else:
             # generation_log.append({
             #     'context': context,

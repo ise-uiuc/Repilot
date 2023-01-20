@@ -112,8 +112,8 @@ def plot_runners(
         print(tag, "Metadata", summary)
         print(
             tag,
-            f"Compilation rate: {summary.compilable_by_parsable()}",
-            f"Plausible rate: {summary.plausible_by_parsable()}",
+            f"Compilation rate: {summary.unique_compilation_rate()}",
+            f"Plausible rate: {summary.unique_plausible_rate()}",
             f"Plausible fixes: {sum(1 for fixes in plausible_fixes.values() for fix in fixes)}",
         )
         print("Plausible fixes (project)")
