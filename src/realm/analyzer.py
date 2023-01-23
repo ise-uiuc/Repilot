@@ -831,8 +831,8 @@ class JdtLspAnalyzer(Process):
         #     c for c in completions if c["target"].startswith(c["source"])
         # ]
         continuations = [
-            # item if not (item := target[len(source) :]).endswith("(") else item[:-1]
-            target[len(source) :]
+            item if not (item := target[len(source) :]).endswith("(") else item[:-1]
+            # target[len(source) :]
             for c in completions
             if (target := c["target"]).startswith(source := c["source"])
         ]

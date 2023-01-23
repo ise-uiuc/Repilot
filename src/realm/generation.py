@@ -6,7 +6,7 @@ import time
 import typing
 import warnings
 
-# logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
+logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Callable, Dict, Iterable, NamedTuple, Optional, Union, cast
@@ -192,7 +192,7 @@ class Synthesizer:
         self.lsp_contexts: Optional[list[LspContext]] = None
         self.mem: Optional[Memorization] = None
         self.gen_state: Optional[GenerationState] = None
-        self.mem_active: dict[bytes, torch.Tensor] | None = None
+        self.mem_active: dict[bytes, tuple[torch.Tensor, list[int], str]] | None = None
 
         if ACTIVE:
             assert self.use_mem
@@ -357,7 +357,9 @@ class Synthesizer:
     #                 ),
     #             )
 
-    def pruned_decode(self, probs: torch.Tensor) -> tuple[torch.LongTensor, str | None]:
+    def pruned_decode(
+        self, probs: torch.Tensor, active_completion: str | None
+    ) -> tuple[torch.LongTensor, str | None]:
         """Stateful method that updates the generated token ids and tokens (excluding special
         tokens) and returns the 'real' generation"""
         assert self.gen_state is not None
@@ -652,6 +654,7 @@ class Synthesizer:
             # if self.batch_size == 1 and os.getenv("ACTIVE") is not None:
             #     next_token_ids = self.active_decode(probs)
 
+            active_completion: str | None = None
             if self.is_plain or CHART_11:  # or count > 10:
                 # shape: (1)
                 start = time.perf_counter()
@@ -659,7 +662,9 @@ class Synthesizer:
             else:
                 # try:
                 start = time.perf_counter()
-                next_token_ids, active_completion = self.pruned_decode(probs)
+                next_token_ids, active_completion = self.pruned_decode(
+                    probs, active_completion
+                )
                 assert ACTIVE or active_completion is None
                 # print("Time:", time.perf_counter() - start)
                 # breakpoint()
@@ -703,18 +708,28 @@ class Synthesizer:
                     self.gen_state.gen_contexts[0].generated_ids
                 )
                 assert self.mem_active is not None
-                potential_next_token_ids = self.mem_active.get(
-                    input_state_after_pruning
-                )
-                if potential_next_token_ids is not None:
-                    # logging.info(
-                    #     f"ACTIVE(HIT): {''.join(self.model.token_map[idx] for idx in potential_next_token_ids)}"
-                    # )
+                mem_result = self.mem_active.get(input_state_after_pruning)
+                if mem_result is not None:
+                    (
+                        potential_next_token_ids,
+                        next_token_ids_list,
+                        active_completion_str,
+                    ) = mem_result
+                    logging.info(
+                        f"ACTIVE(HIT): {''.join(self.model.token_map[idx] for idx in potential_next_token_ids)}"
+                    )
                     # assert isinstance(input_state_after_pruning, bytes)
                     # potential_next_token_ids = self.mem_active.get(input_state_after_pruning)
                     # if potential_next_token_ids is not None:
                     assert potential_next_token_ids[0] == next_token_ids[0]
                     next_token_ids = potential_next_token_ids
+                    lsp_context = self.lsp_contexts[0]
+                    gen_context = self.gen_state.gen_contexts[0]
+                    lsp_context.text_file.add(active_completion_str)
+                    gen_context.generated_ids.extend(next_token_ids_list)
+                    gen_context.generated_tokens.extend(
+                        self.model.token_map[id] for id in next_token_ids_list
+                    )
                 elif isinstance(active_completion, str) and len(active_completion) > 0:
                     # breakpoint()
                     assert self.batch_size == 1
@@ -726,7 +741,7 @@ class Synthesizer:
                     gen_context.generated_tokens.extend(
                         self.model.token_map[id] for id in next_token_ids_list
                     )
-                    # logging.info(f"ACTIVE: {active_completion}")
+                    logging.info(f"ACTIVE: {active_completion}")
                     active_completion_tensor = torch.tensor(
                         next_token_ids_list, dtype=torch.long, device=utils.DEVICE
                     )
@@ -734,10 +749,14 @@ class Synthesizer:
                     next_token_ids = torch.cat(
                         (next_token_ids, active_completion_tensor)
                     )
-                    self.mem_active[input_state_after_pruning] = next_token_ids
+                    self.mem_active[input_state_after_pruning] = (
+                        next_token_ids,
+                        next_token_ids_list,
+                        active_completion,
+                    )
             # update generated ids, model inputs, and length for next step
-            # use_cache = self.batch_size != 1 or len(next_token_ids) == 1
-            use_cache = True
+            use_cache = self.batch_size != 1 or len(next_token_ids) == 1
+            # use_cache = True
             # An ad-hoc solution for active completion (batch size must equals 1)
             if self.batch_size == 1:
                 input_ids = torch.cat([input_ids, next_token_ids[None, :]], dim=-1)

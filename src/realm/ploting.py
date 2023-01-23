@@ -154,7 +154,7 @@ def plot_runners(
     def validation_avg_compilable(datapoint: ValidationDatapoint) -> list[int]:
         # TODO: fix the type
         return [
-            datapoint.n_comp_success / datapoint.gen_datapoint.n_total,  # type: ignore # fmt: skip
+            datapoint.n_comp_success / datapoint.gen_datapoint.n_unique,  # type: ignore # fmt: skip
             # datapoint.n_comp_success - datapoint.n_test_success,
             # datapoint.n_parse_success - datapoint.n_comp_success,
             # datapoint.gen_datapoint.n_total - datapoint.n_parse_success,
