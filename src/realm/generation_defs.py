@@ -9,7 +9,7 @@ GenerationState = bytes
 @dataclass
 class Memorization:
     infeasible_token_ids: Dict[GenerationState, list[int]]
-    feasible_token_ids: Dict[GenerationState, set[int]]
+    feasible_token_ids: Dict[GenerationState, dict[int, str | None]]
     completions: Dict[GenerationState, Optional[list[dict]]]
     denied_tokens: Dict[GenerationState, utils.Trie]
 

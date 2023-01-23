@@ -386,41 +386,42 @@ class Synthesizer:
                 gen_contexts[batch_idx].generated_ids.append(next_token_id)
                 gen_contexts[batch_idx].generated_tokens.append(next_token)
 
+        # all_infeasible_indices: list[tuple[int, int]] = []
+        start = time.perf_counter()
+        probs_assign = 0.0
+        if self.use_mem:
+            assert self.mem is not None
+            mem_infeasible_token_ids: list[list[int]] = []
+            mem_feasible_token_ids: list[dict[int, str | None]] = []
+            # mem_completions: list[Optional[list[dict]]] = []
+            mem_denied_tokens: list[utils.Trie] = []
+            for batch_idx in range(self.batch_size):
+                gen_context = gen_contexts[batch_idx]
+                input_state = pickle.dumps(gen_context.generated_ids)
+
+                denied_trie = self.mem.denied_tokens.setdefault(
+                    input_state, utils.Trie()
+                )
+                feasible_indices = self.mem.feasible_token_ids.setdefault(
+                    input_state, {}
+                )
+                infeasible_indices = self.mem.infeasible_token_ids.setdefault(
+                    input_state, []
+                )
+
+                mem_denied_tokens.append(denied_trie)
+                mem_feasible_token_ids.append(feasible_indices)
+                mem_infeasible_token_ids.append(infeasible_indices)
+
+                # Ensures that all tokens tried are feasible
+                _start = time.perf_counter()
+                probs[batch_idx, infeasible_indices] = 0.0
+                probs_assign += time.perf_counter() - _start
+
         # Invariant: not batch_needs_to_process[idx] === next_token_ids[idx] is determined
         # Active completion
         active_completion_ret: None | str = None
         while any(batch_needs_to_process):
-            # all_infeasible_indices: list[tuple[int, int]] = []
-            start = time.perf_counter()
-            probs_assign = 0.0
-            if self.use_mem:
-                assert self.mem is not None
-                mem_infeasible_token_ids: list[list[int]] = []
-                mem_feasible_token_ids: list[set[int]] = []
-                # mem_completions: list[Optional[list[dict]]] = []
-                mem_denied_tokens: list[utils.Trie] = []
-                for batch_idx in range(self.batch_size):
-                    gen_context = gen_contexts[batch_idx]
-                    input_state = pickle.dumps(gen_context.generated_ids)
-
-                    denied_trie = self.mem.denied_tokens.setdefault(
-                        input_state, utils.Trie()
-                    )
-                    feasible_indices = self.mem.feasible_token_ids.setdefault(
-                        input_state, set()
-                    )
-                    infeasible_indices = self.mem.infeasible_token_ids.setdefault(
-                        input_state, []
-                    )
-
-                    mem_denied_tokens.append(denied_trie)
-                    mem_feasible_token_ids.append(feasible_indices)
-                    mem_infeasible_token_ids.append(infeasible_indices)
-
-                    # Ensures that all tokens tried are feasible
-                    _start = time.perf_counter()
-                    probs[batch_idx, infeasible_indices] = 0.0
-                    probs_assign += time.perf_counter() - _start
             # print("Mem first preprocess:", time.perf_counter() - start)
             # print("Probability assigning:", probs_assign)
 
@@ -453,12 +454,47 @@ class Synthesizer:
             if not any(batch_needs_to_process):
                 break
             probs_to_process = probs[batch_needs_to_process]
+            assert probs.shape == torch.Size([self.batch_size, self.model.vocab_size])
+
+            # # Active completion constraint
+            # if ACTIVE and active_completion is not None:
+            #     active_map: dict[int, str] = {}
+            #     assert len(active_completion) > 0
+            #     assert len(probs_to_process) == 1
+            #     non_zeros = probs_to_process[0].nonzero()
+            #     for tok_idx in non_zeros:
+            #         tok_idx_item = cast(int, tok_idx.item())
+            #         tok = self.model.token_map[tok_idx_item]
+            #         if tok.startswith(
+            #             active_completion
+            #         ) or active_completion.startswith(tok):
+            #             active_map[tok_idx_item] = tok
+            #         else:
+            #             probs[0, tok_idx_item] = 0.0
+            #             probs_to_process[0, tok_idx_item] = 0.0
+            #     if len(active_map) == 0:
+            #         continue
+
             trying_token_ids = torch.multinomial(
                 probs_to_process, num_samples=1
             ).squeeze(1)
             assert trying_token_ids.dtype == torch.long
             assert len(trying_token_ids) == sum(batch_needs_to_process)
 
+            # if ACTIVE and active_completion is not None:
+            #     # TODO: mem
+            #     assert len(active_map) > 0
+            #     new_tok_idx = cast(int, trying_token_ids.item())
+            #     if not new_tok_idx in active_map:
+            #         breakpoint()
+            #     new_tok = active_map[new_tok_idx]
+            #     update_batch_state(0, new_tok_idx)
+            #     assert active_completion.startswith(new_tok) or new_tok.startswith(
+            #         active_completion
+            #     )
+            #     active_completion = active_completion[len(new_tok) :]
+            #     active_completion_ret = active_completion
+            #     break
             # Batches denied by Trie
             if self.use_mem:
                 batch_is_denied = [False] * self.batch_size
@@ -487,13 +523,37 @@ class Synthesizer:
                 trying_token_id_item = cast(int, trying_token_id.item())
                 trying_token = self.model.token_map[trying_token_id_item]
                 gpu_time += time.perf_counter() - _start
-                if (
+                if active_completion is not None:
+                    assert self.use_mem
+                    if trying_token.startswith(
+                        active_completion
+                    ) or active_completion.startswith(trying_token):
+                        update_batch_state(batch_idx, trying_token_id_item)
+                        print(active_completion)
+                        active_completion = active_completion[len(trying_token) :]
+                        active_completion_ret = active_completion
+                        print(active_completion)
+                    else:
+                        probs[batch_idx, trying_token_id_item] = 0.0
+                        mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
+                        batch_is_denied[batch_idx] = True
+                elif (
+                    self.use_mem
+                    and (
+                        active_completion_ret := mem_feasible_token_ids[batch_idx].get(
+                            trying_token_id_item
+                        )
+                    )
+                    is not None
+                ):
+                    update_batch_state(batch_idx, trying_token_id_item)
+                elif (
                     self.model.is_special_token(trying_token)
                     or self.trivially_feasible(trying_token)
-                    or (
-                        self.use_mem
-                        and trying_token_id_item in mem_feasible_token_ids[batch_idx]
-                    )
+                    # or (
+                    #     self.use_mem
+                    #     and trying_token_id_item in mem_feasible_token_ids[batch_idx]
+                    # )
                 ):
                     _start = time.perf_counter()
                     update_batch_state(batch_idx, trying_token_id_item)
@@ -502,6 +562,7 @@ class Synthesizer:
                     trying_token
                 ):
                     _start = time.perf_counter()
+                    probs[batch_idx, trying_token_id_item] = 0.0
                     mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
                     batch_is_denied[batch_idx] = True
                     infeasible_time += time.perf_counter() - _start
@@ -542,7 +603,9 @@ class Synthesizer:
                     if isinstance(success, str) and ACTIVE:
                         active_completion_ret = success
                     if self.use_mem:
-                        mem_feasible_token_ids[batch_idx].add(trying_token_id_item)
+                        mem_feasible_token_ids[batch_idx][trying_token_id_item] = (
+                            success if isinstance(success, str) else None
+                        )
                 else:
                     probs[batch_idx, trying_token_id_item] = 0.0
                     if self.use_mem:
@@ -550,6 +613,8 @@ class Synthesizer:
                         mem_denied_tokens[batch_idx].insert(trying_token)
             # print("Checking:", time.perf_counter() - start)
         assert (next_token_ids == special_value).sum().item() == 0
+        if active_completion_ret is not None and len(active_completion_ret) == 0:
+            active_completion_ret = None
         return (
             cast(torch.LongTensor, next_token_ids),
             active_completion_ret,
@@ -610,6 +675,7 @@ class Synthesizer:
         unfinished_sequences = input_ids.new(input_ids.shape[0]).fill_(1)
 
         # auto-regressive generation
+        active_completion: str | None = None
         while True:
             assert not ACTIVE or (
                 self.batch_size == 1
@@ -654,7 +720,6 @@ class Synthesizer:
             # if self.batch_size == 1 and os.getenv("ACTIVE") is not None:
             #     next_token_ids = self.active_decode(probs)
 
-            active_completion: str | None = None
             if self.is_plain or CHART_11:  # or count > 10:
                 # shape: (1)
                 start = time.perf_counter()
@@ -666,6 +731,16 @@ class Synthesizer:
                     probs, active_completion
                 )
                 assert ACTIVE or active_completion is None
+                # if active_completion is not None:
+                if ACTIVE:
+                    assert self.batch_size == 1
+                    failed_msg = (
+                        "" if not self.gen_state.batch_is_failed[0] else "Failed"
+                    )
+                    logging.info(f"ACTIVE {failed_msg}: {active_completion}")
+                    logging.info(
+                        f"       {failed_msg}: {self.gen_state.gen_contexts[0].generated_tokens}"
+                    )
                 # print("Time:", time.perf_counter() - start)
                 # breakpoint()
                 # except RuntimeError:
@@ -703,59 +778,60 @@ class Synthesizer:
             if len(input_ids[0]) + 1 == max_length:
                 break
 
-            if ACTIVE:
-                input_state_after_pruning = pickle.dumps(
-                    self.gen_state.gen_contexts[0].generated_ids
-                )
-                assert self.mem_active is not None
-                mem_result = self.mem_active.get(input_state_after_pruning)
-                if mem_result is not None:
-                    (
-                        potential_next_token_ids,
-                        next_token_ids_list,
-                        active_completion_str,
-                    ) = mem_result
-                    logging.info(
-                        f"ACTIVE(HIT): {''.join(self.model.token_map[idx] for idx in potential_next_token_ids)}"
-                    )
-                    # assert isinstance(input_state_after_pruning, bytes)
-                    # potential_next_token_ids = self.mem_active.get(input_state_after_pruning)
-                    # if potential_next_token_ids is not None:
-                    assert potential_next_token_ids[0] == next_token_ids[0]
-                    next_token_ids = potential_next_token_ids
-                    lsp_context = self.lsp_contexts[0]
-                    gen_context = self.gen_state.gen_contexts[0]
-                    lsp_context.text_file.add(active_completion_str)
-                    gen_context.generated_ids.extend(next_token_ids_list)
-                    gen_context.generated_tokens.extend(
-                        self.model.token_map[id] for id in next_token_ids_list
-                    )
-                elif isinstance(active_completion, str) and len(active_completion) > 0:
-                    # breakpoint()
-                    assert self.batch_size == 1
-                    next_token_ids_list = self.tokenize(active_completion)
-                    lsp_context = self.lsp_contexts[0]
-                    gen_context = self.gen_state.gen_contexts[0]
-                    lsp_context.text_file.add(active_completion)
-                    gen_context.generated_ids.extend(next_token_ids_list)
-                    gen_context.generated_tokens.extend(
-                        self.model.token_map[id] for id in next_token_ids_list
-                    )
-                    logging.info(f"ACTIVE: {active_completion}")
-                    active_completion_tensor = torch.tensor(
-                        next_token_ids_list, dtype=torch.long, device=utils.DEVICE
-                    )
-                    # assert active_completion_tensor.shape[0] == next_token_ids.shape[0]
-                    next_token_ids = torch.cat(
-                        (next_token_ids, active_completion_tensor)
-                    )
-                    self.mem_active[input_state_after_pruning] = (
-                        next_token_ids,
-                        next_token_ids_list,
-                        active_completion,
-                    )
+            # if ACTIVE:
+            #     input_state_after_pruning = pickle.dumps(
+            #         self.gen_state.gen_contexts[0].generated_ids
+            #     )
+            #     assert self.mem_active is not None
+            #     mem_result = self.mem_active.get(input_state_after_pruning)
+            #     if mem_result is not None:
+            #         (
+            #             potential_next_token_ids,
+            #             next_token_ids_list,
+            #             active_completion_str,
+            #         ) = mem_result
+            #         logging.info(
+            #             f"ACTIVE(HIT): {''.join(self.model.token_map[idx] for idx in potential_next_token_ids)}"
+            #         )
+            #         # assert isinstance(input_state_after_pruning, bytes)
+            #         # potential_next_token_ids = self.mem_active.get(input_state_after_pruning)
+            #         # if potential_next_token_ids is not None:
+            #         assert potential_next_token_ids[0] == next_token_ids[0]
+            #         next_token_ids = potential_next_token_ids
+            #         lsp_context = self.lsp_contexts[0]
+            #         gen_context = self.gen_state.gen_contexts[0]
+            #         lsp_context.text_file.add(active_completion_str)
+            #         gen_context.generated_ids.extend(next_token_ids_list)
+            #         gen_context.generated_tokens.extend(
+            #             self.model.token_map[id] for id in next_token_ids_list
+            #         )
+            #     elif isinstance(active_completion, str) and len(active_completion) > 0:
+            #         # breakpoint()
+            #         assert self.batch_size == 1
+            #         next_token_ids_list = self.tokenize(active_completion)
+            #         lsp_context = self.lsp_contexts[0]
+            #         gen_context = self.gen_state.gen_contexts[0]
+            #         lsp_context.text_file.add(active_completion)
+            #         gen_context.generated_ids.extend(next_token_ids_list)
+            #         gen_context.generated_tokens.extend(
+            #             self.model.token_map[id] for id in next_token_ids_list
+            #         )
+            #         logging.info(f"ACTIVE: {active_completion}")
+            #         active_completion_tensor = torch.tensor(
+            #             next_token_ids_list, dtype=torch.long, device=utils.DEVICE
+            #         )
+            #         # assert active_completion_tensor.shape[0] == next_token_ids.shape[0]
+            #         next_token_ids = torch.cat(
+            #             (next_token_ids, active_completion_tensor)
+            #         )
+            #         self.mem_active[input_state_after_pruning] = (
+            #             next_token_ids,
+            #             next_token_ids_list,
+            #             active_completion,
+            #         )
             # update generated ids, model inputs, and length for next step
             use_cache = self.batch_size != 1 or len(next_token_ids) == 1
+            assert use_cache
             # use_cache = True
             # An ad-hoc solution for active completion (batch size must equals 1)
             if self.batch_size == 1:
