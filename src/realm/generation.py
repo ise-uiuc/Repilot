@@ -545,20 +545,24 @@ class Synthesizer:
                 trying_token_id_item = cast(int, trying_token_id.item())
                 trying_token = self.model.token_map[trying_token_id_item]
                 gpu_time += time.perf_counter() - _start
-                if active_completion is not None:
-                    assert self.use_mem
-                    if trying_token.startswith(
-                        active_completion
-                    ) or active_completion.startswith(trying_token):
-                        update_batch_state(batch_idx, trying_token_id_item)
-                        # print(active_completion)
-                        active_completion = active_completion[len(trying_token) :]
-                        active_completion_ret = active_completion
-                        # print(active_completion)
-                    else:
-                        probs[batch_idx, trying_token_id_item] = 0.0
-                        mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
-                        batch_is_denied[batch_idx] = True
+                if active_completion is not None and active_completion.startswith(
+                    trying_token
+                ):
+                    # WRONG
+                    # trying_token.startswith(
+                    #     active_completion
+                    # ) or
+                    update_batch_state(batch_idx, trying_token_id_item)
+                    # print(active_completion)
+                    active_completion = active_completion[len(trying_token) :]
+                    active_completion_ret = active_completion
+                    # print(active_completion)
+                elif active_completion is not None and not trying_token.startswith(
+                    active_completion
+                ):
+                    probs[batch_idx, trying_token_id_item] = 0.0
+                    mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
+                    batch_is_denied[batch_idx] = True
                 elif (
                     self.use_mem
                     and (
