@@ -2,11 +2,13 @@ import inspect
 import logging
 import os
 import pickle
+import sys
 import time
 import typing
 import warnings
 
 logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
+logging.info(str(sys.argv))
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Callable, Dict, Iterable, NamedTuple, Optional, Union, cast
@@ -423,33 +425,33 @@ class Synthesizer:
                 probs_assign += time.perf_counter() - _start
 
         # Active completion constraint
-        # if ACTIVE:
-        #     assert self.mem_active is not None
-        #     if (mem_active_result := self.mem_active.get(input_state)) is not None:
-        #         probs, active_completion = mem_active_result
-        #         probs_to_process = probs
-        #         logging.info(f"ACTIVE (HIT): {active_completion}")
-        #     elif active_completion is not None:
-        #         probs_to_process = probs
-        #         # if the length is 0, it must be a new map because the same state will never be reached
-        #         assert len(active_completion) > 0
-        #         assert len(probs_to_process) == 1
-        #         non_zeros = probs_to_process[0].nonzero()
-        #         n_success = 0
-        #         for tok_idx in non_zeros:
-        #             tok_idx_item = cast(int, tok_idx.item())
-        #             tok = self.model.token_map[tok_idx_item]
-        #             if tok.startswith(
-        #                 active_completion
-        #             ) or active_completion.startswith(tok):
-        #                 n_success += 1
-        #             else:
-        #                 probs[0, tok_idx_item] = 0.0
-        #                 # probs_to_process[0, tok_idx_item] = 0.0
-        #         if n_success == 0:
-        #             assert probs.sum().item() == 0
-        #         else:
-        #             self.mem_active[input_state] = (probs, active_completion)
+        if ACTIVE:
+            assert self.mem_active is not None
+            if (mem_active_result := self.mem_active.get(input_state)) is not None:
+                probs, active_completion = mem_active_result
+                probs_to_process = probs
+                logging.info(f"ACTIVE (HIT): {active_completion}")
+            elif active_completion is not None:
+                probs_to_process = probs
+                # if the length is 0, it must be a new map because the same state will never be reached
+                assert len(active_completion) > 0
+                assert len(probs_to_process) == 1
+                non_zeros = probs_to_process[0].nonzero()
+                n_success = 0
+                for tok_idx in non_zeros:
+                    tok_idx_item = cast(int, tok_idx.item())
+                    tok = self.model.token_map[tok_idx_item]
+                    if tok.startswith(
+                        active_completion
+                    ) or active_completion.startswith(tok):
+                        n_success += 1
+                    else:
+                        probs[0, tok_idx_item] = 0.0
+                        # probs_to_process[0, tok_idx_item] = 0.0
+                if n_success == 0:
+                    assert probs.sum().item() == 0
+                else:
+                    self.mem_active[input_state] = (probs, active_completion)
 
         # Invariant: not batch_needs_to_process[idx] === next_token_ids[idx] is determined
         # Active completion
@@ -499,23 +501,23 @@ class Synthesizer:
             assert trying_token_ids.dtype == torch.long
             assert len(trying_token_ids) == sum(batch_needs_to_process)
 
-            # if ACTIVE and active_completion is not None:
-            #     # TODO: mem
-            #     new_tok_idx = cast(int, trying_token_ids.item())
-            #     new_tok = self.model.token_map[new_tok_idx]
-            #     if active_completion.startswith(new_tok):
-            #         update_batch_state(0, new_tok_idx)
-            #         # assert active_completion.startswith(new_tok) or new_tok.startswith(
-            #         #     active_completion
-            #         # )
-            #         active_completion = active_completion[len(new_tok) :]
-            #         active_completion_ret = active_completion
-            #         break
-            #     else:
-            #         assert new_tok.startswith(active_completion)
-            #         active_completion = None
-            #         active_completion_ret = None
-            # assert active_completion is None
+            if ACTIVE and active_completion is not None:
+                # TODO: mem
+                new_tok_idx = cast(int, trying_token_ids.item())
+                new_tok = self.model.token_map[new_tok_idx]
+                if active_completion.startswith(new_tok):
+                    update_batch_state(0, new_tok_idx)
+                    # assert active_completion.startswith(new_tok) or new_tok.startswith(
+                    #     active_completion
+                    # )
+                    active_completion = active_completion[len(new_tok) :]
+                    active_completion_ret = active_completion
+                    break
+                else:
+                    assert new_tok.startswith(active_completion)
+                    active_completion = None
+                    active_completion_ret = None
+            assert active_completion is None
 
             # Batches denied by Trie
             if self.use_mem:

@@ -286,9 +286,7 @@ class Repairer:
             n_samples = config.n_samples - (
                 0 if n_already_generated is None else n_already_generated
             )
-            torch.manual_seed(0)
-            numpy.random.seed(0)
-            random.seed(0)
+
             for idx in range(n_samples):
                 print("Hunk index:", hunk_idx)
                 print("Repair index:", idx)
