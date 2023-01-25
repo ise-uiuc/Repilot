@@ -119,7 +119,7 @@ class AvgPatch(JsonSerializable):
 class RepairTransformedResult(JsonSpecificDirectoryDumpable):
     # bug_id -> (bug_specs, list[patch])
     result_dict: dict[str, tuple[list[TextFile], list[AvgPatch]]]
-    all_appeared: dict[str, set[str]]
+    all_appeared: dict[str, list[str]]
 
     @classmethod
     def name(cls):
@@ -149,7 +149,7 @@ class RepairTransformedResult(JsonSpecificDirectoryDumpable):
                 )
                 for bug_id, (text_files, avg_patches) in d["result_dict"].items()
             },
-            {bug_id: set(appeared) for bug_id, appeared in d["all_appeared"].items()},
+            {bug_id: list(appeared) for bug_id, appeared in d["all_appeared"].items()},
         )
 
 

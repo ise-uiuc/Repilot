@@ -77,7 +77,7 @@ class Runner:
         all_appeared = report.transformed_result.all_appeared
         for bug_id, files in report.repair_result.result_dict.items():
             buggy_files, patches = result_dict.setdefault(bug_id, ([], []))
-            appeared = all_appeared.setdefault(bug_id, set())
+            appeared = all_appeared.setdefault(bug_id, [])
             for patch_idx, (buggy_text_files, patch) in enumerate(iter_files(files)):
                 if patch_idx < len(patches):
                     continue
@@ -92,7 +92,7 @@ class Runner:
                     if concat_hunk_str in appeared:
                         is_duplicate = True
                     else:
-                        appeared.add(concat_hunk_str)
+                        appeared.append(concat_hunk_str)
                         is_duplicate = False
                 patches.append(AvgPatch(patch, is_duplicate))
             # result_dict[bug_id] = patches
