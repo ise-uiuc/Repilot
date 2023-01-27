@@ -67,6 +67,8 @@ class Report(utils.IORetrospective):
         if not (sys_args_path := path / f"sys_args_{os.getpid()}.txt").exists():
             with open(sys_args_path, "w") as f:
                 json.dump(sys.argv, f)
+                f.write("\n")
+                json.dump(dict(os.environ), f, indent=2)
         if not (meta_path := path / "meta.txt").exists():
             with open(meta_path, "w") as f:
                 utils.log_git_repo(f, "Repair tool", Path("."))

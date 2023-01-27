@@ -130,6 +130,11 @@ class Defects4J:
             for (id, bug) in self.all_bugs.items()
             if len(bug.buggy_files) == 1 and len(bug.buggy_files[0].changes) == 1
         }
+        self.single_line_bugs = {
+            id: bug
+            for (id, bug) in self.single_hunk_bugs.items()
+            if len(bug.buggy_files[0].changes[0].added_lines) == 1
+        }
 
     @staticmethod
     def split_bug_id(bug_id: str) -> tuple[str, str]:

@@ -1,3 +1,4 @@
+import os
 import random
 import shutil
 import time
@@ -145,7 +146,11 @@ class Repairer:
         config = repair_result.repair_config
         pattern = re.compile(config.bug_pattern)
         bugs_considered = (
-            self.d4j.single_hunk_bugs if config.hunk_only else self.d4j.all_bugs
+            self.d4j.single_line_bugs
+            if os.getenv("LINE") is not None
+            else self.d4j.single_hunk_bugs
+            if config.hunk_only
+            else self.d4j.all_bugs
         )
         bugs_to_repair = {
             bug_id: bug
