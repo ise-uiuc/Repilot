@@ -97,6 +97,12 @@ class JdtLspAnalyzer(Process):
         self.stop_lsp()
         print("Analyzer terminated")
 
+    def get_diagnostics(self) -> list[spec.ResponseMessage]:
+        return self.client.current_diagnostics
+
+    def clear_diagnostics(self):
+        self.client.current_diagnostics.clear()
+
     def init(self) -> spec.ResponseMessage:
         # self.active_text: Optional[TextDocument] = None
 

@@ -51,7 +51,7 @@ class AvgFilePatch:
     def compute_patch(self, bug: TextFile) -> TextFile | None:
         assert self.buggy_hunk_indices == sorted(
             self.buggy_hunk_indices, reverse=True, key=lambda tp: tp[0]
-        )
+        ), f"{self.buggy_hunk_indices}"
         assert len(self.hunks) > 0
         assert len(self.hunks) == len(self.buggy_hunk_indices)
         patch = bug.copy()

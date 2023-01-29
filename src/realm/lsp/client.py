@@ -93,6 +93,7 @@ class LSPClient(Thread):
         # self.stopped = False
         self.read_lock = Lock()
         self.write_lock = Lock()
+        self.current_diagnostics: list[spec.ResponseMessage] = []
 
     # def stop(self):
     #     self.stopped = True
@@ -101,11 +102,13 @@ class LSPClient(Thread):
         while True:
             server_response = self.recv()
             if self.verbose:
-                print("THREAD received", str(server_response)[:50])
+                print("THREAD received", str(server_response))
             if "method" in server_response and "id" in server_response:
                 # print(server_response)
                 server_response = cast(spec.RequestMessage, server_response)
                 self.send(response(server_response["id"], None))
+            # elif "method" in server_response and server_response["method"] == "textDocument/publishDiagnostics":
+            #     self.current_diagnostics.append(server_response)
             elif "id" in server_response:
                 server_response = cast(spec.ResponseMessage, server_response)
                 id = server_response["id"]

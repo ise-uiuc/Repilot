@@ -1,3 +1,4 @@
+import difflib
 import functools
 import os
 import subprocess
@@ -428,10 +429,15 @@ def validate_patch(
     assert len(patch.file_patches) == len(bugs)
     for patch_file, bug in zip(patch.file_patches, bugs):
         patch_text_file = patch_file.compute_patch(bug)
+        # Convert unified_diff to string
         assert patch_text_file is not None
+        unified_diff = difflib.unified_diff(
+            bug.content.splitlines(), patch_text_file.content.splitlines()
+        )
+        print("\n".join(unified_diff))
         # assert (d4j.d4j_checkout_root / patch_text_file.path).exists()
         patch_files.append(patch_text_file)
-    assert len(set(p._path for p in patch_files)) == 1
+    # assert len(set(p._path for p in patch_files)) == 1, [p._path for p in patch_files]
     # Checkout the fixed version and then apply patches b/c we do not consider test file changes
     d4j.checkout(bug_id, buggy=False)
     for patch_text_file in patch_files:

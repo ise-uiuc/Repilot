@@ -101,10 +101,13 @@ class Bug(NamedTuple):
     buggy_files: list[BuggyFile]
     proj_path: str
 
+    def n_hunks(self) -> int:
+        return len([change for file in self.buggy_files for change in file.changes])
+
     def iter_hunks(self) -> Iterator[tuple[tuple[int, int], BuggyFile, Change]]:
         """Iterate hunks in a reversed way. This is deterministic and each hunk can be assigned an ID"""
         for idx_i, buggy_file in enumerate(self.buggy_files):
-            for idx_j, change in enumerate(buggy_file.changes):
+            for idx_j, change in enumerate(reversed(buggy_file.changes)):
                 yield ((idx_i, idx_j), buggy_file, change)
 
 
@@ -134,6 +137,15 @@ class Defects4J:
             id: bug
             for (id, bug) in self.single_hunk_bugs.items()
             if len(bug.buggy_files[0].changes[0].added_lines) == 1
+        }
+        self.d4j1_multi_hunk_bugs = {
+            id: bug
+            for (id, bug) in self.all_bugs.items()
+            if id not in self.single_hunk_bugs
+            and (
+                (proj_id := Defects4J.split_bug_id(id))[0] != "Closure"
+                or int(proj_id[1]) <= 133
+            )
         }
 
     @staticmethod

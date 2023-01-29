@@ -22,6 +22,7 @@ from .report import Report
 from .results import HunkRepairResult, RepairResult
 
 DATA_DIR = Path(os.getenv("LSP", ".lsp_data"))
+# DIAGNOSTICS = {}
 
 
 def wait_until_all_analyzers_free(
@@ -150,6 +151,8 @@ class Repairer:
             if os.getenv("LINE") is not None
             else self.d4j.single_hunk_bugs
             if config.hunk_only
+            else self.d4j.d4j1_multi_hunk_bugs
+            if os.getenv("D4J1_MULTI_HUNK") is not None
             else self.d4j.all_bugs
         )
         bugs_to_repair = {
@@ -161,7 +164,11 @@ class Repairer:
         }
         for bug_id, bug in bugs_to_repair.items():
             gen.CHART_11 = bug_id == "Chart-11"
+            # import json
             self.repair_bug(report, bug_id, bug)
+        #     json.dump(DIAGNOSTICS, open("diagnostics.json", "w"), indent=2)
+        # import json
+        # json.dump(DIAGNOSTICS, open("diagnostics.json", "w"), indent=2)
 
     def clean_up(self):
         for connection, _ in self.active_connection_analyzer_pairs:
@@ -209,7 +216,9 @@ class Repairer:
                     analyzer.start()
                     self.active_connection_analyzer_pairs.append((connection, analyzer))
                 for connection in connections:
-                    connection.send(Message(False, JdtLspAnalyzer.init.__name__))
+                    connection.send(Message(True, JdtLspAnalyzer.init.__name__))
+                for connection in connections:
+                    init_result = connection.recv()
             else:
                 meaning_less = utils.Meaningless
                 connection_analyzer_pairs = cast(
@@ -237,10 +246,18 @@ class Repairer:
                             )
                         )
                 wait_until_all_analyzers_free(connections)
+                # for connection in connections:
+                #     connection.send(Message(True, JdtLspAnalyzer.get_diagnostics.__name__))
+                # for connection in connections:
+                #     diagnostics = connection.recv()
+                #     DIAGNOSTICS[bug_id] = diagnostics
+                #     connection.send(Message(False, JdtLspAnalyzer.clear_diagnostics.__name__))
+                #     print(diagnostics)
             return connections, buggy_text_files
 
         # Ready to repair
         analyzers_initialized = False
+        n_hunks = bug.n_hunks()
         for hunk_idx, buggy_file, change in bug.iter_hunks():
             result_dict = report.repair_result.result_dict
             f_idx, h_idx = hunk_idx
@@ -292,7 +309,7 @@ class Repairer:
                 0 if n_already_generated is None else n_already_generated
             )
 
-            for idx in range(n_samples):
+            for idx in range(n_samples // n_hunks):
                 print("Hunk index:", hunk_idx)
                 print("Repair index:", idx)
 

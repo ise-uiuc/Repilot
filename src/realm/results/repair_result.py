@@ -163,12 +163,12 @@ class RepairResult(IORetrospective):
             for (f_id, h_id), d_hunks in d_files:
                 assert d_hunks.is_dir()
                 buggy_hunk = BuggyHunk.from_json_file(d_hunks / "bug.json")
-                assert len(files) == f_id
                 if h_id == 0:
                     hunks: list[HunkRepairResult] = []
                     files.append(hunks)
                 else:
                     hunks = files[-1]
+                assert len(files) == f_id + 1, f"{len(files)} != {f_id}"
                 assert len(hunks) == h_id
                 hunk = HunkRepairResult(buggy_hunk, [])
                 f_tagged_result_jsons = list(

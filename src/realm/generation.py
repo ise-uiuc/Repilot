@@ -787,8 +787,7 @@ class Synthesizer:
                         logging.info(f"ACTIVE {failed_msg}: {active_completion}")
             generated_tokens = self.gen_state.gen_contexts[0].generated_tokens
             logging.info(
-                f"       {failed_msg}: {generated_tokens}\n"
-                f"       {failed_msg}: {''.join(generated_tokens)}\n"
+                f"       {generated_tokens}\n" f"       {''.join(generated_tokens)}\n"
             )
             # print("Time:", time.perf_counter() - start)
             # breakpoint()
