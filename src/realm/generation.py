@@ -7,7 +7,8 @@ import time
 import typing
 import warnings
 
-logging.basicConfig(filename="realm.log", encoding="utf-8", level=logging.INFO)
+LOG_FILE = os.getenv("LOG", "realm.log")
+logging.basicConfig(filename=LOG_FILE, encoding="utf-8", level=logging.INFO)
 logging.info(str(sys.argv))
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
@@ -446,6 +447,9 @@ class Synthesizer:
                     ) or active_completion.startswith(tok):
                         n_success += 1
                     else:
+                        logging.info(
+                            f"Active Pruning: {tok}, prob: {probs[0, tok_idx_item].item()}"
+                        )
                         probs[0, tok_idx_item] = 0.0
                         # probs_to_process[0, tok_idx_item] = 0.0
                 if n_success == 0:
@@ -506,6 +510,9 @@ class Synthesizer:
                 new_tok_idx = cast(int, trying_token_ids.item())
                 new_tok = self.model.token_map[new_tok_idx]
                 if active_completion.startswith(new_tok):
+                    logging.info(
+                        f"ACTIVE (MATCH): {new_tok}, prob: {probs[0, new_tok_idx].item()}"
+                    )
                     update_batch_state(0, new_tok_idx)
                     # assert active_completion.startswith(new_tok) or new_tok.startswith(
                     #     active_completion
@@ -639,12 +646,14 @@ class Synthesizer:
                         mem_feasible_token_ids[batch_idx][trying_token_id_item] = (
                             success if isinstance(success, str) else None
                         )
+                    token_prob = probs[batch_idx, trying_token_id_item].item()
                     logging.info(
-                        f"Accepted: {curr_trying_token}, completion: {success}"
+                        f"Accepted: {curr_trying_token}, completion: {success}, prob: {token_prob}"
                     )
                 else:
+                    token_prob = probs[batch_idx, trying_token_id_item].item()
                     probs[batch_idx, trying_token_id_item] = 0.0
-                    logging.info(f"Pruned: {curr_trying_token}")
+                    logging.info(f"Pruned: {curr_trying_token}, prob: {token_prob}")
                     if self.use_mem:
                         mem_infeasible_token_ids[batch_idx].append(trying_token_id_item)
                         mem_denied_tokens[batch_idx].insert(trying_token)
@@ -771,19 +780,20 @@ class Synthesizer:
                 )
                 assert ACTIVE or active_completion is None
                 # if active_completion is not None:
+                failed_msg = "" if not self.gen_state.batch_is_failed[0] else "Failed"
                 if ACTIVE:
                     assert self.batch_size == 1
-                    failed_msg = (
-                        "" if not self.gen_state.batch_is_failed[0] else "Failed"
-                    )
-                    logging.info(f"ACTIVE {failed_msg}: {active_completion}")
-                    logging.info(
-                        f"       {failed_msg}: {self.gen_state.gen_contexts[0].generated_tokens}"
-                    )
-                # print("Time:", time.perf_counter() - start)
-                # breakpoint()
-                # except RuntimeError:
-                #     return completion_overhead, [], None, generation_log
+                    if active_completion is not None:
+                        logging.info(f"ACTIVE {failed_msg}: {active_completion}")
+            generated_tokens = self.gen_state.gen_contexts[0].generated_tokens
+            logging.info(
+                f"       {failed_msg}: {generated_tokens}\n"
+                f"       {failed_msg}: {''.join(generated_tokens)}\n"
+            )
+            # print("Time:", time.perf_counter() - start)
+            # breakpoint()
+            # except RuntimeError:
+            #     return completion_overhead, [], None, generation_log
 
             # finished sentences should have their next token be a padding token
             if eos_token_id is not None:

@@ -39,11 +39,14 @@ Datapoint = TypeVar("Datapoint")
 EvaluationResult = TypeVar("EvaluationResult")
 
 
-@dataclass(frozen=True)
+@dataclass
 class Runner:
     """A `Report` converter"""
 
     report: Report
+
+    def __post_init__(self):
+        self.d4j = self.report.get_d4j()
 
     @staticmethod
     def create(root: Path, config: MetaConfig, repair_config: RepairConfig) -> "Runner":
@@ -110,7 +113,7 @@ class Runner:
         """Recoverable validation"""
         bug_pattern = re.compile(config.bug_pattern)
         report = self.report
-        d4j = report.get_d4j()
+        d4j = self.d4j
         assert report.transformed_result is not None
         if report.validation_result is None:
             report.validation_result = ValidationResult([], {})
@@ -186,13 +189,20 @@ class Runner:
         # For speed of ploting, there is no warning if the transformed result is partial
         # self.transform_with_message()
         assert self.report.transformed_result is not None
-        return (
+        result = (
             (bug_id, patches)
             for bug_id, (
                 _,
                 patches,
             ) in self.report.transformed_result.result_dict.items()
         )
+        if os.getenv("LINE") is not None:
+            result = (
+                (bug_id, patches)
+                for bug_id, patches in result
+                if bug_id in self.d4j.single_line_bugs
+            )
+        return result
 
     def get_validation_items(
         self,

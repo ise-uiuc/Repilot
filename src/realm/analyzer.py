@@ -97,13 +97,13 @@ class JdtLspAnalyzer(Process):
         self.stop_lsp()
         print("Analyzer terminated")
 
-    def init(self):
+    def init(self) -> spec.ResponseMessage:
         # self.active_text: Optional[TextDocument] = None
 
         # Initialize the server
         path = Path(self.proj_path)
         # with open('log1.json', 'w') as f:
-        self.client.initialize(
+        msg = self.client.initialize(
             {
                 "processId": self.process.pid,
                 "clientInfo": {"name": path.name, "version": "0.0.0"},
@@ -708,6 +708,7 @@ class JdtLspAnalyzer(Process):
         #     self.client.initialize(d)
         self.client.initialized(cast(spec.InitializedParams, {}))
         # self.client.workspace_didChangeConfiguration(d1)
+        return msg
 
     def sync(self, text: TextFile):
         self.active_text = text

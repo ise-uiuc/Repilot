@@ -21,7 +21,7 @@ from .model import CodeT5ForRealm, CodeT5Large
 from .report import Report
 from .results import HunkRepairResult, RepairResult
 
-DATA_DIR = Path(".lsp_data")
+DATA_DIR = Path(os.getenv("LSP", ".lsp_data"))
 
 
 def wait_until_all_analyzers_free(
