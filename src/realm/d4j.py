@@ -115,6 +115,17 @@ BugId = str
 BenchmarkMetadata = Dict[BugId, Bug]
 
 
+def is_d4j1(bug_id: str) -> bool:
+    proj, id = Defects4J.split_bug_id(bug_id)
+    return proj in [
+        "Time",
+        "Mockito",
+        "Lang",
+        "Math",
+        "Chart",
+    ] or (proj == "Closure" and int(id) <= 133)
+
+
 class Defects4J:
     def __init__(
         self, d4j_home: Path, d4j_checkout_root: Path, java8_home: Path
@@ -137,24 +148,23 @@ class Defects4J:
             id: bug
             for (id, bug) in self.single_hunk_bugs.items()
             if len(bug.buggy_files[0].changes[0].added_lines) == 1
+            # and len(bug.buggy_files[0].changes[0].removed_lines) == 1
         }
         self.d4j1_multi_hunk_bugs = {
             id: bug
             for (id, bug) in self.all_bugs.items()
-            if id not in self.single_hunk_bugs
-            and (
-                (proj_id := Defects4J.split_bug_id(id))[0] != "Closure"
-                or int(proj_id[1]) <= 133
-            )
+            if id not in self.single_hunk_bugs and is_d4j1(id)
         }
+
         self.d4j1_single_hunk_bugs = {
             id: bug
             for (id, bug) in self.all_bugs.items()
-            if id in self.single_hunk_bugs
-            and (
-                (proj_id := Defects4J.split_bug_id(id))[0] != "Closure"
-                or int(proj_id[1]) <= 133
-            )
+            if id in self.single_hunk_bugs and is_d4j1(id)
+        }
+        self.d4j2_single_line_bugs = {
+            id: bug
+            for (id, bug) in self.all_bugs.items()
+            if id in self.single_line_bugs and not is_d4j1(id)
         }
 
     @staticmethod

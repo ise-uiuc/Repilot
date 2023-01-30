@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import pickle
 import random
@@ -149,14 +150,14 @@ class Repairer:
         config = repair_result.repair_config
         pattern = re.compile(config.bug_pattern)
         bugs_considered = (
-            self.d4j.single_line_bugs
+            self.d4j.d4j2_single_line_bugs
             if os.getenv("LINE") is not None
-            else self.d4j.single_hunk_bugs
-            if config.hunk_only
             else self.d4j.d4j1_single_hunk_bugs
             if os.getenv("D4J1_SINGLE_HUNK") is not None
             else self.d4j.d4j1_multi_hunk_bugs
             if os.getenv("D4J1_MULTI_HUNK") is not None
+            else self.d4j.single_hunk_bugs
+            if config.hunk_only
             else self.d4j.all_bugs
         )
         bugs_to_repair = {
@@ -166,6 +167,7 @@ class Repairer:
             # Unicode error
             and bug_id != "Lang-25"
         }
+        print(len(bugs_to_repair), bugs_to_repair.keys())
         for bug_id, bug in bugs_to_repair.items():
             gen.CHART_11 = bug_id == "Chart-11"
             # import json
@@ -355,14 +357,22 @@ class Repairer:
                 # except TimeoutError:
                 #     self.report.report_timeout_error()
             if synthesizer.use_mem:
+                count = 0
                 assert synthesizer.mem is not None
-                mem_pruning.update(
-                    {
-                        state: ids
-                        for state, ids in synthesizer.mem.infeasible_token_ids.items()
-                        if len(ids) > 0
-                    }
+                for _, ids in synthesizer.mem.infeasible_token_ids.items():
+                    if len(ids) > 0:
+                        count += 1
+                logging.info(
+                    f"[{bug_id}, {hunk_idx}] Mem pruning: {count} states pruned"
                 )
-                breakpoint()
-                with open("mem_pruning.pkl", "wb") as f:
-                    pickle.dump(gen.MEM_PRUNING, f)
+            #     assert synthesizer.mem is not None
+            #     mem_pruning.update(
+            #         {
+            #             state: ids
+            #             for state, ids in synthesizer.mem.infeasible_token_ids.items()
+            #             if len(ids) > 0
+            #         }
+            #     )
+            # breakpoint()
+            # with open("mem_pruning.pkl", "wb") as f:
+            #     pickle.dump(gen.MEM_PRUNING, f)

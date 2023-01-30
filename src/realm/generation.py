@@ -309,12 +309,15 @@ class Synthesizer:
         assert self.gen_state is not None
         assert self.lsp_contexts is not None
         gen_contexts = self.gen_state.gen_contexts
+        start_time = time.perf_counter()
         if len(CURRENT_PRUNING) > 0:
+            print(len(CURRENT_PRUNING))
             for batch_idx in range(self.batch_size):
                 # print(batch_idx)
                 state = pickle.dumps(gen_contexts[batch_idx].generated_ids)
                 pruned = CURRENT_PRUNING.get(state, [])
                 probs[batch_idx, pruned] = 0.0
+        print("Overhead of pruning: ", time.perf_counter() - start_time)
         next_token_ids = cast(
             torch.LongTensor, torch.multinomial(probs, num_samples=1).squeeze(1)
         )
