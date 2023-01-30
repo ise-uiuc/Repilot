@@ -147,6 +147,15 @@ class Defects4J:
                 or int(proj_id[1]) <= 133
             )
         }
+        self.d4j1_single_hunk_bugs = {
+            id: bug
+            for (id, bug) in self.all_bugs.items()
+            if id in self.single_hunk_bugs
+            and (
+                (proj_id := Defects4J.split_bug_id(id))[0] != "Closure"
+                or int(proj_id[1]) <= 133
+            )
+        }
 
     @staticmethod
     def split_bug_id(bug_id: str) -> tuple[str, str]:

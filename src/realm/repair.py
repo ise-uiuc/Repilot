@@ -1,4 +1,6 @@
+import json
 import os
+import pickle
 import random
 import shutil
 import time
@@ -151,6 +153,8 @@ class Repairer:
             if os.getenv("LINE") is not None
             else self.d4j.single_hunk_bugs
             if config.hunk_only
+            else self.d4j.d4j1_single_hunk_bugs
+            if os.getenv("D4J1_SINGLE_HUNK") is not None
             else self.d4j.d4j1_multi_hunk_bugs
             if os.getenv("D4J1_MULTI_HUNK") is not None
             else self.d4j.all_bugs
@@ -309,11 +313,19 @@ class Repairer:
                 0 if n_already_generated is None else n_already_generated
             )
 
+            mem_pruning = gen.MEM_PRUNING.setdefault(bug_id, {}).setdefault(
+                hunk_idx, {}
+            )
             for idx in range(n_samples // n_hunks):
                 print("Hunk index:", hunk_idx)
                 print("Repair index:", idx)
 
+                try:
+                    gen.CURRENT_PRUNING = gen.MEM_PRUNING[bug_id][hunk_idx]
+                except KeyError:
+                    pass
                 synthesis_result_batch = synthesizer.synthesize()
+
                 assert len(synthesis_result_batch.results) == config.batch_size
                 for result in synthesis_result_batch.results:
                     if result.hunk is not None:
@@ -342,3 +354,15 @@ class Repairer:
                 # or a fatal implementation error!!
                 # except TimeoutError:
                 #     self.report.report_timeout_error()
+            if synthesizer.use_mem:
+                assert synthesizer.mem is not None
+                mem_pruning.update(
+                    {
+                        state: ids
+                        for state, ids in synthesizer.mem.infeasible_token_ids.items()
+                        if len(ids) > 0
+                    }
+                )
+                breakpoint()
+                with open("mem_pruning.pkl", "wb") as f:
+                    pickle.dump(gen.MEM_PRUNING, f)

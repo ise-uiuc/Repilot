@@ -12,6 +12,7 @@ logging.basicConfig(filename=LOG_FILE, encoding="utf-8", level=logging.INFO)
 logging.info(str(sys.argv))
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
+from pathlib import Path
 from typing import Callable, Dict, Iterable, NamedTuple, Optional, Union, cast
 
 import torch
@@ -88,6 +89,15 @@ JAVA_KEYWORDS = {
 # JDT.LS on Chart-11 is buggy
 CHART_11 = True
 ACTIVE = os.getenv("ACTIVE") is not None
+
+# Decoding map
+if os.getenv("LOAD_MEM") is not None:
+    MEM_PRUNING: dict[
+        str, dict[tuple[int, int], dict[bytes, list[int]]]
+    ] = utils.load_and_cache_data(Path("mem_pruning.pkl"), lambda: {})
+else:
+    MEM_PRUNING = {}
+CURRENT_PRUNING: dict[bytes, list[int]] = {}
 
 
 @dataclass
@@ -211,18 +221,18 @@ class Synthesizer:
             self.mem_active = {}
         if self.use_mem and self.mem is None:
             self.mem = Memorization.init()
-            state = pickle.dumps(
-                self.model.tokenizer.tokenize(self.buggy_hunk, add_special_tokens=False)
-            )
-            state_with_newline = pickle.dumps(
-                self.model.tokenizer.tokenize(
-                    self.buggy_hunk + "\n", add_special_tokens=False
-                )
-            )
-            self.mem.infeasible_token_ids[state] = [id for id in self.model.end_ids]
-            self.mem.infeasible_token_ids[state_with_newline] = [
-                id for id in self.model.end_ids
-            ]
+            # state = pickle.dumps(
+            #     self.model.tokenizer.tokenize(self.buggy_hunk, add_special_tokens=False)
+            # )
+            # state_with_newline = pickle.dumps(
+            #     self.model.tokenizer.tokenize(
+            #         self.buggy_hunk + "\n", add_special_tokens=False
+            #     )
+            # )
+            # self.mem.infeasible_token_ids[state] = [id for id in self.model.end_ids]
+            # self.mem.infeasible_token_ids[state_with_newline] = [
+            #     id for id in self.model.end_ids
+            # ]
 
     def tokenize(self, active_completion: str) -> list[int]:
         assert ACTIVE
@@ -299,6 +309,12 @@ class Synthesizer:
         assert self.gen_state is not None
         assert self.lsp_contexts is not None
         gen_contexts = self.gen_state.gen_contexts
+        if len(CURRENT_PRUNING) > 0:
+            for batch_idx in range(self.batch_size):
+                # print(batch_idx)
+                state = pickle.dumps(gen_contexts[batch_idx].generated_ids)
+                pruned = CURRENT_PRUNING.get(state, [])
+                probs[batch_idx, pruned] = 0.0
         next_token_ids = cast(
             torch.LongTensor, torch.multinomial(probs, num_samples=1).squeeze(1)
         )
@@ -427,6 +443,7 @@ class Synthesizer:
 
         # Active completion constraint
         if ACTIVE:
+            assert self.use_mem
             assert self.mem_active is not None
             if (mem_active_result := self.mem_active.get(input_state)) is not None:
                 probs, active_completion = mem_active_result
@@ -451,6 +468,7 @@ class Synthesizer:
                             f"Active Pruning: {tok}, prob: {probs[0, tok_idx_item].item()}"
                         )
                         probs[0, tok_idx_item] = 0.0
+                        infeasible_indices.append(tok_idx_item)
                         # probs_to_process[0, tok_idx_item] = 0.0
                 if n_success == 0:
                     assert probs.sum().item() == 0
