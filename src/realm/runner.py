@@ -93,7 +93,15 @@ class Runner:
                     is_duplicate = False
                 else:
                     concat_hunk_str = concat_hunks(patch)
-                    if concat_hunk_str in appeared:
+                    aggressive = os.getenv("AGGRESSIVE") is not None
+                    if not aggressive and concat_hunk_str in appeared:
+                        is_duplicate = True
+                    elif aggressive and utils.remove_whitespace(
+                        utils.remove_java_comments(concat_hunk_str)
+                    ) in {
+                        utils.remove_whitespace(utils.remove_java_comments(hunk_str))
+                        for hunk_str in appeared
+                    }:
                         is_duplicate = True
                     else:
                         appeared.append(concat_hunk_str)
