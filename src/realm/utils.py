@@ -3,6 +3,7 @@ import itertools
 import json
 import os
 import pickle
+import re
 from functools import partial
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -306,3 +307,13 @@ def longest_common_prefix(strings: list[str]) -> str:
         except IndexError:
             break
     return prefix
+
+
+def remove_whitespace(s: str) -> str:
+    return s.replace(" ", "").replace("\t", "").replace("\n", "").replace("\r", "")
+
+
+def remove_java_comments(text: str) -> str:
+    text = re.sub(re.compile("//.*"), "", text)
+    text = re.sub(re.compile("/\*.*?\*/", re.DOTALL), "", text)
+    return text

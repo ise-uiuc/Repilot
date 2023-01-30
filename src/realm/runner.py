@@ -142,13 +142,22 @@ class Runner:
                     continue
                 if cache is not None:
                     concat_hunk_str = concat_hunks(patch.file_patches)
-                    bug_id_cache = cache.result_dict.get(bug_id)
-                    bug_id_result = utils.bind_optional(
-                        bug_id_cache, lambda c: c.get(concat_hunk_str)
+                    bug_id_cache = cache.result_dict.setdefault(bug_id, {})
+                    ws_removed_cache = {
+                        utils.remove_whitespace(
+                            utils.remove_java_comments(hunk_str)
+                        ): result
+                        for hunk_str, result in bug_id_cache.items()
+                    }
+                    ws_removed_concat_hunk_str = utils.remove_whitespace(
+                        utils.remove_java_comments(concat_hunk_str)
                     )
+                    bug_id_result = ws_removed_cache.get(ws_removed_concat_hunk_str)
                     if bug_id_result is not None:
                         print(f"[{bug_id}] Skipped (cache):")
                         print(concat_hunk_str)
+                        print("WS REMOVED")
+                        print(ws_removed_concat_hunk_str)
                         validated_patches[patch_idx] = (-1, bug_id_result)
                         continue
                 unvalidated_analysis_results[-1].append(
