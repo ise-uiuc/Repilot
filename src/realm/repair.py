@@ -268,25 +268,26 @@ class Repairer:
             result_dict = report.repair_result.result_dict
             f_idx, h_idx = hunk_idx
 
-            def get_files() -> list[list[HunkRepairResult]] | None:
-                return result_dict.get(bug_id)
+            # def get_files() -> list[list[HunkRepairResult]] | None:
+            #     return result_dict.get(bug_id)
 
-            def get_hunks(
-                files: list[list[HunkRepairResult]],
-            ) -> list[HunkRepairResult] | None:
-                return files[f_idx] if f_idx < len(files) else None
+            # def get_hunks(
+            #     files: list[list[HunkRepairResult]],
+            # ) -> list[HunkRepairResult] | None:
+            #     return files[f_idx] if f_idx < len(files) else None
 
-            def get_n_samples(hunks: list[HunkRepairResult]) -> int | None:
-                return len(hunks[h_idx].results) if h_idx < len(hunks) else None
+            # def get_n_samples(hunks: list[HunkRepairResult]) -> int | None:
+            #     return len(hunks[h_idx].results) if h_idx < len(hunks) else None
 
-            # FP experiment
-            n_already_generated = utils.bind_optional(
-                utils.bind_optional(get_files(), get_hunks), get_n_samples
-            )
-            if (
-                n_already_generated is not None
-                and n_already_generated == config.n_samples
-            ):
+            # # FP experiment
+            # n_already_generated = utils.bind_optional(
+            #     utils.bind_optional(get_files(), get_hunks), get_n_samples
+            # )
+            # if (
+            #     n_already_generated is not None
+            #     and n_already_generated == config.n_samples
+            # ):
+            if bug_id in result_dict:
                 print(f"Skipping {bug_id} {hunk_idx}")
                 continue
             if not analyzers_initialized:
@@ -311,9 +312,10 @@ class Repairer:
             synthesizer = gen.Synthesizer(
                 lm_context, connections, text_file, config.method, buggy_hunk
             )
-            n_samples = config.n_samples - (
-                0 if n_already_generated is None else n_already_generated
-            )
+            # n_samples = config.n_samples - (
+            #     0 if n_already_generated is None else n_already_generated
+            # )
+            n_samples = config.n_samples
 
             mem_pruning = gen.MEM_PRUNING.setdefault(bug_id, {}).setdefault(
                 hunk_idx, {}
