@@ -224,20 +224,21 @@ class Runner:
 
     def get_validation_items(
         self,
-    ) -> Iterable[tuple[str, Iterable[tuple[AvgPatch, PatchValidationResult | None]]]]:
+    ) -> Iterable[tuple[str, Iterable[tuple[AvgPatch, PatchValidationResult]]]]:
         assert self.report.transformed_result is not None
         assert self.report.validation_result is not None
         result_dict = self.report.validation_result.result_dict
         for bug_id, patches in self.get_transformed_items():
-            result = result_dict[bug_id]
+            try:
+                result = result_dict[bug_id]
+            except KeyError:
+                continue
             yield (
                 bug_id,
                 (
-                    (
-                        patch,
-                        result[patch_idx][1] if patch_idx in result else None,
-                    )
+                    (patch, result[patch_idx][1])
                     for patch_idx, patch in enumerate(patches)
+                    if patch_idx in result
                 ),
             )
 
@@ -281,7 +282,7 @@ class Runner:
             for bug_id, patches in proj_dict.items():
                 results = []
                 for patch, val_result in patches:
-                    if val_result is not None and val_result.outcome == Outcome.Success:
+                    if val_result.outcome == Outcome.Success:
                         # Assertions
                         for file_patch in patch.file_patches:
                             for hunk in file_patch.hunks:
@@ -309,7 +310,10 @@ class Runner:
         return {
             bug_id: functools.reduce(
                 ValidationDatapoint.__add__,
-                map(map_to_validation_datapoint, patches),
+                map(
+                    map_to_validation_datapoint,
+                    filter(lambda patch: not patch[0].is_duplicate, patches),
+                ),
                 ValidationDatapoint.zero(),
             )
             for bug_id, patches in self.get_validation_items()
@@ -561,35 +565,31 @@ def map_to_unique_generation_datapoint(patch: AvgPatch) -> GenerationDatapoint:
 
 
 def map_to_generation_datapoint(patch: AvgPatch) -> GenerationDatapoint:
+    n_unfinshed = utils.binary_bool(patch.is_unfinished)
     return GenerationDatapoint(
         gen_time=patch.total_gen_time,
         n_total=1,
         n_unique=utils.binary_bool(not patch.is_duplicate),
-        n_unfinished=utils.binary_bool(patch.is_unfinished),
-        n_pruned=utils.binary_bool(patch.is_pruned),
+        n_unfinished=n_unfinshed,
+        n_pruned=utils.binary_bool(patch.is_pruned and not patch.is_unfinished),
     )
 
 
 def map_to_validation_datapoint(
-    patch_info: tuple[AvgPatch, PatchValidationResult | None]
+    patch_info: tuple[AvgPatch, PatchValidationResult]
 ) -> ValidationDatapoint:
     avg_patch, validation_result = patch_info
+    assert not avg_patch.is_duplicate
     gen_datapoint = map_to_generation_datapoint(avg_patch)
     return ValidationDatapoint(
         n_parse_success=utils.binary_bool(
-            validation_result is not None
-            and validation_result.outcome != Outcome.ParseError
+            validation_result.outcome != Outcome.ParseError
         ),
         n_comp_success=utils.binary_bool(
-            validation_result is not None
-            and validation_result.outcome
+            validation_result.outcome
             not in [Outcome.ParseError, Outcome.CompilationError]
         ),
-        n_test_success=utils.binary_bool(
-            validation_result is not None
-            and validation_result.outcome == Outcome.Success
-        ),
-        total_time_consumed=gen_datapoint.gen_time
-        + (0 if validation_result is None else validation_result.time_cost),
+        n_test_success=utils.binary_bool(validation_result.outcome == Outcome.Success),
+        total_time_consumed=gen_datapoint.gen_time + (validation_result.time_cost),
         gen_datapoint=gen_datapoint,
     )
