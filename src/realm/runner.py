@@ -93,16 +93,16 @@ class Runner:
                     is_duplicate = False
                 else:
                     concat_hunk_str = concat_hunks(patch)
-                    aggressive = os.getenv("AGGRESSIVE") is not None
-                    if not aggressive and concat_hunk_str in appeared:
+                    # aggressive = os.getenv("AGGRESSIVE") is not None
+                    if concat_hunk_str in appeared:
                         is_duplicate = True
-                    elif aggressive and utils.remove_whitespace(
-                        utils.remove_java_comments(concat_hunk_str)
-                    ) in {
-                        utils.remove_whitespace(utils.remove_java_comments(hunk_str))
-                        for hunk_str in appeared
-                    }:
-                        is_duplicate = True
+                    # elif aggressive and utils.remove_whitespace(
+                    #     utils.remove_java_comments(concat_hunk_str)
+                    # ) in {
+                    #     utils.remove_whitespace(utils.remove_java_comments(hunk_str))
+                    #     for hunk_str in appeared
+                    # }:
+                    # is_duplicate = True
                     else:
                         appeared.append(concat_hunk_str)
                         is_duplicate = False
@@ -171,11 +171,37 @@ class Runner:
                 unvalidated_analysis_results[-1].append(
                     (bug_id, patch_idx, buggy_text_files, patch)
                 )
+        active_cache = ValidationCache({})
         n_unvalidated = sum(1 for xs in unvalidated_analysis_results for _ in xs)
         # Validate n_cores bugs with different bug_ids in parallel
         for zipped_result in zip_longest(*unvalidated_analysis_results):
-            print("#Unvalidated:", n_unvalidated)
-            zipped_results = filter(lambda r: r is not None, zipped_result)
+            tmp_zipped_results = filter(lambda r: r is not None, zipped_result)
+            zipped_results: list[tuple[str, int, list[TextFile], AvgPatch]] = []
+            for tmp_zipped_result in tmp_zipped_results:
+                print("#Unvalidated:", n_unvalidated)
+                tmp_bug_id, tmp_patch_idx, _, tmp_patch = tmp_zipped_result
+                assert not tmp_patch.is_broken
+                tmp_concat_hunk_str = concat_hunks(tmp_patch.file_patches)
+                ws_removed_hunk_str = utils.remove_whitespace(
+                    utils.remove_java_comments(tmp_concat_hunk_str)
+                )
+                tmp_bug_id_cache = active_cache.result_dict.setdefault(tmp_bug_id, {})
+                if ws_removed_hunk_str in tmp_bug_id_cache:
+                    print(f"[{tmp_bug_id}, {tmp_patch_idx}] Skipped (active cache):")
+                    print(tmp_concat_hunk_str)
+                    print("WS REMOVED")
+                    print(ws_removed_hunk_str)
+                    assert tmp_bug_id in validation_result_dict
+                    assert tmp_patch_idx not in validation_result_dict[tmp_bug_id]
+                    validation_result_dict[tmp_bug_id][tmp_patch_idx] = (
+                        -1,
+                        tmp_bug_id_cache[ws_removed_hunk_str],
+                    )
+                    n_unvalidated -= 1
+                else:
+                    print(f"Not hit {tmp_bug_id} {tmp_patch_idx}")
+                    zipped_results.append(tmp_zipped_result)
+
             for result_batch in utils.chunked(config.n_cores, zipped_results):
                 assert len(result_batch) == len(set(r[0] for r in result_batch))
                 val_results: list[PatchValidationResult] = Parallel(
@@ -185,9 +211,16 @@ class Runner:
                     delayed(validate_patch)(d4j, bug_id, buggy_text_files, avg_patch)
                     for (bug_id, _, buggy_text_files, avg_patch) in result_batch
                 )
-                for (bug_id, val_idx, _, _), val_result in zip(
+                for (bug_id, val_idx, _, the_patch), val_result in zip(
                     result_batch, val_results
                 ):
+                    the_concat_str = concat_hunks(the_patch.file_patches)
+                    the_ws_removed_str = utils.remove_whitespace(
+                        utils.remove_java_comments(the_concat_str)
+                    )
+                    active_cache.result_dict.setdefault(bug_id, {}).setdefault(
+                        the_ws_removed_str, val_result
+                    )
                     assert bug_id in validation_result_dict
                     assert val_idx not in validation_result_dict[bug_id]
                     validation_result_dict[bug_id][val_idx] = (
@@ -238,7 +271,7 @@ class Runner:
                 (
                     (patch, result[patch_idx][1])
                     for patch_idx, patch in enumerate(patches)
-                    if patch_idx in result
+                    if patch_idx in result and not patch.is_duplicate
                 ),
             )
 
@@ -581,7 +614,7 @@ def map_to_validation_datapoint(
     avg_patch, validation_result = patch_info
     assert not avg_patch.is_duplicate
     gen_datapoint = map_to_generation_datapoint(avg_patch)
-    return ValidationDatapoint(
+    val_datapoint = ValidationDatapoint(
         n_parse_success=utils.binary_bool(
             validation_result.outcome != Outcome.ParseError
         ),
@@ -593,3 +626,5 @@ def map_to_validation_datapoint(
         total_time_consumed=gen_datapoint.gen_time + (validation_result.time_cost),
         gen_datapoint=gen_datapoint,
     )
+    assert val_datapoint.n_comp_success <= gen_datapoint.n_unique
+    return val_datapoint
