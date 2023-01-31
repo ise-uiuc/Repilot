@@ -164,8 +164,8 @@ class Repairer:
             bug_id: bug
             for bug_id, bug in bugs_considered.items()
             if pattern.fullmatch(bug_id) is not None
-            # Unicode error
-            and bug_id != "Lang-25"
+            # # Unicode error
+            # and bug_id not in ["Lang-25", "Lang-48"]
         }
         print(len(bugs_to_repair), bugs_to_repair.keys())
         for bug_id, bug in bugs_to_repair.items():
@@ -287,7 +287,11 @@ class Repairer:
             #     n_already_generated is not None
             #     and n_already_generated == config.n_samples
             # ):
-            if bug_id in result_dict:
+            if (
+                bug_id in result_dict
+                and f_idx < len(result_dict[bug_id])
+                and h_idx < len(result_dict[bug_id][f_idx])
+            ):
                 print(f"Skipping {bug_id} {hunk_idx}")
                 continue
             if not analyzers_initialized:
@@ -353,11 +357,12 @@ class Repairer:
                     buggy_hunk_start_index,
                     buggy_hunk_end_index,
                 )
-                report.save()
-                # WARNING: Timeout error, if happend, indicates the TIMEOUT_THRESHOULD is too small (unlikely)
-                # or a fatal implementation error!!
-                # except TimeoutError:
-                #     self.report.report_timeout_error()
+            # SAVE after all iterations
+            report.save()
+            # WARNING: Timeout error, if happend, indicates the TIMEOUT_THRESHOULD is too small (unlikely)
+            # or a fatal implementation error!!
+            # except TimeoutError:
+            #     self.report.report_timeout_error()
             if synthesizer.use_mem:
                 count = 0
                 assert synthesizer.mem is not None

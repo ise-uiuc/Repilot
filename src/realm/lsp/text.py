@@ -130,8 +130,12 @@ class TextFile(MutableTextDocument, utils.JsonSerializable):
 
     @staticmethod
     def read(root: Path, path: Path) -> "TextFile":
-        with open(root / path) as f:
-            content = f.read()
+        try:
+            with open(root / path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            with open(root / path, "r", encoding="latin-1") as f:
+                content = f.read().encode("latin-1").decode("utf-8")
         return TextFile(path, content, root)
 
     def write(self):
