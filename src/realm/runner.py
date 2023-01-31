@@ -232,6 +232,7 @@ class Runner:
                 if os.getenv("KILL") is not None:
                     os.system('pkill -SIGKILL -u $USER -f "javac1.7"')
                 report.save()
+        report.save()
 
     def get_transformed_items(
         self,
