@@ -79,6 +79,10 @@ class Report(utils.IORetrospective):
     def save(self):
         self.dump(self.root)
 
+    def save_validation_result(self):
+        if self.validation_result is not None:
+            self.validation_result.dump(self.root)
+
     def dump(self, path: Path):
         self.dump_metadata(path)
         if self.repair_result is not None:

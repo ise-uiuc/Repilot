@@ -231,7 +231,7 @@ class Runner:
                 # Temporary method to prevent memory leakage
                 if os.getenv("KILL") is not None:
                     os.system('pkill -SIGKILL -u $USER -f "javac1.7"')
-                report.save()
+                report.save_validation_result()
         report.save()
 
     def get_transformed_items(
