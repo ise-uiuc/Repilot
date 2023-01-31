@@ -271,7 +271,7 @@ class Runner:
                 (
                     (patch, result[patch_idx][1])
                     for patch_idx, patch in enumerate(patches)
-                    if patch_idx in result and not patch.is_duplicate
+                    if patch_idx in result  # and not patch.is_duplicate
                 ),
             )
 
@@ -315,6 +315,7 @@ class Runner:
             for bug_id, patches in proj_dict.items():
                 results = []
                 for patch, val_result in patches:
+                    assert not patch.is_duplicate
                     if val_result.outcome == Outcome.Success:
                         # Assertions
                         for file_patch in patch.file_patches:
@@ -345,7 +346,7 @@ class Runner:
                 ValidationDatapoint.__add__,
                 map(
                     map_to_validation_datapoint,
-                    filter(lambda patch: not patch[0].is_duplicate, patches),
+                    patches,
                 ),
                 ValidationDatapoint.zero(),
             )
