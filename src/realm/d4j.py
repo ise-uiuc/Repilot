@@ -147,8 +147,8 @@ class Defects4J:
         self.single_line_bugs = {
             id: bug
             for (id, bug) in self.single_hunk_bugs.items()
-            if len(bug.buggy_files[0].changes[0].added_lines) == 1
-            # and len(bug.buggy_files[0].changes[0].removed_lines) == 1
+            if len(bug.buggy_files[0].changes[0].added_lines) <= 1
+            and len(bug.buggy_files[0].changes[0].removed_lines) <= 1
         }
         self.d4j1_multi_hunk_bugs = {
             id: bug
@@ -165,6 +165,11 @@ class Defects4J:
             id: bug
             for (id, bug) in self.all_bugs.items()
             if id in self.single_line_bugs and not is_d4j1(id)
+        }
+        self.d4j2_single_hunk_bugs = {
+            id: bug
+            for (id, bug) in self.all_bugs.items()
+            if id in self.single_hunk_bugs and not is_d4j1(id)
         }
 
     @staticmethod

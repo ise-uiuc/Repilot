@@ -116,10 +116,23 @@ def plot_runners(
             f"Plausible rate: {summary.unique_plausible_rate()}",
             f"Plausible fixes: {sum(1 for fixes in plausible_fixes.values() for fix in fixes)}",
         )
+        print()
+        print(
+            {
+                proj: (
+                    proj_sum.unique_compilation_rate(),
+                    proj_sum.gen_datapoint.n_unique,
+                )
+                for proj, proj_sum in proj_summary.items()
+            }
+        )
+        print()
         print("Plausible fixes (project)")
         print({k: len(v) for k, v in plausible_fixes.items()})
         with open(target / f"{tag}_plausible_details.json", "w") as f:
             json.dump(plausible_fixes, f, indent=2)
+        print()
+        print()
 
     def validation_datapoint_getter(datapoint: ValidationDatapoint) -> list[int]:
         return [

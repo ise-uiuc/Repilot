@@ -26,6 +26,7 @@ from .results import HunkRepairResult, RepairResult
 
 DATA_DIR = Path(os.getenv("LSP", ".lsp_data"))
 # DIAGNOSTICS = {}
+# BUG_IDS = []
 
 
 def wait_until_all_analyzers_free(
@@ -152,6 +153,8 @@ class Repairer:
         bugs_considered = (
             self.d4j.d4j2_single_line_bugs
             if os.getenv("LINE") is not None
+            else self.d4j.d4j2_single_hunk_bugs
+            if os.getenv("D4J2_SINGLE_HUNK") is not None
             else self.d4j.d4j1_single_hunk_bugs
             if os.getenv("D4J1_SINGLE_HUNK") is not None
             else self.d4j.d4j1_multi_hunk_bugs
@@ -189,6 +192,8 @@ class Repairer:
         finally:
             self.clean_up()
             print("Cleaned up")
+            # with open('d4j1_multi_hunk_comment.json', 'w') as f:
+            #     json.dump(BUG_IDS, f, indent=2)
 
     def repair_bug_no_cleanup(self, report: Report, bug_id: str, bug: Bug):
         assert report.repair_result is not None
@@ -310,6 +315,26 @@ class Repairer:
             buggy_hunk = buggy_hunk[:-1] if buggy_hunk.endswith("\n") else buggy_hunk
             print("Buggy hunk:", repr(buggy_hunk))
             prefix, suffix = remove_buggy_hunk(text_file, change)
+
+            # Comment issue for codet5
+            prefix_lines = prefix.splitlines(keepends=True)
+            comment_above = False
+            idx = 0
+            for idx in reversed(range(len(prefix_lines))):
+                if prefix_lines[idx].lstrip().startswith("//"):
+                    comment_above = True
+                    prefix_lines[idx] = ""
+                elif len(prefix_lines[idx].strip()) > 0:
+                    break
+            if comment_above:
+                print(f"Comment above {bug_id} {hunk_idx}")
+                prefix = "".join(prefix_lines)
+                print("Removed comments")
+                print(prefix)
+                # breakpoint()
+                # BUG_IDS.append((bug_id, hunk_idx))
+            # continue
+
             lm_context = gen.LMContext(
                 self.model, prefix, suffix, config.lm_inference_config
             )

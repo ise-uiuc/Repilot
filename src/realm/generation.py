@@ -799,7 +799,7 @@ class Synthesizer:
                 next_token_ids, active_completion = self.pruned_decode(
                     probs, active_completion
                 )
-                assert ACTIVE or active_completion is None
+                assert ACTIVE or active_completion is None, active_completion
                 # if active_completion is not None:
                 failed_msg = "" if not self.gen_state.batch_is_failed[0] else "Failed"
                 if ACTIVE:
