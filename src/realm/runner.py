@@ -484,7 +484,11 @@ def validate_patch(
     patch_files: list[TextFile] = []
     assert len(patch.file_patches) == len(bugs)
     for patch_file, bug in zip(patch.file_patches, bugs):
-        patch_text_file = patch_file.compute_patch(bug)
+        try:
+            print("COMPUTING:", bug_id)
+            patch_text_file = patch_file.compute_patch(bug)
+        except AssertionError as e:
+            raise AssertionError(f"Assertion error in {bug_id}") from e
         # Convert unified_diff to string
         assert patch_text_file is not None
         unified_diff = difflib.unified_diff(

@@ -32,7 +32,9 @@ class BuggyFile(NamedTuple):
     changes: list[Change]
 
     @staticmethod
-    def from_patch_file(reversed: bool, patch_file: PatchedFile) -> "BuggyFile":
+    def from_patch_file(
+        reversed: bool, patch_file: PatchedFile, bug_id: str
+    ) -> "BuggyFile":
         changes: list[Change] = []
         lines_iter: Iterator[Line] = (line for hunk in patch_file for line in hunk)
 
@@ -42,7 +44,7 @@ class BuggyFile(NamedTuple):
                 start_line = next(lines_iter)
                 if start_line.is_added:
                     assert last_context.is_context
-                    added_lines, line_iter = utils.take_while_two(
+                    added_lines, lines_iter = utils.take_while_two(
                         lambda _: True,
                         lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
                         itertools.chain([start_line], lines_iter),
@@ -50,15 +52,15 @@ class BuggyFile(NamedTuple):
                     removed_lines: list[Line] = []
                 elif start_line.is_removed:
                     assert last_context.is_context
-                    removed_lines, line_iter = utils.take_while_two(
+                    removed_lines, lines_iter = utils.take_while_two(
                         lambda _: True,
                         lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
                         itertools.chain([start_line], lines_iter),
                     )
-                    added_lines, line_iter = utils.take_while_two(
+                    added_lines, lines_iter = utils.take_while_two(
                         lambda elem: elem.is_added,
                         lambda lhs, rhs: utils.line_consecutive(lhs, rhs),
-                        line_iter,
+                        lines_iter,
                     )
                 else:
                     if start_line.is_context:
@@ -94,6 +96,8 @@ class BuggyFile(NamedTuple):
                 prefix = next(filter(diff_fname.startswith, prefixes), "")
                 return diff_fname[len(prefix) :]
 
+            x = [change.start for change in changes]
+            assert x == sorted(x), (x, bug_id)
             return BuggyFile(remove_prefix(patch_file.source_file), changes)
 
 
@@ -109,6 +113,17 @@ class Bug(NamedTuple):
         for idx_i, buggy_file in enumerate(self.buggy_files):
             for idx_j, change in enumerate(reversed(buggy_file.changes)):
                 yield ((idx_i, idx_j), buggy_file, change)
+
+    def all_changes(self) -> list[list[tuple[int, int]]]:
+        all_values: list[list[tuple[int, int]]] = []
+        for buggy_file in self.buggy_files:
+            values = [
+                (change.start, len(change.removed_lines))
+                for change in buggy_file.changes
+            ]
+            # values.sort(key=lambda x: x[0])
+            all_values.append(values)
+        return all_values
 
 
 BugId = str
@@ -280,7 +295,13 @@ class Defects4J:
         patch_files: Iterator[PatchedFile] = filter(
             lambda f: f.is_modified_file, patch_set
         )
-        return list(map(partial(BuggyFile.from_patch_file, True), patch_files))
+        return [
+            BuggyFile.from_patch_file(
+                True, patch_file, f'{bug["proj"]}-{bug["bug_id"]}'
+            )
+            for patch_file in patch_files
+        ]
+        # return list(map(partial(BuggyFile.from_patch_file, True, ), patch_files))
 
     @staticmethod
     def bug_id(bug: dict) -> str:

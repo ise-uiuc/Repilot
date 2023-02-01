@@ -41,7 +41,7 @@ def take_while_two(
     try:
         first_elem = next(iterator)
         if not pred_first(first_elem):
-            raise StopIteration
+            return [], itertools.chain([first_elem], iterator)
     except StopIteration:
         return [], iter([])
     elements: list[T] = [first_elem]
