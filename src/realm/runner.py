@@ -209,38 +209,38 @@ class Runner:
                     print(f"Not hit {tmp_bug_id} {tmp_patch_idx}")
                     zipped_results.append(tmp_zipped_result)
 
-            for result_batch in utils.chunked(config.n_cores, zipped_results):
-                assert len(result_batch) == len(set(r[0] for r in result_batch))
-                val_results: list[PatchValidationResult] = Parallel(
-                    n_jobs=len(result_batch),
-                    backend="multiprocessing",
-                )(
+            # for result_batch in utils.chunked(config.n_cores, zipped_results):
+            # assert len(result_batch) == len(set(r[0] for r in result_batch))
+            with Parallel(n_jobs=config.n_cores, backend="multiprocessing") as parallel:
+                val_results: list[PatchValidationResult] = parallel(
                     delayed(validate_patch)(
                         d4j, bug_id, buggy_text_files, avg_patch, dirty
                     )
-                    for (bug_id, _, buggy_text_files, avg_patch) in result_batch
+                    for (bug_id, _, buggy_text_files, avg_patch) in zipped_results
                 )
-                for (bug_id, val_idx, _, the_patch), val_result in zip(
-                    result_batch, val_results
-                ):
-                    the_concat_str = concat_hunks(the_patch.file_patches)
-                    the_ws_removed_str = utils.remove_whitespace(
-                        utils.remove_java_comments(the_concat_str)
-                    )
-                    active_cache.result_dict.setdefault(bug_id, {}).setdefault(
-                        the_ws_removed_str, val_result
-                    )
-                    assert bug_id in validation_result_dict
-                    assert val_idx not in validation_result_dict[bug_id]
-                    validation_result_dict[bug_id][val_idx] = (
-                        val_config_idx,
-                        val_result,
-                    )
-                    n_unvalidated -= 1
-                # Temporary method to prevent memory leakage
-                if os.getenv("KILL") is not None:
-                    os.system('pkill -SIGKILL -u $USER -f "javac1.7"')
-                report.save_validation_result()
+            for (bug_id, val_idx, _, the_patch), val_result in zip(
+                zipped_results, val_results
+            ):
+                the_concat_str = concat_hunks(the_patch.file_patches)
+                the_ws_removed_str = utils.remove_whitespace(
+                    utils.remove_java_comments(the_concat_str)
+                )
+                active_cache.result_dict.setdefault(bug_id, {}).setdefault(
+                    the_ws_removed_str, val_result
+                )
+                assert bug_id in validation_result_dict
+                assert val_idx not in validation_result_dict[bug_id]
+                validation_result_dict[bug_id][val_idx] = (
+                    val_config_idx,
+                    val_result,
+                )
+                n_unvalidated -= 1
+            # Temporary method to prevent memory leakage
+            if os.getenv("KILL") is not None:
+                os.system('pkill -SIGKILL -u $USER -f "javac1.7"')
+            print("Saving validation cache...")
+            report.save_validation_result()
+            print("Done.")
         report.save()
 
     def get_transformed_items(
@@ -547,6 +547,8 @@ def validate_patch(
             comp_stdout + utils.RULE + "Timeout",
             comp_stderr + utils.RULE + "Timeout",
         )
+    finally:
+        print("Done with", bug_id)
 
 
 _AvgResult = tuple[AvgSynthesisResult, BuggyHunk]
