@@ -20,6 +20,14 @@ Metadata = Dict[str, list[Dict[str, str]]]
 
 T = TypeVar("T")
 
+D4J1_HUNK_SPECIAL = [
+    "Closure-19",
+    "Closure-66",
+    "Lang-22",
+    "Math-3",
+    "Time-14",
+]
+
 
 class Change(NamedTuple):
     start: int
@@ -98,6 +106,28 @@ class BuggyFile(NamedTuple):
 
             x = [change.start for change in changes]
             assert x == sorted(x), (x, bug_id)
+            if bug_id in D4J1_HUNK_SPECIAL:
+                assert len(changes) == 2
+                change_above = changes[0]
+                change_below = changes[1]
+                assert (
+                    change_above.start + len(change_above.removed_lines) + 1
+                    == change_below.start
+                )
+                for line in change_below.removed_lines:
+                    assert line.endswith("\n")
+                assert len(change_above.removed_lines) == 0, bug_id
+                assert len(change_below.removed_lines) == (
+                    0 if bug_id != "Lang-22" else 1
+                )
+                changes = [
+                    Change(
+                        change_above.start,
+                        # Remove the comment line and the additional line
+                        ["\n"] + change_below.removed_lines,
+                        change_above.added_lines + change_below.added_lines,
+                    )
+                ]
             return BuggyFile(remove_prefix(patch_file.source_file), changes)
 
 
