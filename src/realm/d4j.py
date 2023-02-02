@@ -280,7 +280,10 @@ class Defects4J:
             capture_output=True,
         )
         failing_tests = Path(bug.proj_path) / "failing_tests"
-        assert failing_tests.exists(), bug_id
+        if not failing_tests.exists():
+            return False, result.stdout, result.stderr
+
+        assert failing_tests.exists()
         with open(failing_tests) as f:
             success = f.read().strip() == ""
 
@@ -289,7 +292,7 @@ class Defects4J:
             result.stdout.startswith(failing_test_0)
             if success
             else not result.stdout.startswith(failing_test_0)
-        ), (failing_test_0, result.stdout)
+        ), (failing_test_0, result.stdout, result.stderr)
         return success, result.stdout, result.stderr
 
     def checkout(self, bug_id: str, buggy: bool = True, dirty: bool = False):
