@@ -154,12 +154,12 @@ class RepairResult(IORetrospective):
         # )
         result_dict: RepairResultDict = {}
         for d_bug_id in filter(Path.is_dir, path.iterdir()):
+            if d_bug_id.name == "val_results":
+                continue
             bug_id = d_bug_id.name
             files = result_dict.setdefault(bug_id, [])
             d_files = [
-                (tuple(map(int, p.name.split("-"))), p)
-                for p in d_bug_id.iterdir()
-                if p.name != "val_results"
+                (tuple(map(int, p.name.split("-"))), p) for p in d_bug_id.iterdir()
             ]
             d_files.sort(key=lambda tp: tp[0])
             for (f_id, h_id), d_hunks in d_files:
