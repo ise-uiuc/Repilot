@@ -198,11 +198,11 @@ class Runner:
                 delayed(validate_proj)(val_result_root, d4j, bug_id, validation_param)
                 for bug_id, validation_param in params
             )
-            assert len(all_val_results) == len(params)
-            results: list[tuple[str, dict[int, PatchValidationResult]]] = [
-                (bug_id, val_results)
-                for val_results, (bug_id, _) in zip(all_val_results, params)
-            ]
+        assert len(all_val_results) == len(params)
+        results: list[tuple[str, dict[int, PatchValidationResult]]] = [
+            (bug_id, val_results)
+            for val_results, (bug_id, _) in zip(all_val_results, params)
+        ]
         # active_cache = ValidationCache({})
         # n_unvalidated = sum(1 for xs in unvalidated_analysis_results for _ in xs)
         # # Validate n_cores bugs with different bug_ids in parallel
@@ -582,7 +582,7 @@ def validate_patch(
         print("Done with", bug_id)
 
 
-N_SAVE_CACHE = 500
+N_SAVE_CACHE = 100
 
 
 def validate_proj(
