@@ -28,12 +28,12 @@ DATA_DIR = Path(os.getenv("LSP", ".lsp_data"))
 # DIAGNOSTICS = {}
 # BUG_IDS = []
 
-needs_re_gen: dict[str, list[tuple[int, int]]] = json.loads(
-    Path("d4j1_multi_hunk_comment.json").read_text()
-)
-needs_re_gen = {
-    proj: idx for proj, idx in needs_re_gen.items() if proj not in D4J1_HUNK_SPECIAL
-}
+# needs_re_gen: dict[str, list[tuple[int, int]]] = json.loads(
+#     Path("d4j1_multi_hunk_comment.json").read_text()
+# )
+# needs_re_gen = {
+#     proj: idx for proj, idx in needs_re_gen.items() if proj not in D4J1_HUNK_SPECIAL
+# }
 
 
 def wait_until_all_analyzers_free(
@@ -303,7 +303,7 @@ class Repairer:
                 bug_id in result_dict
                 and f_idx < len(result_dict[bug_id])
                 and h_idx < len(result_dict[bug_id][f_idx])
-                or bug_id not in needs_re_gen
+                # or bug_id not in needs_re_gen
             ):
                 print(f"Skipping {bug_id} {hunk_idx}")
                 continue
@@ -311,7 +311,7 @@ class Repairer:
                 # Only intialized once
                 connections, buggy_text_files = init_analyzers()
                 analyzers_initialized = True
-            assert bug_id in needs_re_gen
+            # assert bug_id in needs_re_gen
             buggy_text_file = buggy_text_files[f_idx]
             (
                 buggy_hunk_start_index,
