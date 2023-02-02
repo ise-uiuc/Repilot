@@ -317,19 +317,26 @@ class Repairer:
             prefix, suffix = remove_buggy_hunk(text_file, change)
 
             # Comment issue for codet5
-            prefix_lines = prefix.splitlines(keepends=True)
+            prefix_lines = prefix.split("\n")
             comment_above = False
             idx = 0
             for idx in reversed(range(len(prefix_lines))):
                 if prefix_lines[idx].lstrip().startswith("//"):
                     comment_above = True
-                    prefix_lines[idx] = ""
+                    n_spaces = len(prefix_lines[idx]) - len(prefix_lines[idx].lstrip())
+                    assert prefix_lines[idx][n_spaces : n_spaces + 2] == "//"
+                    prefix_lines[idx] = (
+                        prefix_lines[idx][:n_spaces]
+                        + "/*"
+                        + prefix_lines[idx][n_spaces + 2 :]
+                        + "*/"
+                    )
                 elif len(prefix_lines[idx].strip()) > 0:
                     break
             if comment_above:
                 print(f"Comment above {bug_id} {hunk_idx}")
-                prefix = "".join(prefix_lines)
-                print("Removed comments")
+                prefix = "\n".join(prefix_lines)
+                print("Changed comments")
                 print(prefix)
                 # breakpoint()
                 # BUG_IDS.append((bug_id, hunk_idx))

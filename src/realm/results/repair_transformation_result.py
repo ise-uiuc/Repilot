@@ -153,8 +153,8 @@ class RepairTransformedResult(JsonSpecificDirectoryDumpable):
         )
 
 
-def concat_hunks(file_patches: list[AvgFilePatch]) -> str:
-    return "".join(
+def concat_hunks(file_patches: list[AvgFilePatch], delim: str = "") -> str:
+    return delim.join(
         cast(str, hunk_patch.result.hunk)
         for file_patch in file_patches
         for hunk_patch in file_patch.hunks

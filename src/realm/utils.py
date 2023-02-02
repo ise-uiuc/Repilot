@@ -1,3 +1,4 @@
+import difflib
 import io
 import itertools
 import json
@@ -317,3 +318,10 @@ def remove_java_comments(text: str) -> str:
     text = re.sub(re.compile("//.*"), "", text)
     text = re.sub(re.compile("/\*.*?\*/", re.DOTALL), "", text)
     return text
+
+
+def diff(lhs: str, rhs: str, lhs_msg: str, rhs_msg: str) -> str:
+    unified_diff = difflib.unified_diff(
+        lhs.splitlines(), rhs.splitlines(), lhs_msg, rhs_msg
+    )
+    return "\n".join(unified_diff)

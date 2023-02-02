@@ -135,7 +135,13 @@ class Runner:
         unvalidated_analysis_results: list[
             list[tuple[str, int, list[TextFile], AvgPatch]]
         ] = []
-        for bug_id, (buggy_text_files, patches) in transformed_result_dict.items():
+        groupped_result = Defects4J.group_by_project(transformed_result_dict)
+        it = (
+            (bug_id, value)
+            for proj, proj_value in groupped_result
+            for bug_id, value in proj_value.items()
+        )
+        for bug_id, (buggy_text_files, patches) in it:
             if bug_pattern.fullmatch(bug_id) is None:
                 continue
             validated_patches = validation_result_dict.setdefault(bug_id, {})

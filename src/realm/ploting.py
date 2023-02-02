@@ -8,6 +8,8 @@ import torch
 from matplotlib import pyplot as plt
 
 from . import utils
+from .config import MetaConfig
+from .d4j import Defects4J
 from .results import GenerationDatapoint, ValidationDatapoint, concat_hunks
 from .runner import Runner
 
@@ -17,6 +19,10 @@ Project = str
 RunnerId = str
 
 COLORS = ["#1D1F5F", "#FF99FF", "#6EAF46", "#FAC748"]
+META_CONFIG = MetaConfig.from_json_file(Path("meta_config.json"))
+D4J = Defects4J(
+    META_CONFIG.d4j_home, META_CONFIG.d4j_checkout_root, META_CONFIG.java8_home
+)
 
 
 def transpose(
@@ -100,6 +106,42 @@ def plot_runners(
             }
             for proj, proj_values in runner.get_plausible_patches_grouped().items()
         }
+
+        # plausible_root = Path("plausible_patches")
+        # assert runner.report.transformed_result is not None
+        # transformed = runner.report.transformed_result.result_dict
+        # for proj, proj_values in runner.get_plausible_patches_grouped().items():
+        #     plausible_root.mkdir(exist_ok=True)
+        #     for bug_id, patches in proj_values.items():
+        #         bug_id_dir = plausible_root / bug_id
+        #         bug_id_dir.mkdir()
+        #         patch_strs: list[str] = []
+        #         bugs, _ = transformed[bug_id]
+        #         assert len(bugs) == 1
+        #         diffs: list[str] = []
+        #         for patch_id, patch in enumerate(patches):
+        #             assert len(patch) == 1
+        #             patch_content = concat_hunks(patch)
+        #             patch_strs.append(patch_content)
+        #             patch_file = (bug_id_dir / str(patch_id)).with_suffix(".txt")
+        #             patch_file.write_text(patch_content)
+        #             patch_text_file = patch[0].compute_patch(bugs[0])
+        #             assert patch_text_file is not None
+        #             diff = utils.diff(
+        #                 bugs[0].content,
+        #                 patch_text_file.content,
+        #                 lhs_msg=f"bug/{bugs[0]._path}",
+        #                 rhs_msg=f"fix/{bugs[0]._path}",
+        #             )
+        #             # diff_file = (bug_id_dir / str(patch_id)).with_suffix(".diff")
+        #             # diff_file.write_text(diff)
+        #             # diffs.append(diff)
+        #         integrated_file = bug_id_dir / "integrated.txt"
+        #         integrated_file.write_text(utils.RULE.join(patch_strs))
+        #         (bug_id_dir / f"reference.patch").write_text(D4J.get_patch(bug_id))
+        #         # integrated_diff_file = bug_id_dir / "integrated.diff"
+        #         # integrated_diff_file.write_text(utils.RULE.join(diffs))
+
         # {
         #     proj: [
         #         bug_id
@@ -133,6 +175,8 @@ def plot_runners(
             json.dump(plausible_fixes, f, indent=2)
         print()
         print()
+    if os.getenv("PLOT") is None:
+        return
 
     def validation_datapoint_getter(datapoint: ValidationDatapoint) -> list[int]:
         return [

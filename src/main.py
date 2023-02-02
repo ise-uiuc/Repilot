@@ -52,7 +52,7 @@ repair_parser.add_argument(
 repair_parser.add_argument(
     "--batch-size",
     required=False,
-    default=10,
+    default=1,
     type=int,
     help="The batch size of the language model",
 )

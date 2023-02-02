@@ -250,7 +250,7 @@ class Defects4J:
             capture_output=True,
         )
         failing_tests = Path(bug.proj_path) / "failing_tests"
-        assert failing_tests.exists()
+        assert failing_tests.exists(), bug_id
         with open(failing_tests) as f:
             success = f.read().strip() == ""
 
@@ -259,7 +259,7 @@ class Defects4J:
             result.stdout.startswith(failing_test_0)
             if success
             else not result.stdout.startswith(failing_test_0)
-        )
+        ), (failing_test_0, result.stdout)
         return success, result.stdout, result.stderr
 
     def checkout(self, bug_id: str, buggy: bool = True):
@@ -281,6 +281,21 @@ class Defects4J:
         repo.git.execute(["git", "checkout", "HEAD", "-f", "."])
         repo.git.execute(["git", "clean", "-xfd"])
         repo.close()
+
+    def get_patch(self, bug_id: str) -> str:
+        proj, bug_id = self.split_bug_id(bug_id)
+        patch_file = (
+            self.d4j_home
+            / "framework"
+            / "projects"
+            / proj
+            / "patches"
+            / f"{bug_id}.src.patch"
+        )
+        try:
+            return patch_file.read_text()
+        except:
+            return patch_file.read_text("latin-1")
 
     def buggy_files(self, bug: dict) -> list[BuggyFile]:
         patch_file = (
