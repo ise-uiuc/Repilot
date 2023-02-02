@@ -1,5 +1,6 @@
 import difflib
 import functools
+import json
 import os
 import subprocess
 import time
@@ -177,70 +178,100 @@ class Runner:
                 unvalidated_analysis_results[-1].append(
                     (bug_id, patch_idx, buggy_text_files, patch)
                 )
-        active_cache = ValidationCache({})
-        n_unvalidated = sum(1 for xs in unvalidated_analysis_results for _ in xs)
-        # Validate n_cores bugs with different bug_ids in parallel
-        for idx, zipped_result in enumerate(zip_longest(*unvalidated_analysis_results)):
-            dirty = (idx + 1) % 100 != 0
-            tmp_zipped_results = filter(lambda r: r is not None, zipped_result)
-            zipped_results: list[tuple[str, int, list[TextFile], AvgPatch]] = []
-            for tmp_zipped_result in tmp_zipped_results:
-                print("#Unvalidated:", n_unvalidated)
-                tmp_bug_id, tmp_patch_idx, _, tmp_patch = tmp_zipped_result
-                assert not tmp_patch.is_broken
-                tmp_concat_hunk_str = concat_hunks(tmp_patch.file_patches)
-                ws_removed_hunk_str = utils.remove_whitespace(
-                    utils.remove_java_comments(tmp_concat_hunk_str)
-                )
-                tmp_bug_id_cache = active_cache.result_dict.setdefault(tmp_bug_id, {})
-                if ws_removed_hunk_str in tmp_bug_id_cache:
-                    print(f"[{tmp_bug_id}, {tmp_patch_idx}] Skipped (active cache):")
-                    print(tmp_concat_hunk_str)
-                    print("WS REMOVED")
-                    print(ws_removed_hunk_str)
-                    assert tmp_bug_id in validation_result_dict
-                    assert tmp_patch_idx not in validation_result_dict[tmp_bug_id]
-                    validation_result_dict[tmp_bug_id][tmp_patch_idx] = (
-                        -1,
-                        tmp_bug_id_cache[ws_removed_hunk_str],
-                    )
-                    n_unvalidated -= 1
-                else:
-                    print(f"Not hit {tmp_bug_id} {tmp_patch_idx}")
-                    zipped_results.append(tmp_zipped_result)
+        validation_params: dict[str, list[tuple[int, list[TextFile], AvgPatch]]] = {}
+        for bug_id_needs_to_validate in unvalidated_analysis_results:
+            bug_id_set = set(bug_id for (bug_id, _, _, _) in bug_id_needs_to_validate)
+            if len(bug_id_set) == 0:
+                print("No bug id found")
+                continue
+            assert len(bug_id_set) == 1, bug_id_set
+            bug_id = bug_id_needs_to_validate[0][0]
+            validation_params[bug_id] = [
+                (patch_idx, buggy_text_files, patch)
+                for (_, patch_idx, buggy_text_files, patch) in bug_id_needs_to_validate
+            ]
+        val_result_root = self.report.root / "val_results"
+        val_result_root.mkdir(exist_ok=True)
+        with Parallel(n_jobs=config.n_cores, backend="multiprocessing") as parallel:
+            params = list(validation_params.items())
+            all_val_results: list[dict[int, PatchValidationResult]] = parallel(
+                delayed(validate_proj)(val_result_root, d4j, bug_id, validation_param)
+                for bug_id, validation_param in params
+            )
+            assert len(all_val_results) == len(params)
+            results: list[tuple[str, dict[int, PatchValidationResult]]] = [
+                (bug_id, val_results)
+                for val_results, (bug_id, _) in zip(all_val_results, params)
+            ]
+        # active_cache = ValidationCache({})
+        # n_unvalidated = sum(1 for xs in unvalidated_analysis_results for _ in xs)
+        # # Validate n_cores bugs with different bug_ids in parallel
+        # for idx, zipped_result in enumerate(zip_longest(*unvalidated_analysis_results)):
+        #     dirty = (idx + 1) % 100 != 0
+        #     tmp_zipped_results = filter(lambda r: r is not None, zipped_result)
+        #     zipped_results: list[tuple[str, int, list[TextFile], AvgPatch]] = []
+        #     for tmp_zipped_result in tmp_zipped_results:
+        #         print("#Unvalidated:", n_unvalidated)
+        #         tmp_bug_id, tmp_patch_idx, _, tmp_patch = tmp_zipped_result
+        #         assert not tmp_patch.is_broken
+        #         tmp_concat_hunk_str = concat_hunks(tmp_patch.file_patches)
+        #         ws_removed_hunk_str = utils.remove_whitespace(
+        #             utils.remove_java_comments(tmp_concat_hunk_str)
+        #         )
+        #         tmp_bug_id_cache = active_cache.result_dict.setdefault(tmp_bug_id, {})
+        #         if ws_removed_hunk_str in tmp_bug_id_cache:
+        #             print(f"[{tmp_bug_id}, {tmp_patch_idx}] Skipped (active cache):")
+        #             print(tmp_concat_hunk_str)
+        #             print("WS REMOVED")
+        #             print(ws_removed_hunk_str)
+        #             assert tmp_bug_id in validation_result_dict
+        #             assert tmp_patch_idx not in validation_result_dict[tmp_bug_id]
+        #             validation_result_dict[tmp_bug_id][tmp_patch_idx] = (
+        #                 -1,
+        #                 tmp_bug_id_cache[ws_removed_hunk_str],
+        #             )
+        #             n_unvalidated -= 1
+        #         else:
+        #             print(f"Not hit {tmp_bug_id} {tmp_patch_idx}")
+        #             zipped_results.append(tmp_zipped_result)
 
-            # for result_batch in utils.chunked(config.n_cores, zipped_results):
-            # assert len(result_batch) == len(set(r[0] for r in result_batch))
-            with Parallel(n_jobs=config.n_cores, backend="multiprocessing") as parallel:
-                val_results: list[PatchValidationResult] = parallel(
-                    delayed(validate_patch)(
-                        d4j, bug_id, buggy_text_files, avg_patch, dirty
-                    )
-                    for (bug_id, _, buggy_text_files, avg_patch) in zipped_results
-                )
-            for (bug_id, val_idx, _, the_patch), val_result in zip(
-                zipped_results, val_results
-            ):
-                the_concat_str = concat_hunks(the_patch.file_patches)
-                the_ws_removed_str = utils.remove_whitespace(
-                    utils.remove_java_comments(the_concat_str)
-                )
-                active_cache.result_dict.setdefault(bug_id, {}).setdefault(
-                    the_ws_removed_str, val_result
-                )
-                assert bug_id in validation_result_dict
-                assert val_idx not in validation_result_dict[bug_id]
-                validation_result_dict[bug_id][val_idx] = (
-                    val_config_idx,
-                    val_result,
-                )
-                n_unvalidated -= 1
-            # Temporary method to prevent memory leakage
-            if os.getenv("KILL") is not None:
-                os.system('pkill -SIGKILL -u $USER -f "javac1.7"')
-            print("Saving validation cache...")
-            report.save_validation_result()
-            print("Done.")
+        #     # for result_batch in utils.chunked(config.n_cores, zipped_results):
+        #     # assert len(result_batch) == len(set(r[0] for r in result_batch))
+        #     with Parallel(n_jobs=config.n_cores, backend="multiprocessing") as parallel:
+        #         val_results: list[PatchValidationResult] = parallel(
+        #             delayed(validate_patch)(
+        #                 d4j, bug_id, buggy_text_files, avg_patch, dirty
+        #             )
+        #             for (bug_id, _, buggy_text_files, avg_patch) in zipped_results
+        #         )
+        #     for (bug_id, val_idx, _, the_patch), val_result in zip(
+        #         zipped_results, val_results
+        #     ):
+        #         the_concat_str = concat_hunks(the_patch.file_patches)
+        #         the_ws_removed_str = utils.remove_whitespace(
+        #             utils.remove_java_comments(the_concat_str)
+        #         )
+        #         active_cache.result_dict.setdefault(bug_id, {}).setdefault(
+        #             the_ws_removed_str, val_result
+        #         )
+        #         assert bug_id in validation_result_dict
+        #         assert val_idx not in validation_result_dict[bug_id]
+        #         validation_result_dict[bug_id][val_idx] = (
+        #             val_config_idx,
+        #             val_result,
+        #         )
+        #         n_unvalidated -= 1
+        # Temporary method to prevent memory leakage
+        # if os.getenv("KILL") is not None:
+        #     os.system('pkill -SIGKILL -u $USER -f "javac1.7"')
+        # print("Saving validation cache...")
+        # report.save_validation_result()
+        # print("Done.")
+        for bug_id, result in results:
+            bug_id_results = validation_result_dict.setdefault(bug_id, {})
+            for patch_idx, val_result in result.items():
+                assert patch_idx not in bug_id_results
+                bug_id_results[patch_idx] = (val_config_idx, val_result)
         report.save()
 
     def get_transformed_items(
@@ -549,6 +580,49 @@ def validate_patch(
         )
     finally:
         print("Done with", bug_id)
+
+
+N_SAVE_CACHE = 500
+
+
+def validate_proj(
+    cache_root: Path,
+    d4j: Defects4J,
+    bug_id: str,
+    patch_infos: list[tuple[int, list[TextFile], AvgPatch]],
+) -> dict[int, PatchValidationResult]:
+    cache_save_path = cache_root / f"{bug_id}.val.json"
+    if cache_save_path.exists():
+        with open(cache_save_path) as f:
+            val_results: dict[int, PatchValidationResult] = json.load(f)
+    else:
+        val_results = {}
+    cached: dict[str, PatchValidationResult] = {}
+    n_validated = 0
+    for batch in utils.chunked(N_SAVE_CACHE, patch_infos):
+        for patch_idx, buggy_files, patch in batch:
+            print(f"#Unvalidated({bug_id}):", len(patch_infos) - n_validated)
+            assert not patch.is_broken
+            concat_hunk_str = concat_hunks(patch.file_patches)
+            ws_removed_hunk_str = utils.remove_whitespace(
+                utils.remove_java_comments(concat_hunk_str)
+            )
+            if ws_removed_hunk_str in cached:
+                print(f"[{bug_id}, {patch_idx}] Skipped (active cache):")
+                print(concat_hunk_str)
+                print("WS REMOVED")
+                print(ws_removed_hunk_str)
+                assert bug_id in cached
+                assert patch_idx not in val_results
+                val_results[patch_idx] = cached[ws_removed_hunk_str]
+                n_validated += 1
+                continue
+            val_result = validate_patch(d4j, bug_id, buggy_files, patch, dirty=True)
+            val_results[patch_idx] = val_result
+            n_validated += 1
+        with open(cache_save_path, "w") as f:
+            json.dump(val_results, f, indent=2)
+    return val_results
 
 
 _AvgResult = tuple[AvgSynthesisResult, BuggyHunk]
