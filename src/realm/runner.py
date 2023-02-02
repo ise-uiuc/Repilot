@@ -594,13 +594,16 @@ def validate_proj(
     cache_save_path = cache_root / f"{bug_id}.val.json"
     if cache_save_path.exists():
         with open(cache_save_path) as f:
-            val_results: dict[int, PatchValidationResult] = json.load(f)
+            val_results: dict[int, PatchValidationResult] = {
+                patch_idx: PatchValidationResult.from_json(r)
+                for patch_idx, r in json.load(f).items()
+            }
     else:
         val_results = {}
     cached: dict[str, PatchValidationResult] = {}
     n_validated = 0
     for batch in utils.chunked(N_SAVE_CACHE, patch_infos):
-        for patch_idx, buggy_files, patch in batch:
+        for idx, (patch_idx, buggy_files, patch) in enumerate(batch):
             print(f"#Unvalidated({bug_id}):", len(patch_infos) - n_validated)
             assert not patch.is_broken
             concat_hunk_str = concat_hunks(patch.file_patches)
@@ -617,11 +620,20 @@ def validate_proj(
                 val_results[patch_idx] = cached[ws_removed_hunk_str]
                 n_validated += 1
                 continue
-            val_result = validate_patch(d4j, bug_id, buggy_files, patch, dirty=True)
+            val_result = validate_patch(
+                d4j, bug_id, buggy_files, patch, dirty=(idx != 0)
+            )
             val_results[patch_idx] = val_result
             n_validated += 1
+        if os.getenv("KILL") is not None:
+            pattern = f"{bug_id}.*javac1.7"
+            os.system(f'pkill -SIGKILL -u $USER -f "{pattern}"')
         with open(cache_save_path, "w") as f:
-            json.dump(val_results, f, indent=2)
+            json.dump(
+                {patch_idx: r.to_json() for patch_idx, r in val_results.items()},
+                f,
+                indent=2,
+            )
     return val_results
 
 
