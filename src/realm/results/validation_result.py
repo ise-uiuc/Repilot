@@ -130,7 +130,10 @@ class ValidationResult(JsonSpecificDirectoryDumpable):
 
     @classmethod
     def load(cls, path: Path) -> "ValidationResult":
-        val_result = ValidationResult.from_json_file(path)
+        if (path / cls.name()).exists():
+            val_result = ValidationResult.from_json_file(path / cls.name())
+        else:
+            val_result = ValidationResult([], {})
         for dir in (path / "val_results").iterdir():
             bug_id = dir.name
             d: dict[str, Any] = json.loads(dir.read_text())
