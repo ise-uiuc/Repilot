@@ -141,6 +141,12 @@ class ValidationResult(JsonSpecificDirectoryDumpable):
             val_result.result_dict.setdefault(bug_id, {}).update(data)
         return val_result
 
+    @classmethod
+    def try_load(cls, path: Path) -> "ValidationResult | None":
+        if not (path / "val_results").exists() and not (path / cls.name()).exists():
+            return None
+        return ValidationResult.load(path)
+
 
 #     def to_json(self) -> Any:
 #         return {
