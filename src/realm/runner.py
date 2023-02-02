@@ -582,7 +582,7 @@ def validate_patch(
         print("Done with", bug_id)
 
 
-N_SAVE_CACHE = 100
+N_SAVE_CACHE = 200
 
 
 def validate_proj(
@@ -629,9 +629,9 @@ def validate_proj(
             assert patch_idx not in val_results
             val_results[patch_idx] = val_result
             n_validated += 1
-        if os.getenv("KILL") is not None:
-            pattern = f"{bug_id}.*javac1.7"
-            os.system(f'pkill -SIGKILL -u $USER -f "{pattern}"')
+            if os.getenv("KILL") is not None:
+                pattern = f"{bug_id}.*javac1.7"
+                os.system(f'pkill -SIGKILL -u $USER -f "{pattern}"')
         with open(cache_save_path, "w") as f:
             json.dump(
                 {patch_idx: r.to_json() for patch_idx, r in val_results.items()},
