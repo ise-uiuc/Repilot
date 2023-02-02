@@ -262,7 +262,7 @@ class Defects4J:
         ), (failing_test_0, result.stdout)
         return success, result.stdout, result.stderr
 
-    def checkout(self, bug_id: str, buggy: bool = True):
+    def checkout(self, bug_id: str, buggy: bool = True, dirty: bool = False):
         bug_proj_path = self.all_bugs[bug_id].proj_path
         proj, id_str = self.split_bug_id(bug_id)
         repo = git.Repo(bug_proj_path)
@@ -279,7 +279,8 @@ class Defects4J:
             ]
         )
         repo.git.execute(["git", "checkout", "HEAD", "-f", "."])
-        repo.git.execute(["git", "clean", "-xfd"])
+        if not dirty:
+            repo.git.execute(["git", "clean", "-xfd"])
         repo.close()
 
     def get_patch(self, bug_id: str) -> str:

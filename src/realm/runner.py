@@ -180,7 +180,8 @@ class Runner:
         active_cache = ValidationCache({})
         n_unvalidated = sum(1 for xs in unvalidated_analysis_results for _ in xs)
         # Validate n_cores bugs with different bug_ids in parallel
-        for zipped_result in zip_longest(*unvalidated_analysis_results):
+        for idx, zipped_result in enumerate(zip_longest(*unvalidated_analysis_results)):
+            dirty = (idx + 1) % 100 != 0
             tmp_zipped_results = filter(lambda r: r is not None, zipped_result)
             zipped_results: list[tuple[str, int, list[TextFile], AvgPatch]] = []
             for tmp_zipped_result in tmp_zipped_results:
@@ -214,7 +215,9 @@ class Runner:
                     n_jobs=len(result_batch),
                     backend="multiprocessing",
                 )(
-                    delayed(validate_patch)(d4j, bug_id, buggy_text_files, avg_patch)
+                    delayed(validate_patch)(
+                        d4j, bug_id, buggy_text_files, avg_patch, dirty
+                    )
                     for (bug_id, _, buggy_text_files, avg_patch) in result_batch
                 )
                 for (bug_id, val_idx, _, the_patch), val_result in zip(
@@ -479,7 +482,7 @@ class Runner:
 
 
 def validate_patch(
-    d4j: Defects4J, bug_id: str, bugs: list[TextFile], patch: AvgPatch
+    d4j: Defects4J, bug_id: str, bugs: list[TextFile], patch: AvgPatch, dirty: bool
 ) -> PatchValidationResult:
     start_time = time.perf_counter()
     assert not patch.is_duplicate
@@ -505,7 +508,7 @@ def validate_patch(
         patch_files.append(patch_text_file)
     # assert len(set(p._path for p in patch_files)) == 1, [p._path for p in patch_files]
     # Checkout the fixed version and then apply patches b/c we do not consider test file changes
-    d4j.checkout(bug_id, buggy=False)
+    d4j.checkout(bug_id, buggy=False, dirty=dirty)
     for patch_text_file in patch_files:
         try:
             javalang.parse.parse(patch_text_file.content)
@@ -523,6 +526,7 @@ def validate_patch(
         patch_text_file.root = d4j.d4j_checkout_root
         assert patch_text_file.path.exists()
         patch_text_file.write()
+        patch_text_file.path.touch()
     comp_success, comp_stdout, comp_stderr = d4j.compile(bug_id)
     if not comp_success:
         return PatchValidationResult(
