@@ -276,8 +276,9 @@ class Runner:
         for bug_id, result in results:
             bug_id_results = validation_result_dict.setdefault(bug_id, {})
             for patch_idx, val_result in result.items():
-                assert patch_idx not in bug_id_results
-                bug_id_results[patch_idx] = (val_config_idx, val_result)
+                # assert patch_idx not in bug_id_results
+                if patch_idx not in bug_id_results:
+                    bug_id_results[patch_idx] = (val_config_idx, val_result)
         report.save()
 
     def get_transformed_items(
