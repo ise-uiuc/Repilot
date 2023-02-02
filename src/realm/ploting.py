@@ -81,7 +81,6 @@ def plot_runners(
         for tag, runner in zip(tags, validated_runners)
     ]
     validation_results = transpose(raw_validation_results)
-    breakpoint()
 
     target = Path(os.getenv("PLOT_DIR", "plots"))
     target.mkdir(exist_ok=True)
