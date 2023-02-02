@@ -189,7 +189,7 @@ class Synthesizer:
     ) -> None:
         # Constants
         self.text_file = text_file
-        self.hunk_start_cursor = self.text_file.cursor
+        # self.hunk_start_cursor = self.text_file.cursor
         self.gen_method = gen_method
         self.connections = connections
         self.buggy_hunk = buggy_hunk

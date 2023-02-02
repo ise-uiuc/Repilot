@@ -389,10 +389,12 @@ class Repairer:
             # continue
             templates = generate_templates(prefix, suffix, buggy_hunk, self.model, None)
 
-            synthesizer = gen.Synthesizer(
-                connections, text_file, config.method, buggy_hunk
-            )
             for template_name, prefix, suffix, t_prefix, t_suffix in templates:
+                text_file.add(t_prefix)
+                synthesizer = gen.Synthesizer(
+                    connections, text_file, config.method, buggy_hunk
+                )
+                print(text_file.content[text_file.cursor - 20 : text_file.cursor + 20])
                 lm_context = gen.LMContext(
                     self.model, prefix, suffix, config.lm_inference_config
                 )
