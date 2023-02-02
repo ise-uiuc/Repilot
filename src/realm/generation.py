@@ -181,19 +181,13 @@ def char_may_trigger_completion(c: str) -> bool:
 class Synthesizer:
     def __init__(
         self,
-        lm_context: LMContext,
+        # lm_context: LMContext,
         connections: list[Connection],
         text_file: TextFile,
         gen_method: SynthesisMethod,
         buggy_hunk: str,
     ) -> None:
         # Constants
-        self.model = lm_context.model
-        self.end_ids_tensor = torch.tensor(self.model.end_ids).to(utils.DEVICE)
-        self.inference_config = lm_context.inference_config
-        self.inputs = self.model.encode(lm_context.prefix, lm_context.suffix).repeat(
-            self.batch_size, 1
-        )
         self.text_file = text_file
         self.hunk_start_cursor = self.text_file.cursor
         self.gen_method = gen_method
@@ -210,6 +204,13 @@ class Synthesizer:
         if ACTIVE:
             assert self.use_mem
 
+    def init_lm(self, lm_context: LMContext):
+        self.model = lm_context.model
+        self.end_ids_tensor = torch.tensor(self.model.end_ids).to(utils.DEVICE)
+        self.inference_config = lm_context.inference_config
+        self.inputs = self.model.encode(lm_context.prefix, lm_context.suffix).repeat(
+            self.batch_size, 1
+        )
         # self.all_ids = torch.tensor(range(self.model.vocab_size)).to(utils.DEVICE).repeat(self.batch_size, 1)
 
     def init_state(self):
@@ -257,7 +258,7 @@ class Synthesizer:
     def batch_size(self) -> int:
         return self.inference_config.batch_size
 
-    def synthesize(self) -> SynthesisResultBatch:
+    def synthesize(self, t_prefix: str, t_suffix: str) -> SynthesisResultBatch:
         self.init_state()
         assert self.gen_state is not None
         assert self.lsp_contexts is not None
@@ -280,12 +281,12 @@ class Synthesizer:
                 results.append(SynthesisResult(None, False, True))
             else:
                 gen_context = self.gen_state.gen_contexts[batch_idx]
-                lsp_context = self.lsp_contexts[batch_idx]
-                patch_file = lsp_context.text_file
-                start_index = self.hunk_start_cursor
-                end_index = patch_file.cursor
-                hunk = "".join(gen_context.generated_tokens)
-                assert patch_file.content[start_index:end_index] == hunk
+                # lsp_context = self.lsp_contexts[batch_idx]
+                # patch_file = lsp_context.text_file
+                # start_index = self.hunk_start_cursor
+                # end_index = patch_file.cursor
+                hunk = t_prefix + "".join(gen_context.generated_tokens) + t_suffix
+                # assert patch_file.content[start_index:end_index] == hunk
                 # success = SynthesisSuccessful(
                 #     patch_file,
                 #     start_index,
