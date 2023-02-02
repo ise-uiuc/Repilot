@@ -134,14 +134,15 @@ class ValidationResult(JsonSpecificDirectoryDumpable):
             val_result = ValidationResult.from_json_file(path / cls.name())
         else:
             val_result = ValidationResult([], {})
-        for dir in (path / "val_results").iterdir():
-            bug_id = dir.with_suffix("").with_suffix("").name
-            d: dict[str, Any] = json.loads(dir.read_text())
-            data = {
-                int(patch_idx): (-1, PatchValidationResult.from_json(patch_result))
-                for patch_idx, patch_result in d.items()
-            }
-            val_result.result_dict.setdefault(bug_id, {}).update(data)
+        if (path / "val_results").exists():
+            for dir in (path / "val_results").iterdir():
+                bug_id = dir.with_suffix("").with_suffix("").name
+                d: dict[str, Any] = json.loads(dir.read_text())
+                data = {
+                    int(patch_idx): (-1, PatchValidationResult.from_json(patch_result))
+                    for patch_idx, patch_result in d.items()
+                }
+                val_result.result_dict.setdefault(bug_id, {}).update(data)
         return val_result
 
     @classmethod
