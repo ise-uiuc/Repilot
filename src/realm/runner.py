@@ -610,6 +610,9 @@ def validate_proj(
             ws_removed_hunk_str = utils.remove_whitespace(
                 utils.remove_java_comments(concat_hunk_str)
             )
+            if patch_idx in val_results:
+                print(f"[{bug_id}, {patch_idx}] Skipped (validated)")
+                continue
             if ws_removed_hunk_str in cached:
                 print(f"[{bug_id}, {patch_idx}] Skipped (active cache):")
                 print(concat_hunk_str)
@@ -623,6 +626,7 @@ def validate_proj(
             val_result = validate_patch(
                 d4j, bug_id, buggy_files, patch, dirty=(idx != 0)
             )
+            assert patch_idx not in val_results
             val_results[patch_idx] = val_result
             n_validated += 1
         if os.getenv("KILL") is not None:
