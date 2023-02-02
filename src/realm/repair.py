@@ -436,21 +436,21 @@ class Repairer:
                         buggy_hunk_start_index,
                         buggy_hunk_end_index,
                     )
+                if synthesizer.use_mem and synthesizer.mem is not None:
+                    count = 0
+                    assert synthesizer.mem is not None
+                    for _, ids in synthesizer.mem.infeasible_token_ids.items():
+                        if len(ids) > 0:
+                            count += 1
+                    logging.info(
+                        f"[{bug_id}, {hunk_idx}] Mem pruning: {count} states pruned"
+                    )
             # SAVE after all iterations
             report.save()
             # WARNING: Timeout error, if happend, indicates the TIMEOUT_THRESHOULD is too small (unlikely)
             # or a fatal implementation error!!
             # except TimeoutError:
             #     self.report.report_timeout_error()
-            if synthesizer.use_mem and synthesizer.mem is not None:
-                count = 0
-                assert synthesizer.mem is not None
-                for _, ids in synthesizer.mem.infeasible_token_ids.items():
-                    if len(ids) > 0:
-                        count += 1
-                logging.info(
-                    f"[{bug_id}, {hunk_idx}] Mem pruning: {count} states pruned"
-                )
             #     assert synthesizer.mem is not None
             #     mem_pruning.update(
             #         {
