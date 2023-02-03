@@ -546,7 +546,7 @@ def validate_patch(
         patch_files.append(patch_text_file)
     # assert len(set(p._path for p in patch_files)) == 1, [p._path for p in patch_files]
     # Checkout the fixed version and then apply patches b/c we do not consider test file changes
-    d4j.checkout(bug_id, buggy=False, dirty=dirty)
+    d4j.checkout(bug_id, buggy=False, dirty=False)
     for patch_text_file in patch_files:
         try:
             javalang.parse.parse(patch_text_file.content)
