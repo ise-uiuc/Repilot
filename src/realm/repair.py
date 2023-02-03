@@ -63,6 +63,58 @@ SKIP = [
     "Jsoup-57",
     "JacksonCore-5",
 ]
+BUGS_TO_DO = {
+    # "JacksonDatabind-71",
+    # "JacksonDatabind-34",
+    # "JacksonCore-26",
+    # "Jsoup-37",
+    # "JacksonDatabind-70",
+    # "Collections-26",
+    # "Csv-4",
+    # "Jsoup-15",
+    # "Compress-23",
+    # "Jsoup-25",
+    # "Gson-5",
+    # "Jsoup-45",
+    # "Jsoup-61",
+    # "Codec-18",
+    # "JacksonDatabind-96",
+    # "Codec-3",
+    # "Jsoup-9",
+    # "Jsoup-47",
+    # "Codec-2",
+    # "Codec-10",
+    # "Csv-14",
+    # "Jsoup-54",
+    # "JacksonDatabind-97",
+    # "Jsoup-17",
+    # "Jsoup-76",
+    # "JxPath-10",
+    # "JacksonDatabind-57",
+    # "Jsoup-93",
+    # "Gson-13",
+    # "Closure-168",
+    "Jsoup-34",
+    "Codec-16",
+    "Jsoup-24",
+    "Csv-12",
+    "JacksonDatabind-37",
+    "Jsoup-32",
+    "Compress-38",
+    "Gson-15",
+    "JacksonDatabind-27",
+    "Jsoup-33",
+    "JacksonDatabind-82",
+    "JacksonDatabind-46",
+    "JacksonDatabind-107",
+    "Csv-1",
+    "Codec-9",
+    "Jsoup-51",
+    "Compress-25",
+    "JacksonCore-8",
+    "Jsoup-35",
+    "Jsoup-2",
+}
 # needs_re_gen: dict[str, list[tuple[int, int]]] = json.loads(
 #     Path("d4j1_multi_hunk_comment.json").read_text()
 # )
@@ -229,7 +281,7 @@ class Repairer:
         self.active_connection_analyzer_pairs.clear()
 
     def repair_bug(self, report: Report, bug_id: str, bug: Bug):
-        if bug_id not in SKIP:
+        if bug_id not in BUGS_TO_DO:
             return
         try:
             self.repair_bug_no_cleanup(report, bug_id, bug)
