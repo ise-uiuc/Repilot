@@ -288,11 +288,12 @@ class Defects4J:
             success = f.read().strip() == ""
 
         failing_test_0 = "Failing tests: 0"
-        assert (
+        if not (
             result.stdout.startswith(failing_test_0)
             if success
             else not result.stdout.startswith(failing_test_0)
-        ), (failing_test_0, result.stdout, result.stderr)
+        ):
+            return False, result.stdout, result.stderr
         return success, result.stdout, result.stderr
 
     def checkout(self, bug_id: str, buggy: bool = True, dirty: bool = False):
