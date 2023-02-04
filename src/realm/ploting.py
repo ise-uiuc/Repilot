@@ -108,40 +108,41 @@ def plot_runners(
             for proj, proj_values in runner.get_plausible_patches_grouped().items()
         }
 
-        # plausible_root = Path("plausible_patches")
-        # assert runner.report.transformed_result is not None
-        # transformed = runner.report.transformed_result.result_dict
-        # for proj, proj_values in runner.get_plausible_patches_grouped().items():
-        #     plausible_root.mkdir(exist_ok=True)
-        #     for bug_id, patches in proj_values.items():
-        #         bug_id_dir = plausible_root / bug_id
-        #         bug_id_dir.mkdir()
-        #         patch_strs: list[str] = []
-        #         bugs, _ = transformed[bug_id]
-        #         assert len(bugs) == 1
-        #         diffs: list[str] = []
-        #         for patch_id, patch in enumerate(patches):
-        #             assert len(patch) == 1
-        #             patch_content = concat_hunks(patch)
-        #             patch_strs.append(patch_content)
-        #             patch_file = (bug_id_dir / str(patch_id)).with_suffix(".txt")
-        #             patch_file.write_text(patch_content)
-        #             patch_text_file = patch[0].compute_patch(bugs[0])
-        #             assert patch_text_file is not None
-        #             diff = utils.diff(
-        #                 bugs[0].content,
-        #                 patch_text_file.content,
-        #                 lhs_msg=f"bug/{bugs[0]._path}",
-        #                 rhs_msg=f"fix/{bugs[0]._path}",
-        #             )
-        #             # diff_file = (bug_id_dir / str(patch_id)).with_suffix(".diff")
-        #             # diff_file.write_text(diff)
-        #             # diffs.append(diff)
-        #         integrated_file = bug_id_dir / "integrated.txt"
-        #         integrated_file.write_text(utils.RULE.join(patch_strs))
-        #         (bug_id_dir / f"reference.patch").write_text(D4J.get_patch(bug_id))
-        #         # integrated_diff_file = bug_id_dir / "integrated.diff"
-        #         # integrated_diff_file.write_text(utils.RULE.join(diffs))
+        if os.getenv("DUMP") is not None:
+            plausible_root = Path("plausible_patches")
+            assert runner.report.transformed_result is not None
+            transformed = runner.report.transformed_result.result_dict
+            for proj, proj_values in runner.get_plausible_patches_grouped().items():
+                plausible_root.mkdir(exist_ok=True)
+                for bug_id, patches in proj_values.items():
+                    bug_id_dir = plausible_root / bug_id
+                    bug_id_dir.mkdir()
+                    patch_strs: list[str] = []
+                    bugs, _ = transformed[bug_id]
+                    assert len(bugs) == 1
+                    diffs: list[str] = []
+                    for patch_id, patch in enumerate(patches):
+                        assert len(patch) == 1
+                        patch_content = concat_hunks(patch)
+                        patch_strs.append(patch_content)
+                        patch_file = (bug_id_dir / str(patch_id)).with_suffix(".txt")
+                        patch_file.write_text(patch_content)
+                        patch_text_file = patch[0].compute_patch(bugs[0])
+                        assert patch_text_file is not None
+                        diff = utils.diff(
+                            bugs[0].content,
+                            patch_text_file.content,
+                            lhs_msg=f"bug/{bugs[0]._path}",
+                            rhs_msg=f"fix/{bugs[0]._path}",
+                        )
+                        # diff_file = (bug_id_dir / str(patch_id)).with_suffix(".diff")
+                        # diff_file.write_text(diff)
+                        # diffs.append(diff)
+                    integrated_file = bug_id_dir / "integrated.txt"
+                    integrated_file.write_text(utils.RULE.join(patch_strs))
+                    (bug_id_dir / f"reference.patch").write_text(D4J.get_patch(bug_id))
+                    # integrated_diff_file = bug_id_dir / "integrated.diff"
+                    # integrated_diff_file.write_text(utils.RULE.join(diffs))
 
         # {
         #     proj: [
@@ -159,6 +160,12 @@ def plot_runners(
             f"Plausible rate: {summary.unique_plausible_rate()}",
             f"Plausible fixes: {sum(1 for fixes in plausible_fixes.values() for fix in fixes)}",
         )
+        print()
+        print("Top-k compilation rate:")
+        for top_k in [30, 100, 1000, 5000]:
+            point = runner.top_k_comp_point(top_k)
+            assert point.gen_datapoint.n_total == point.gen_datapoint.n_unique
+            print(f"Top-{top_k}: ", point.compilation_rate())
         print()
         print(
             {

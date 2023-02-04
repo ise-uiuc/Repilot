@@ -401,6 +401,22 @@ class Runner:
             for bug_id, patches in self.get_validation_items()
         }
 
+    def top_k_comp_point(
+        self,
+        top_k: int,
+    ) -> ValidationDatapoint:
+        # result_grouped = self.evaluate_validation()
+        add = ValidationDatapoint.__add__
+        result = ValidationDatapoint.zero()
+        for bug_id, patches in self.get_validation_items():
+            patch_list = list(patches)[:top_k]
+            result += functools.reduce(
+                add,
+                map(map_to_validation_datapoint, patch_list),
+                ValidationDatapoint.zero(),
+            )
+        return result
+
     def evaluate_validation_summary(
         self,
     ) -> tuple[dict[str, ValidationDatapoint], ValidationDatapoint]:
