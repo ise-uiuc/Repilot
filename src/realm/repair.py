@@ -316,8 +316,8 @@ class Repairer:
         self.active_connection_analyzer_pairs.clear()
 
     def repair_bug(self, report: Report, bug_id: str, bug: Bug):
-        if bug_id not in BUGS_TO_DO:
-            return
+        # if bug_id not in BUGS_TO_DO:
+        #     return
         try:
             self.repair_bug_no_cleanup(report, bug_id, bug)
         finally:
@@ -436,7 +436,7 @@ class Repairer:
                 connections, buggy_text_files = init_analyzers()
                 analyzers_initialized = True
             # assert bug_id in needs_re_gen
-            buggy_text_file = buggy_text_files[f_idx]
+            buggy_text_file: TextFile = buggy_text_files[f_idx]
             (
                 buggy_hunk_start_index,
                 buggy_hunk_end_index,
@@ -474,18 +474,23 @@ class Repairer:
                 # breakpoint()
                 # BUG_IDS.append((bug_id, hunk_idx))
             # continue
-            templates = generate_templates(prefix, suffix, buggy_hunk, self.model, None)
+            if os.getenv("TEMPLATE") is not None:
+                templates = generate_templates(
+                    prefix, suffix, buggy_hunk, self.model, None
+                )
+            else:
+                templates = [("No template", prefix, suffix, "", "")]
 
             for template_name, prefix, suffix, t_prefix, t_suffix in templates:
+                text_file = text_file.copy()
                 text_file.add(t_prefix)
-                synthesizer = gen.Synthesizer(
-                    connections, text_file, config.method, buggy_hunk
-                )
-                print(text_file.content[text_file.cursor - 20 : text_file.cursor + 20])
                 lm_context = gen.LMContext(
                     self.model, prefix, suffix, config.lm_inference_config
                 )
-                synthesizer.init_lm(lm_context)
+                synthesizer = gen.Synthesizer(
+                    lm_context, connections, text_file, config.method, buggy_hunk
+                )
+                print(text_file.content[text_file.cursor - 20 : text_file.cursor + 20])
                 # n_samples = config.n_samples - (
                 #     0 if n_already_generated is None else n_already_generated
                 # )

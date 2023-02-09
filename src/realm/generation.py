@@ -181,13 +181,14 @@ def char_may_trigger_completion(c: str) -> bool:
 class Synthesizer:
     def __init__(
         self,
-        # lm_context: LMContext,
+        lm_context: LMContext,
         connections: list[Connection],
         text_file: TextFile,
         gen_method: SynthesisMethod,
         buggy_hunk: str,
     ) -> None:
         # Constants
+        self.init_lm(lm_context)
         self.text_file = text_file
         # self.hunk_start_cursor = self.text_file.cursor
         self.gen_method = gen_method

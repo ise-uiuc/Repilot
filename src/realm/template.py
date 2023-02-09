@@ -79,7 +79,6 @@ def _match_function_multi_input_api_call_generate_template(matched_code):
 
 
 def match_function_multi_input_api_call(code):  # lowest level
-
     ret = []
     matches = re.finditer(r"\([^)(]+,[^)(]+\)", code)
     for match in matches:  # Match single function api print(abc)
@@ -99,7 +98,6 @@ def match_function_multi_input_api_call(code):  # lowest level
 
 
 def generate_match_template(code):
-
     ret = []
 
     # Not very smart templates
@@ -112,13 +110,17 @@ def generate_match_template(code):
 
 
 def generate_templates(
-    prefix: str, suffix: str, buggy_line: str, model: CodeT5ForRealm, instruction: str
+    prefix: str,
+    suffix: str,
+    buggy_line: str,
+    model: CodeT5ForRealm,
+    instruction: str | None,
 ):
     templates = []
     leading_white_space = len(buggy_line) - len(buggy_line.lstrip())
     buggy_line = buggy_line.lstrip()
 
-    if instruction != None:
+    if instruction is not None:
         prefix = prefix + "\n" + " " * leading_white_space + "// " + instruction
         # suffix = " " * leading_white_space + "// " + instruction + "\n" + suffix
 
