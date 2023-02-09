@@ -23,11 +23,133 @@ from .lsp import TextFile, spec
 from .model import CodeT5ForRealm, CodeT5Large
 from .report import Report
 from .results import HunkRepairResult, RepairResult
+from .template import generate_templates
 
 DATA_DIR = Path(os.getenv("LSP", ".lsp_data"))
 # DIAGNOSTICS = {}
 # BUG_IDS = []
-
+SKIP = [
+    "Cli-8",
+    "JacksonDatabind-1",
+    "Jsoup-46",
+    "Codec-4",
+    "Jsoup-41",
+    "Jsoup-77",
+    "Jsoup-40",
+    "Csv-11",
+    "Cli-11",
+    "Codec-17",
+    "Cli-28",
+    "Cli-17",
+    "JacksonCore-11",
+    "Jsoup-62",
+    "JacksonDatabind-17",
+    "Jsoup-55",
+    "JacksonDatabind-16",
+    "Gson-11",
+    "Jsoup-39",
+    "Codec-7",
+    "Compress-1",
+    "JacksonDatabind-99",
+    "Jsoup-86",
+    "Jsoup-43",
+    "Jsoup-88",
+    "JacksonXml-5",
+    "Jsoup-26",
+    "Cli-25",
+    "Cli-40",
+    "Compress-19",
+    "JacksonCore-25",
+    "Jsoup-57",
+    "JacksonCore-5",
+]
+Done = [
+    "Jsoup-25",
+    "Collections-26",
+    "JacksonDatabind-71",
+    "Jsoup-15",
+    "Csv-4",
+    "JacksonDatabind-70",
+    "Jsoup-37",
+    "JacksonDatabind-34",
+    "Compress-23",
+    "JacksonDatabind-57",
+    "Jsoup-45",
+    "JacksonDatabind-96",
+    "Jsoup-61",
+    "Jsoup-47",
+    "Gson-13",
+    "Codec-3",
+    "Codec-2",
+    "JacksonDatabind-97",
+    "Jsoup-9",
+    "Codec-10",
+    "Jsoup-17",
+    "JacksonCore-8",
+    "JacksonDatabind-27",
+    "JacksonDatabind-37",
+    "JacksonDatabind-46",
+    "Jsoup-51",
+    "Jsoup-32",
+    "Compress-38",
+    "JacksonDatabind-107",
+    "JacksonDatabind-82",
+    "Jsoup-24",
+    "Jsoup-34",
+]
+BUGS_TO_DO = {
+    "JacksonDatabind-71",
+    "JacksonDatabind-34",
+    "JacksonCore-26",
+    "Jsoup-37",
+    "JacksonDatabind-70",
+    "Collections-26",
+    "Csv-4",
+    "Jsoup-15",
+    "Compress-23",
+    "Jsoup-25",
+    "Gson-5",
+    "Jsoup-45",
+    "Jsoup-61",
+    "Codec-18",
+    "JacksonDatabind-96",
+    "Codec-3",
+    "Jsoup-9",
+    "Jsoup-47",
+    "Codec-2",
+    "Codec-10",
+    "Csv-14",
+    "Jsoup-54",
+    "JacksonDatabind-97",
+    "Jsoup-17",
+    "Jsoup-76",
+    "JxPath-10",
+    "JacksonDatabind-57",
+    "Jsoup-93",
+    "Gson-13",
+    "Closure-168",
+    "Jsoup-34",
+    "Codec-16",
+    "Jsoup-24",
+    "Csv-12",
+    "JacksonDatabind-37",
+    "Jsoup-32",
+    "Compress-38",
+    "Gson-15",
+    "JacksonDatabind-27",
+    "Jsoup-33",
+    "JacksonDatabind-82",
+    "JacksonDatabind-46",
+    "JacksonDatabind-107",
+    "Csv-1",
+    "Codec-9",
+    "Jsoup-51",
+    "Compress-25",
+    "JacksonCore-8",
+    "Jsoup-35",
+    "Jsoup-2",
+} - set(Done)
+print(len(BUGS_TO_DO), BUGS_TO_DO)
 # needs_re_gen: dict[str, list[tuple[int, int]]] = json.loads(
 #     Path("d4j1_multi_hunk_comment.json").read_text()
 # )
@@ -194,6 +316,8 @@ class Repairer:
         self.active_connection_analyzer_pairs.clear()
 
     def repair_bug(self, report: Report, bug_id: str, bug: Bug):
+        if bug_id not in BUGS_TO_DO:
+            return
         try:
             self.repair_bug_no_cleanup(report, bug_id, bug)
         finally:
@@ -350,69 +474,70 @@ class Repairer:
                 # breakpoint()
                 # BUG_IDS.append((bug_id, hunk_idx))
             # continue
+            templates = generate_templates(prefix, suffix, buggy_hunk, self.model, None)
 
-            lm_context = gen.LMContext(
-                self.model, prefix, suffix, config.lm_inference_config
-            )
-            synthesizer = gen.Synthesizer(
-                lm_context, connections, text_file, config.method, buggy_hunk
-            )
-            # n_samples = config.n_samples - (
-            #     0 if n_already_generated is None else n_already_generated
-            # )
-            n_samples = config.n_samples
-
-            mem_pruning = gen.MEM_PRUNING.setdefault(bug_id, {}).setdefault(
-                hunk_idx, {}
-            )
-            for idx in range(n_samples // n_hunks):
-                print("Hunk index:", hunk_idx)
-                print("Repair index:", idx)
-
-                try:
-                    gen.CURRENT_PRUNING = gen.MEM_PRUNING[bug_id][hunk_idx]
-                except KeyError:
-                    pass
-                synthesis_result_batch = synthesizer.synthesize()
-
-                assert len(synthesis_result_batch.results) == config.batch_size
-                for result in synthesis_result_batch.results:
-                    if result.hunk is not None:
-                        # assert (
-                        #     buggy_text_file.content[:buggy_hunk_start_index]
-                        #     + success.hunk
-                        #     + "\n"
-                        #     + buggy_text_file.content[buggy_hunk_end_index:]
-                        # ) == success.patch.content
-                        print(result.hunk)
-                    else:
-                        print(result)
-                print("Time cost:", synthesis_result_batch.time_cost)
-                buggy_file_path = Path(bug.proj_path) / buggy_file.path
-                assert buggy_file_path.exists()
-                report.repair_result.add(
-                    bug_id,
-                    hunk_idx,
-                    synthesis_result_batch,
-                    buggy_text_file,
-                    buggy_hunk_start_index,
-                    buggy_hunk_end_index,
+            for template_name, prefix, suffix, t_prefix, t_suffix in templates:
+                text_file.add(t_prefix)
+                synthesizer = gen.Synthesizer(
+                    connections, text_file, config.method, buggy_hunk
                 )
+                print(text_file.content[text_file.cursor - 20 : text_file.cursor + 20])
+                lm_context = gen.LMContext(
+                    self.model, prefix, suffix, config.lm_inference_config
+                )
+                synthesizer.init_lm(lm_context)
+                # n_samples = config.n_samples - (
+                #     0 if n_already_generated is None else n_already_generated
+                # )
+                n_samples = config.n_samples // len(templates)
+                for idx in range(n_samples // n_hunks):
+                    print("Hunk index:", hunk_idx)
+                    print("Repair index:", idx, template_name)
+
+                    try:
+                        gen.CURRENT_PRUNING = gen.MEM_PRUNING[bug_id][hunk_idx]
+                    except KeyError:
+                        pass
+                    synthesis_result_batch = synthesizer.synthesize(t_prefix, t_suffix)
+
+                    assert len(synthesis_result_batch.results) == config.batch_size
+                    for result in synthesis_result_batch.results:
+                        if result.hunk is not None:
+                            # assert (
+                            #     buggy_text_file.content[:buggy_hunk_start_index]
+                            #     + success.hunk
+                            #     + "\n"
+                            #     + buggy_text_file.content[buggy_hunk_end_index:]
+                            # ) == success.patch.content
+                            print(result.hunk)
+                        else:
+                            print(result)
+                    print("Time cost:", synthesis_result_batch.time_cost)
+                    buggy_file_path = Path(bug.proj_path) / buggy_file.path
+                    assert buggy_file_path.exists()
+                    report.repair_result.add(
+                        bug_id,
+                        hunk_idx,
+                        synthesis_result_batch,
+                        buggy_text_file,
+                        buggy_hunk_start_index,
+                        buggy_hunk_end_index,
+                    )
+                if synthesizer.use_mem and synthesizer.mem is not None:
+                    count = 0
+                    assert synthesizer.mem is not None
+                    for _, ids in synthesizer.mem.infeasible_token_ids.items():
+                        if len(ids) > 0:
+                            count += 1
+                    logging.info(
+                        f"[{bug_id}, {hunk_idx}] Mem pruning: {count} states pruned"
+                    )
             # SAVE after all iterations
             report.save()
             # WARNING: Timeout error, if happend, indicates the TIMEOUT_THRESHOULD is too small (unlikely)
             # or a fatal implementation error!!
             # except TimeoutError:
             #     self.report.report_timeout_error()
-            if synthesizer.use_mem:
-                count = 0
-                assert synthesizer.mem is not None
-                for _, ids in synthesizer.mem.infeasible_token_ids.items():
-                    if len(ids) > 0:
-                        count += 1
-                logging.info(
-                    f"[{bug_id}, {hunk_idx}] Mem pruning: {count} states pruned"
-                )
             #     assert synthesizer.mem is not None
             #     mem_pruning.update(
             #         {

@@ -615,6 +615,7 @@ def validate_proj(
     bug_id: str,
     patch_infos: list[tuple[int, list[TextFile], AvgPatch]],
 ) -> dict[int, PatchValidationResult]:
+    # if correctly implemented, val_results == validated at the end
     cache_save_path = cache_root / f"{bug_id}.val.json"
     if cache_save_path.exists():
         with open(cache_save_path) as f:
@@ -624,7 +625,15 @@ def validate_proj(
             }
     else:
         val_results = {}
-    val_results.update(validated)
+    for patch_idx, patch_val_result in validated.items():
+        if patch_idx not in val_results:
+            val_results[patch_idx] = patch_val_result
+    with open(cache_save_path, "w") as f:
+        json.dump(
+            {patch_idx: r.to_json() for patch_idx, r in val_results.items()},
+            f,
+            indent=2,
+        )
     cached: dict[str, PatchValidationResult] = {}
     n_validated = 0
     for batch in utils.chunked(N_SAVE_CACHE, patch_infos):
@@ -636,6 +645,7 @@ def validate_proj(
                 utils.remove_java_comments(concat_hunk_str)
             )
             if patch_idx in val_results:
+                # if correctly implemented, this should never happen
                 print(f"[{bug_id}, {patch_idx}] Skipped (validated)")
                 continue
             if ws_removed_hunk_str in cached:

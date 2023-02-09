@@ -33,6 +33,14 @@ class CodeT5ForRealm(T5ForConditionalGeneration):
         self.max_tokens: int = self.config.to_dict()["n_positions"]  # type: ignore # noqa
         self.model_args = model_args
 
+    def tpl_encode(self, string: str) -> torch.LongTensor:
+        return self.tokenizer.encode(
+            string, return_tensors="pt", add_special_tokens=False
+        )[0]
+
+    def tpl_decode(self, tokens: torch.LongTensor) -> str:
+        return self.tokenizer.decode(tokens)
+
     @property
     def end_id(self) -> int:
         raise NotImplementedError
