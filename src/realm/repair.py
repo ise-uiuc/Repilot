@@ -474,11 +474,12 @@ class Repairer:
                 # breakpoint()
                 # BUG_IDS.append((bug_id, hunk_idx))
             # continue
-            if os.getenv("TEMPLATE") is not None:
+            use_template = os.getenv("TEMPLATE") is not None
+            if use_template:
                 templates = generate_templates(
                     prefix, suffix, buggy_hunk, self.model, None
                 )
-            else:
+            if not use_template or len(templates) == 0:
                 templates = [("No template", prefix, suffix, "", "")]
 
             for template_name, prefix, suffix, t_prefix, t_suffix in templates:
