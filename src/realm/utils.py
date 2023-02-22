@@ -325,3 +325,15 @@ def diff(lhs: str, rhs: str, lhs_msg: str, rhs_msg: str) -> str:
         lhs.splitlines(), rhs.splitlines(), lhs_msg, rhs_msg
     )
     return "\n".join(unified_diff)
+
+
+def average_and_adjust(num: int, n: int):
+    average = num // n
+    parts = [average] * n
+    parts[-1] += num - (n * average)
+    assert sum(parts) == num
+    return parts
+
+
+def ceil(num: int, n: int):
+    return (num + n - 1) // n

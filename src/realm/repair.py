@@ -400,6 +400,7 @@ class Repairer:
         # Ready to repair
         analyzers_initialized = False
         n_hunks = bug.n_hunks()
+        hunk_n_samples = utils.ceil(config.n_samples, n_hunks)
         for hunk_idx, buggy_file, change in bug.iter_hunks():
             result_dict = report.repair_result.result_dict
             f_idx, h_idx = hunk_idx
@@ -475,14 +476,30 @@ class Repairer:
                 # BUG_IDS.append((bug_id, hunk_idx))
             # continue
             use_template = os.getenv("TEMPLATE") is not None
+            default_template = ("No template", prefix, suffix, "", "")
             if use_template:
                 templates = generate_templates(
                     prefix, suffix, buggy_hunk, self.model, None
                 )
-            if not use_template or len(templates) == 0:
-                templates = [("No template", prefix, suffix, "", "")]
+            else:
+                templates = []
+            n_samples_and_templates = [
+                (hunk_n_samples // (len(templates) + 1), template)
+                for template in templates
+            ]
+            sum_samples = sum(n for n, _ in n_samples_and_templates)
+            n_samples_and_templates.append(
+                (hunk_n_samples - sum_samples, default_template)
+            )
+            assert sum(n for n, _ in n_samples_and_templates) == hunk_n_samples
 
-            for template_name, prefix, suffix, t_prefix, t_suffix in templates:
+            for n_samples, (
+                template_name,
+                prefix,
+                suffix,
+                t_prefix,
+                t_suffix,
+            ) in n_samples_and_templates:
                 text_file = text_file.copy()
                 text_file.add(t_prefix)
                 lm_context = gen.LMContext(
@@ -495,8 +512,9 @@ class Repairer:
                 # n_samples = config.n_samples - (
                 #     0 if n_already_generated is None else n_already_generated
                 # )
-                n_samples = config.n_samples // len(templates)
-                for idx in range(n_samples // n_hunks):
+                # n_samples = config.n_samples // len(templates)
+                # A list of integers that split `n_samples` on average but sums up to `n_samples`
+                for idx in range(n_samples):
                     print("Hunk index:", hunk_idx)
                     print("Repair index:", idx, template_name)
 
