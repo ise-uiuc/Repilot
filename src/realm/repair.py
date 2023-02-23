@@ -401,33 +401,16 @@ class Repairer:
         analyzers_initialized = False
         n_hunks = bug.n_hunks()
         hunk_n_samples = utils.ceil(config.n_samples, n_hunks)
+        assert hunk_n_samples * n_hunks >= config.n_samples
         for hunk_idx, buggy_file, change in bug.iter_hunks():
             result_dict = report.repair_result.result_dict
             f_idx, h_idx = hunk_idx
 
-            # def get_files() -> list[list[HunkRepairResult]] | None:
-            #     return result_dict.get(bug_id)
-
-            # def get_hunks(
-            #     files: list[list[HunkRepairResult]],
-            # ) -> list[HunkRepairResult] | None:
-            #     return files[f_idx] if f_idx < len(files) else None
-
-            # def get_n_samples(hunks: list[HunkRepairResult]) -> int | None:
-            #     return len(hunks[h_idx].results) if h_idx < len(hunks) else None
-
-            # # FP experiment
-            # n_already_generated = utils.bind_optional(
-            #     utils.bind_optional(get_files(), get_hunks), get_n_samples
-            # )
-            # if (
-            #     n_already_generated is not None
-            #     and n_already_generated == config.n_samples
-            # ):
             if (
                 bug_id in result_dict
                 and f_idx < len(result_dict[bug_id])
                 and h_idx < len(result_dict[bug_id][f_idx])
+                and len(result_dict[bug_id][f_idx][h_idx].results) >= hunk_n_samples
                 # or bug_id not in needs_re_gen
             ):
                 print(f"Skipping {bug_id} {hunk_idx}")
@@ -444,11 +427,11 @@ class Repairer:
                 _,
                 _,
             ) = get_buggy_hunk_start_end_indices_and_positions(buggy_text_file, change)
-            text_file = buggy_text_file.copy()
+            buggy_file_copy = buggy_text_file.copy()
             buggy_hunk = "".join(change.removed_lines)
             buggy_hunk = buggy_hunk[:-1] if buggy_hunk.endswith("\n") else buggy_hunk
             print("Buggy hunk:", repr(buggy_hunk))
-            prefix, suffix = remove_buggy_hunk(text_file, change)
+            prefix, suffix = remove_buggy_hunk(buggy_file_copy, change)
 
             # Comment issue for codet5
             prefix_lines = prefix.split("\n")
@@ -493,6 +476,7 @@ class Repairer:
             )
             assert sum(n for n, _ in n_samples_and_templates) == hunk_n_samples
 
+            repair_idx = 0
             for n_samples, (
                 template_name,
                 prefix,
@@ -500,7 +484,7 @@ class Repairer:
                 t_prefix,
                 t_suffix,
             ) in n_samples_and_templates:
-                text_file = text_file.copy()
+                text_file = buggy_file_copy.copy()
                 text_file.add(t_prefix)
                 lm_context = gen.LMContext(
                     self.model, prefix, suffix, config.lm_inference_config
@@ -514,10 +498,19 @@ class Repairer:
                 # )
                 # n_samples = config.n_samples // len(templates)
                 # A list of integers that split `n_samples` on average but sums up to `n_samples`
-                for idx in range(n_samples):
+                for _ in range(n_samples):
+                    repair_idx += 1
                     print("Hunk index:", hunk_idx)
-                    print("Repair index:", idx, template_name)
-
+                    print("Repair index:", repair_idx, template_name)
+                    if (
+                        bug_id in result_dict
+                        and f_idx < len(result_dict[bug_id])
+                        and h_idx < len(result_dict[bug_id][f_idx])
+                        and repair_idx <= len(result_dict[bug_id][f_idx][h_idx].results)
+                        # or bug_id not in needs_re_gen
+                    ):
+                        print(f"Skipping {bug_id} {hunk_idx} {repair_idx}")
+                        continue
                     try:
                         gen.CURRENT_PRUNING = gen.MEM_PRUNING[bug_id][hunk_idx]
                     except KeyError:
