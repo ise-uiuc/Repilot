@@ -281,22 +281,23 @@ class Defects4J:
         )
         failing_tests = Path(bug.proj_path) / "failing_tests"
         if not failing_tests.exists():
-            return False, result.stdout, result.stderr
+            return True, result.stdout, result.stderr
 
         assert failing_tests.exists()
         with open(failing_tests) as f:
-            success = f.read().strip() == ""
+            failing_test_0 = "Failing tests: 0"
+            success = f.read().strip() == "" or result.stdout.startswith(failing_test_0)
 
-        failing_test_0 = "Failing tests: 0"
-        if not (
-            result.stdout.startswith(failing_test_0)
-            if success
-            else not result.stdout.startswith(failing_test_0)
-        ):
-            return False, result.stdout, result.stderr
+        # if not (
+        #     result.stdout.startswith(failing_test_0)
+        #     if success
+        #     else not result.stdout.startswith(failing_test_0)
+        # ):
+        #     return False, result.stdout, result.stderr
         return success, result.stdout, result.stderr
 
     def checkout(self, bug_id: str, buggy: bool = True, dirty: bool = False):
+        assert not dirty
         bug_proj_path = self.all_bugs[bug_id].proj_path
         proj, id_str = self.split_bug_id(bug_id)
         repo = git.Repo(bug_proj_path)

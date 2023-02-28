@@ -119,30 +119,34 @@ def plot_runners(
                     bug_id_dir.mkdir()
                     patch_strs: list[str] = []
                     bugs, _ = transformed[bug_id]
-                    assert len(bugs) == 1
+                    # assert len(bugs) == 1
                     diffs: list[str] = []
                     for patch_id, patch in enumerate(patches):
-                        assert len(patch) == 1
-                        patch_content = concat_hunks(patch)
+                        assert len(patch) == len(bugs)
+                        patch_content = concat_hunks(patch, delim=utils.HUNK_RULE)
                         patch_strs.append(patch_content)
                         patch_file = (bug_id_dir / str(patch_id)).with_suffix(".txt")
                         patch_file.write_text(patch_content)
-                        patch_text_file = patch[0].compute_patch(bugs[0])
-                        assert patch_text_file is not None
-                        diff = utils.diff(
-                            bugs[0].content,
-                            patch_text_file.content,
-                            lhs_msg=f"bug/{bugs[0]._path}",
-                            rhs_msg=f"fix/{bugs[0]._path}",
-                        )
-                        # diff_file = (bug_id_dir / str(patch_id)).with_suffix(".diff")
-                        # diff_file.write_text(diff)
-                        # diffs.append(diff)
+                        file_diffs: list[str] = []
+                        for bug, p in zip(bugs, patch):
+                            patch_text_file = p.compute_patch(bug)
+                            assert patch_text_file is not None
+                            file_diff = utils.diff(
+                                bug.content,
+                                patch_text_file.content,
+                                lhs_msg=f"bug/{bug._path}",
+                                rhs_msg=f"fix/{bug._path}",
+                            )
+                            file_diffs.append(file_diff)
+                        diff = utils.DIFF_RULE.join(file_diffs)
+                        diff_file = (bug_id_dir / str(patch_id)).with_suffix(".diff")
+                        diff_file.write_text(diff)
+                        diffs.append(diff)
                     integrated_file = bug_id_dir / "integrated.txt"
                     integrated_file.write_text(utils.RULE.join(patch_strs))
                     (bug_id_dir / f"reference.patch").write_text(D4J.get_patch(bug_id))
-                    # integrated_diff_file = bug_id_dir / "integrated.diff"
-                    # integrated_diff_file.write_text(utils.RULE.join(diffs))
+                    integrated_diff_file = bug_id_dir / "integrated.diff"
+                    integrated_diff_file.write_text(utils.RULE.join(diffs))
 
         # {
         #     proj: [
@@ -165,7 +169,12 @@ def plot_runners(
         for top_k in [30, 100, 1000, 5000]:
             point = runner.top_k_comp_point(top_k)
             assert point.gen_datapoint.n_total == point.gen_datapoint.n_unique
-            print(f"Top-{top_k}: ", point.compilation_rate())
+            print(
+                f"Top-{top_k}: ",
+                point.compilation_rate(),
+                point.n_comp_success,
+                point.gen_datapoint.n_total,
+            )
         print()
         print(
             {

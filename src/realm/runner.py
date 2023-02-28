@@ -30,6 +30,7 @@ from .results import (
     PatchValidationResult,
     RepairResult,
     RepairTransformedResult,
+    SynthesisResult,
     ValidationCache,
     ValidationDatapoint,
     ValidationResult,
@@ -580,7 +581,7 @@ def validate_patch(
         patch_text_file.root = d4j.d4j_checkout_root
         assert patch_text_file.path.exists()
         patch_text_file.write()
-        patch_text_file.path.touch()
+        # patch_text_file.path.touch()
     comp_success, comp_stdout, comp_stderr = d4j.compile(bug_id)
     if not comp_success:
         return PatchValidationResult(
@@ -666,7 +667,7 @@ def validate_proj(
             val_results[patch_idx] = val_result
             n_validated += 1
             if os.getenv("KILL") is not None:
-                pattern = f"{bug_id}.*javac1.7"
+                pattern = f"javac1.7.*{bug_id}/"
                 os.system(f'pkill -SIGKILL -u $USER -f "{pattern}"')
         with open(cache_save_path, "w") as f:
             json.dump(
@@ -678,6 +679,12 @@ def validate_proj(
 
 
 _AvgResult = tuple[AvgSynthesisResult, BuggyHunk]
+
+
+BUGGY_HUNK = AvgSynthesisResult(
+    SynthesisResult(utils.BUGGY_HUNK_PLACEHOLDER, False, False),
+    0.0,
+)
 
 
 def iter_files(
@@ -727,8 +734,27 @@ def iter_files(
                 hunks.append(avg_result)
             assert bug is not None
             buggy_files.append(bug)
+            assert len(hunks) == len(buggy_hunk_indices)
             file_patches.append(AvgFilePatch(hunks, buggy_hunk_indices))
-        yield buggy_files, file_patches
+            assert len(file_patches) == len(buggy_files)
+        for f_idx, file_patch in enumerate(file_patches):
+            empty_file = AvgFilePatch(
+                [BUGGY_HUNK] * len(file_patch.hunks),
+                file_patch.buggy_hunk_indices,
+            )
+            for h_idx, hunk_patch in enumerate(file_patch.hunks):
+                # Keep other hunks buggy and only one is active
+                hunk_patches = (
+                    h_idx * [BUGGY_HUNK]
+                    + [hunk_patch]
+                    + (len(file_patch.hunks) - h_idx - 1) * [BUGGY_HUNK]
+                )
+                file_patches = (
+                    f_idx * [empty_file]
+                    + [AvgFilePatch(hunk_patches, file_patch.buggy_hunk_indices)]
+                    + (len(file_patches) - f_idx - 1) * [empty_file]
+                )
+                yield buggy_files, file_patches
 
 
 def map_to_unique_generation_datapoint(patch: AvgPatch) -> GenerationDatapoint:

@@ -241,9 +241,23 @@ class JsonSpecificDirectoryDumpable(JsonSerializable, Protocol):
         return cast(T, cls_casted.from_json_file(path))
 
 
+DIFF_RULE = (
+    "\n******************************************************************************\n"
+)
+
 RULE = (
     "\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
 )
+
+HUNK_RULE = (
+    "\n==============================================================================\n"
+)
+
+# class BuggyHunkPlaceholder:
+#     def __repr__(self) -> str:
+#         return "<BUGGY_HUNK_PLACEHOLDER>"
+
+BUGGY_HUNK_PLACEHOLDER = "<BUGGY_HUNK_PLACEHOLDER>"
 
 
 def log_git_repo(f: io.TextIOBase, tag: str, repo_path: Path, new_line: bool = True):

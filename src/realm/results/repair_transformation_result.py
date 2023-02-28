@@ -2,7 +2,11 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from realm.lsp import TextFile
-from realm.utils import JsonSerializable, JsonSpecificDirectoryDumpable
+from realm.utils import (
+    BUGGY_HUNK_PLACEHOLDER,
+    JsonSerializable,
+    JsonSpecificDirectoryDumpable,
+)
 
 from .repair_result import AvgSynthesisResult
 
@@ -65,6 +69,8 @@ class AvgFilePatch:
             success = hunk.result.hunk
             if success is None:
                 return None
+            if success == BUGGY_HUNK_PLACEHOLDER:
+                continue
             # assert success.patch.path == patch.path
             # assert success.hunk_start_idx == start
             # assert success.hunk_start_idx <= success.hunk_end_idx
