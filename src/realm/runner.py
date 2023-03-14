@@ -588,7 +588,7 @@ def validate_patch(
             Outcome.CompilationError, cost(), comp_stdout, comp_stderr
         )
     try:
-        val_success, val_stdout, val_stderr = d4j.test(bug_id, timeout=180)
+        val_success, val_stdout, val_stderr = d4j.test(bug_id, timeout=600)
         return PatchValidationResult(
             Outcome.Success if val_success else Outcome.TestingError,
             cost(),

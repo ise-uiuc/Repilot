@@ -351,3 +351,7 @@ def average_and_adjust(num: int, n: int):
 
 def ceil(num: int, n: int):
     return (num + n - 1) // n
+
+
+def safe_div(dividend: int | float, divisor: int | float) -> float:
+    return dividend / divisor if divisor != 0 else 0.0

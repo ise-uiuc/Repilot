@@ -64,17 +64,19 @@ class ValidationDatapoint(utils.JsonSerializable):
         return self.n_test_success / self.n_parse_success
 
     def unique_compilation_rate(self) -> float:
-        return self.n_comp_success / (
+        return utils.safe_div(
+            self.n_comp_success,
             self.gen_datapoint.n_unique
             - self.gen_datapoint.n_pruned
-            - self.gen_datapoint.n_unfinished
+            - self.gen_datapoint.n_unfinished,
         )
 
     def unique_plausible_rate(self) -> float:
-        return self.n_test_success / (
+        return utils.safe_div(
+            self.n_test_success,
             self.gen_datapoint.n_unique
             - self.gen_datapoint.n_pruned
-            - self.gen_datapoint.n_unfinished
+            - self.gen_datapoint.n_unfinished,
         )
 
     def compilation_rate(self) -> float:
