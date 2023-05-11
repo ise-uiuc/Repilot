@@ -363,7 +363,7 @@ class Runner:
             proj_result = result.setdefault(proj, {})
             for bug_id, patches in proj_dict.items():
                 results = []
-                for patch, val_result in patches:
+                for patch, val_result in patches:  # [:200]:
                     assert not patch.is_duplicate
                     if val_result.outcome == Outcome.Success:
                         # Assertions
@@ -565,6 +565,13 @@ def validate_patch(
     # Checkout the fixed version and then apply patches b/c we do not consider test file changes
     d4j.checkout(bug_id, buggy=False, dirty=False)
     for patch_text_file in patch_files:
+        if (
+            str(patch_text_file._path)
+            == "Math-76/src/main/java/org/apache/commons/math/linear/SingularValueDecompositionImpl.java"
+        ):
+            # A special case that will cause the parser to hang
+            continue
+        print("try parse", patch_text_file._path)
         try:
             javalang.parse.parse(patch_text_file.content)
         except (
@@ -581,14 +588,19 @@ def validate_patch(
         patch_text_file.root = d4j.d4j_checkout_root
         assert patch_text_file.path.exists()
         patch_text_file.write()
+        print("Done parse", patch_text_file.path)
         # patch_text_file.path.touch()
+    print("Compile...")
     comp_success, comp_stdout, comp_stderr = d4j.compile(bug_id)
+    print("Done compile.")
     if not comp_success:
         return PatchValidationResult(
             Outcome.CompilationError, cost(), comp_stdout, comp_stderr
         )
     try:
+        print("Test...")
         val_success, val_stdout, val_stderr = d4j.test(bug_id, timeout=600)
+        print("Done test.")
         return PatchValidationResult(
             Outcome.Success if val_success else Outcome.TestingError,
             cost(),
