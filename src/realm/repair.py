@@ -20,7 +20,7 @@ from .analyzer import JdtLspAnalyzer, Message
 from .config import MetaConfig, RepairConfig
 from .d4j import D4J1_HUNK_SPECIAL, Bug, Change, Defects4J
 from .lsp import TextFile, spec
-from .model import CodeT5ForRealm, CodeT5Large
+from .model import CodeT5Large, Incoder, ModelType
 from .report import Report
 from .results import HunkRepairResult, RepairResult
 from .template import generate_templates
@@ -149,7 +149,7 @@ BUGS_TO_DO = {
     "Jsoup-35",
     "Jsoup-2",
 } - set(Done)
-print(len(BUGS_TO_DO), BUGS_TO_DO)
+# print(len(BUGS_TO_DO), BUGS_TO_DO)
 # needs_re_gen: dict[str, list[tuple[int, int]]] = json.loads(
 #     Path("d4j1_multi_hunk_comment.json").read_text()
 # )
@@ -237,7 +237,7 @@ class Repairer:
     def __init__(
         self,
         config: MetaConfig,
-        model: CodeT5ForRealm,
+        model: ModelType,
         d4j: Defects4J,
         active_connection_analyzer_pairs: list[tuple[Connection, JdtLspAnalyzer]],
     ) -> None:
@@ -251,7 +251,10 @@ class Repairer:
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
         # report = Report.create(report_dir, config)
-        model = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
+        if os.getenv("INCODER") is None:
+            model: ModelType = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
+        else:
+            model = Incoder.from_pretrained("facebook/incoder-6B").to(utils.DEVICE)
         if pre_allocate:
             print("Doing pre-allocation..")
             model.pre_allocate()
@@ -430,7 +433,8 @@ class Repairer:
             buggy_file_copy = buggy_text_file.copy()
             buggy_hunk = "".join(change.removed_lines)
             buggy_hunk = buggy_hunk[:-1] if buggy_hunk.endswith("\n") else buggy_hunk
-            print("Buggy hunk:", repr(buggy_hunk))
+            print("Buggy hunk:")
+            print(buggy_hunk)
             prefix, suffix = remove_buggy_hunk(buggy_file_copy, change)
 
             # Comment issue for codet5
@@ -519,6 +523,7 @@ class Repairer:
 
                     assert len(synthesis_result_batch.results) == config.batch_size
                     for result in synthesis_result_batch.results:
+                        print()
                         if result.hunk is not None:
                             # assert (
                             #     buggy_text_file.content[:buggy_hunk_start_index]
@@ -529,6 +534,7 @@ class Repairer:
                             print(result.hunk)
                         else:
                             print(result)
+                        print()
                     print("Time cost:", synthesis_result_batch.time_cost)
                     buggy_file_path = Path(bug.proj_path) / buggy_file.path
                     assert buggy_file_path.exists()

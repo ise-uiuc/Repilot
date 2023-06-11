@@ -1,6 +1,6 @@
 import re
 
-from .model import CodeT5ForRealm
+from .model import ModelType
 
 
 def match_conditional_expression(code):
@@ -113,7 +113,7 @@ def generate_templates(
     prefix: str,
     suffix: str,
     buggy_line: str,
-    model: CodeT5ForRealm,
+    model: ModelType,
     instruction: str | None,
 ):
     templates = []
@@ -136,7 +136,7 @@ def generate_templates(
         str_builder = ""
         tokens = model.tpl_encode(buggy_line)
         for s in tokens:
-            str_builder += model.tpl_decode(s)
+            str_builder += model.token_map[s.item()]
             templates.append(
                 (
                     "pb",
@@ -150,7 +150,7 @@ def generate_templates(
         # partial after
         str_builder = ""
         for s in reversed(tokens):
-            str_builder = model.tpl_decode(s) + str_builder
+            str_builder = model.token_map[s.item()] + str_builder
             templates.append(
                 (
                     "pa",

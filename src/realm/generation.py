@@ -31,7 +31,7 @@ from .analyzer import JdtLspAnalyzer, Message
 from .config import LMInferenceConfig, SynthesisMethod
 from .generation_defs import GenerationContext, Memorization
 from .lsp import TextFile, spec
-from .model import CodeT5ForRealm
+from .model import ModelType
 from .results import SynthesisResult, SynthesisResultBatch
 
 JAVA_KEYWORDS = {
@@ -117,7 +117,7 @@ class GenerationState:
 
 class LMContext(NamedTuple):
     # for LM
-    model: CodeT5ForRealm
+    model: ModelType
     prefix: str
     suffix: str
     inference_config: LMInferenceConfig
@@ -279,6 +279,8 @@ class Synthesizer:
             if self.gen_state.batch_is_failed[batch_idx]:
                 results.append(SynthesisResult(None, True, False))
             elif self.gen_state.batch_is_unfinished[batch_idx]:
+                print("Unfinished")
+                print("".join(self.gen_state.gen_contexts[batch_idx].generated_tokens))
                 results.append(SynthesisResult(None, False, True))
             else:
                 gen_context = self.gen_state.gen_contexts[batch_idx]
@@ -329,6 +331,7 @@ class Synthesizer:
             next_token_id_item = cast(int, next_token_id.item())
             assert isinstance(next_token_id_item, int)
             next_token = self.model.token_map[next_token_id_item]
+            # breakpoint()
             if not self.model.is_special_token(next_token):
                 self.lsp_contexts[batch_idx].text_file.add(next_token)
                 gen_contexts[batch_idx].generated_ids.append(next_token_id_item)
@@ -760,6 +763,7 @@ class Synthesizer:
             model_inputs = model.prepare_inputs_for_generation(
                 input_ids, **model_kwargs
             )
+            # breakpoint()
 
             # forward pass to get next token
             outputs = model(

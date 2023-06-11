@@ -1,9 +1,15 @@
 import os
 from pathlib import Path
-from typing import Optional, TypeVar, Union, cast
+from typing import Any, Optional, TypeVar, Union, cast
 
 import torch
-from transformers import AutoTokenizer, T5Config, T5ForConditionalGeneration
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    T5Config,
+    T5ForConditionalGeneration,
+)
+from transformers.models.xglm.modeling_xglm import XGLMForCausalLM
 from transformers.tokenization_utils import PreTrainedTokenizer
 
 from . import utils
@@ -38,8 +44,8 @@ class CodeT5ForRealm(T5ForConditionalGeneration):
             string, return_tensors="pt", add_special_tokens=False
         )[0]
 
-    def tpl_decode(self, tokens: torch.LongTensor) -> str:
-        return self.tokenizer.decode(tokens)
+    # def tpl_decode(self, tokens: torch.LongTensor) -> str:
+    #     return self.tokenizer.decode(tokens)
 
     @property
     def end_id(self) -> int:
@@ -167,3 +173,123 @@ class CodeT5Large(CodeT5ForRealm):
                 max_new_tokens=50,
             )
             # No need to do backward
+
+
+class Incoder(XGLMForCausalLM):
+    def __init__(self, config, model_name: str):
+        super().__init__(config)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # self.max_tokens = self.model.config.to_dict()["max_position_embeddings"]
+        self.max_tokens = 512
+        self.vocab_size = self.model.config.to_dict()["vocab_size"]
+        self.token_map: list[str] = utils.load_and_cache_data(
+            Path(f"incoder_token_map.pkl"),
+            lambda: [
+                self.tokenizer.decode(
+                    id, skip_special_tokens=False, clean_up_tokenization_spaces=False
+                )
+                for id in range(self.vocab_size)
+            ],
+        )
+        self.infill_ph = "<|mask:0|>"
+        self.extra_end = "<|mask:1|><|mask:0|>"
+        # signals the end of a generated infill
+        self.EOM = "<|endofmask|>"
+        self.EOM_ID = 50517
+        self.end_id = self.EOM_ID
+        self.BOS = "<|endoftext|>"
+        self.META_FILE = "<|/ file"
+
+    @property
+    def end_ids(self) -> list[int]:
+        return [self.EOM_ID]
+
+    @classmethod
+    def is_special_token(cls, token: str) -> bool:
+        return (
+            token.startswith("<|endof")
+            or token.startswith("<|/")
+            or token.startswith("<|mask")
+            or token in ["<s>", "<pad>", "<|endoftext|>", "<unk>"]
+        )
+
+    @classmethod
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: str | Any, *model_args, **kwargs
+    ):
+        return super().from_pretrained(
+            pretrained_model_name_or_path,
+            pretrained_model_name_or_path,
+            *model_args,
+            **kwargs,
+        )
+
+    def context(self, prefix: str, suffix: str) -> str:
+        return prefix + self.infill_ph + suffix
+
+    def encode(self, prefix: str, suffix: str) -> torch.Tensor:
+        context = (
+            self.tokenizer(self.context(prefix, suffix), return_tensors="pt")
+            .to(utils.DEVICE)
+            .input_ids
+        )
+        context1 = self.tokenizer.encode(
+            self.context(prefix, suffix), return_tensors="pt"
+        ).to(utils.DEVICE)
+        if not torch.equal(context, context1):
+            breakpoint()
+        # <|mask:0|>
+        index = (context[0] == 50261).nonzero()[0]
+        half_token_limit = (self.max_tokens - 2) // 2
+        assert len(context) == 1
+        prefix_tensor = context[:, :index]
+        prefix_len = prefix_tensor.shape[1]
+        suffix_tensor = context[:, index:]
+        suffix_len = suffix_tensor.shape[1]
+        if prefix_len < half_token_limit and suffix_len < half_token_limit:
+            result = torch.cat((prefix_tensor, suffix_tensor), dim=1)
+        elif prefix_len >= half_token_limit and suffix_len >= half_token_limit:
+            result = torch.cat(
+                (
+                    prefix_tensor[:, -half_token_limit:],
+                    suffix_tensor[:, :half_token_limit],
+                ),
+                dim=1,
+            )
+        elif prefix_len < half_token_limit and suffix_len >= half_token_limit:
+            n_more = min(half_token_limit - prefix_len, suffix_len - half_token_limit)
+            result = torch.cat(
+                (
+                    prefix_tensor[:, -half_token_limit:],
+                    suffix_tensor[:, : half_token_limit + n_more],
+                ),
+                dim=1,
+            )
+        elif prefix_len >= half_token_limit and suffix_len < half_token_limit:
+            n_more = min(half_token_limit - suffix_len, prefix_len - half_token_limit)
+            result = torch.cat(
+                (
+                    prefix_tensor[:, -half_token_limit - n_more :],
+                    suffix_tensor[:, :half_token_limit],
+                ),
+                dim=1,
+            )
+        # print(CODET5_TOKENIZER.batch_decode(result))
+        result = torch.cat(
+            (result, torch.tensor([[50262, 50261]]).to(utils.DEVICE)), dim=1
+        )
+        assert result.shape[1] <= self.max_tokens
+        return result
+
+    def pre_allocate(self):
+        pass
+
+    def tpl_encode(self, string: str) -> torch.LongTensor:
+        return self.tokenizer.encode(
+            string, return_tensors="pt", add_special_tokens=False
+        )[0]
+
+
+ModelType = CodeT5Large | Incoder
+
+# model.generate()

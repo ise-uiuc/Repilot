@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, cast
 from realm import utils
 from realm.generation_defs import GenerationContext, Memorization
 from realm.lsp import LSPClient, TextFile, spec
-from realm.model import CodeT5ForRealm
+from realm.model import ModelType
 
 TIMEOUT_THRESHOULD = 300
 
@@ -42,7 +42,7 @@ class JdtLspAnalyzer(Process):
         conn: Connection,
         server_cmd: list[str],
         proj_path: PathLike,
-        model: CodeT5ForRealm,
+        model: ModelType,
         java8_home: str,
         verbose: bool = False,
     ) -> None:
