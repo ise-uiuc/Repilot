@@ -196,7 +196,7 @@ def run(
 
 def run_by_loading(action: Callable[[Namespace, Runner], T], args: Namespace) -> T:
     def load_runner(args: Namespace) -> Runner:
-        return Runner.load(Path(args.dir))
+        return Runner.load(Path(args.dir), META_CONFIG)
 
     return run(load_runner, action, args)
 
@@ -261,12 +261,12 @@ def validate(args: Namespace) -> None:
 
 
 def evaluate(args: Namespace):
-    runners = [Runner.load(Path(dir)) for dir in args.dirs]
+    runners = [Runner.load(Path(dir), META_CONFIG) for dir in args.dirs]
     plot_runners(args.tags, runners)
 
 
 def save_validation_cache(args: Namespace):
-    runners = [Runner.load(Path(dir)) for dir in args.dirs]
+    runners = [Runner.load(Path(dir), META_CONFIG) for dir in args.dirs]
     f_cache = Path(args.cache_save_path)
     if f_cache.exists():
         data = ValidationCache.from_json_file(f_cache)

@@ -97,7 +97,11 @@ class Report(utils.IORetrospective):
 
     @classmethod
     def load(cls, path: Path) -> "Report":
-        meta_config = MetaConfig.load(path)
+        config = MetaConfig.load(path)
+        return cls.load_from_meta_config(path, config)
+
+    @classmethod
+    def load_from_meta_config(cls, path: Path, meta_config: MetaConfig) -> "Report":
         repair_result = ()  # RepairResult.load(path)
         transformed_result = ()  # RepairTransformedResult.try_load(path)
         validation_result = ()  # ValidationResult.try_load(path)

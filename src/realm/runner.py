@@ -58,9 +58,9 @@ class Runner:
         return Runner(Report(root, config, RepairResult({}, repair_config), None, None))
 
     @staticmethod
-    def load(root: Path) -> "Runner":
+    def load(root: Path, config: MetaConfig) -> "Runner":
         print(f"Loading data from {root}")
-        report = Report.load(root)
+        report = Report.load_from_meta_config(root, config)
         print("Done")
         return Runner(report)
 
