@@ -180,7 +180,7 @@ class Incoder(XGLMForCausalLM):
         super().__init__(config)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         # self.max_tokens = self.model.config.to_dict()["max_position_embeddings"]
-        self.max_tokens = 512
+        self.max_tokens = 1500
         self.vocab_size = self.model.config.to_dict()["vocab_size"]
         self.token_map: list[str] = utils.load_and_cache_data(
             Path(f"incoder_token_map.pkl"),

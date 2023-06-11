@@ -157,6 +157,11 @@ BUGS_TO_DO = {
 #     proj: idx for proj, idx in needs_re_gen.items() if proj not in D4J1_HUNK_SPECIAL
 # }
 
+if utils.INCODER:
+    INCODER_PREFIX_SUFFIX: dict = json.loads(
+        Path("single-hunk-prefix-suffix.json").read_text()
+    )
+
 
 def wait_until_all_analyzers_free(
     realm_conns: list[Connection],
@@ -251,7 +256,7 @@ class Repairer:
         if DATA_DIR.exists():
             shutil.rmtree(DATA_DIR)
         # report = Report.create(report_dir, config)
-        if os.getenv("INCODER") is None:
+        if not utils.INCODER:
             model: ModelType = CodeT5Large.init().to(utils.DEVICE)  # type: ignore # noqa
         else:
             model = Incoder.from_pretrained("facebook/incoder-6B").to(utils.DEVICE)
@@ -303,6 +308,8 @@ class Repairer:
             # and bug_id not in ["Lang-25", "Lang-48"]
         }
         print(len(bugs_to_repair), bugs_to_repair.keys())
+        if utils.INCODER:
+            assert set(INCODER_PREFIX_SUFFIX.keys()).issubset(bugs_to_repair.keys())
         for bug_id, bug in bugs_to_repair.items():
             gen.CHART_11 = bug_id == "Chart-11"
             # import json
@@ -433,10 +440,14 @@ class Repairer:
             buggy_file_copy = buggy_text_file.copy()
             buggy_hunk = "".join(change.removed_lines)
             buggy_hunk = buggy_hunk[:-1] if buggy_hunk.endswith("\n") else buggy_hunk
-            print("Buggy hunk:")
-            print(buggy_hunk)
             prefix, suffix = remove_buggy_hunk(buggy_file_copy, change)
-
+            if utils.INCODER:
+                prefix = INCODER_PREFIX_SUFFIX[bug_id]["prefix"]
+                suffix = INCODER_PREFIX_SUFFIX[bug_id]["suffix"]
+                if not prefix.endswith("\n"):
+                    prefix += "\n"
+                if not suffix.startswith("\n"):
+                    suffix = "\n" + suffix
             # Comment issue for codet5
             prefix_lines = prefix.split("\n")
             comment_above = False
@@ -461,7 +472,14 @@ class Repairer:
                 print(prefix)
                 # breakpoint()
                 # BUG_IDS.append((bug_id, hunk_idx))
-            # continue
+
+            print("Prefix:")
+            print(prefix)
+            print("Buggy hunk:")
+            print(buggy_hunk)
+            print("Suffix:")
+            print(suffix)
+
             use_template = os.getenv("TEMPLATE") is not None
             default_template = ("No template", prefix, suffix, "", "")
             if use_template:
@@ -520,6 +538,17 @@ class Repairer:
                     except KeyError:
                         pass
                     synthesis_result_batch = synthesizer.synthesize(t_prefix, t_suffix)
+                    assert config.batch_size == 1
+                    # if utils.INCODER:
+                    #     # Incoder has difficulty in generating the <EOM> token
+                    #     # So we allow 5 more times to generate a not unfinished result
+                    #     for idx in range(5):
+                    #         if not synthesis_result_batch.results[0].is_unfinished:
+                    #             break
+                    #         print(f"Unfinished trial: {idx}")
+                    #         synthesis_result_batch = synthesizer.synthesize(
+                    #             t_prefix, t_suffix
+                    #         )
 
                     assert len(synthesis_result_batch.results) == config.batch_size
                     for result in synthesis_result_batch.results:

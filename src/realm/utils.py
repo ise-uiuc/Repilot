@@ -17,6 +17,7 @@ from unidiff.patch import Line
 T = TypeVar("T")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+INCODER = os.getenv("INCODER") is not None
 
 
 def take_while(

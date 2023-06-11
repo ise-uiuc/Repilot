@@ -279,8 +279,8 @@ class Synthesizer:
             if self.gen_state.batch_is_failed[batch_idx]:
                 results.append(SynthesisResult(None, True, False))
             elif self.gen_state.batch_is_unfinished[batch_idx]:
-                print("Unfinished")
-                print("".join(self.gen_state.gen_contexts[batch_idx].generated_tokens))
+                # print("Unfinished")
+                # print("".join(self.gen_state.gen_contexts[batch_idx].generated_tokens))
                 results.append(SynthesisResult(None, False, True))
             else:
                 gen_context = self.gen_state.gen_contexts[batch_idx]
