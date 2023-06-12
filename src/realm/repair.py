@@ -309,7 +309,12 @@ class Repairer:
         }
         print(len(bugs_to_repair), bugs_to_repair.keys())
         if utils.INCODER:
-            assert set(INCODER_PREFIX_SUFFIX.keys()).issubset(bugs_to_repair.keys())
+            supported_prefix_suffix_keys = set(INCODER_PREFIX_SUFFIX.keys())
+            for key in bugs_to_repair.keys():
+                if key not in supported_prefix_suffix_keys:
+                    print(f"{key} not supported")
+        #     assert set(INCODER_PREFIX_SUFFIX.keys()).issubset(bugs_to_repair.keys())
+        # breakpoint()
         for bug_id, bug in bugs_to_repair.items():
             gen.CHART_11 = bug_id == "Chart-11"
             # import json
@@ -442,11 +447,18 @@ class Repairer:
             buggy_hunk = buggy_hunk[:-1] if buggy_hunk.endswith("\n") else buggy_hunk
             prefix, suffix = remove_buggy_hunk(buggy_file_copy, change)
             if utils.INCODER:
-                prefix = INCODER_PREFIX_SUFFIX[bug_id]["prefix"]
-                suffix = INCODER_PREFIX_SUFFIX[bug_id]["suffix"]
-                if not prefix.endswith("\n"):
-                    prefix += "\n"
-                if not suffix.startswith("\n"):
+                if (
+                    bug_id in INCODER_PREFIX_SUFFIX
+                    and (new_prefix := INCODER_PREFIX_SUFFIX[bug_id]["prefix"]) != ""
+                ):
+                    prefix = cast(str, new_prefix)
+                    if not prefix.endswith("\n"):
+                        prefix += "\n"
+                if (
+                    bug_id in INCODER_PREFIX_SUFFIX
+                    and (new_suffix := INCODER_PREFIX_SUFFIX[bug_id]["suffix"]) != ""
+                ):
+                    suffix = cast(str, new_suffix)
                     suffix = "\n" + suffix
             # Comment issue for codet5
             prefix_lines = prefix.split("\n")
