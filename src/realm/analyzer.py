@@ -12,7 +12,7 @@ from realm.generation_defs import GenerationContext, Memorization
 from realm.lsp import LSPClient, TextFile, spec
 from realm.model import ModelType
 
-TIMEOUT_THRESHOULD = 120
+TIMEOUT_THRESHOULD = 300
 
 
 class Message:
