@@ -274,6 +274,7 @@ class Repairer:
         ]
 
     def fix_seed(self):
+        print("Fixing seed to", self.config.seed)
         torch.manual_seed(self.config.seed)
         numpy.random.seed(self.config.seed)
         random.seed(self.config.seed)
@@ -318,6 +319,8 @@ class Repairer:
         for bug_id, bug in bugs_to_repair.items():
             gen.CHART_11 = bug_id == "Chart-11"
             # import json
+            if os.getenv("FIX_SEED_EVERY_BUG") is not None:
+                self.fix_seed()
             self.repair_bug(report, bug_id, bug)
         #     json.dump(DIAGNOSTICS, open("diagnostics.json", "w"), indent=2)
         # import json
