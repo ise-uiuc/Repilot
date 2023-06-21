@@ -186,6 +186,21 @@ def plot_runners(
             }
         )
         print()
+        print("Plausible rate for each bug")
+        bug_summary = runner.evaluate_validation()
+        values = sorted(
+            [
+                (bug, value.unique_plausible_rate())
+                for bug, value in bug_summary.items()
+                if value.n_test_success > 0
+            ],
+            reverse=True,
+            key=lambda x: x[1],
+        )
+        pretty_values = [(bug, f"{value:.2f}") for bug, value in values]
+        print(len(pretty_values))
+        print(pretty_values)
+        print()
         print("Plausible fixes (project)")
         print({k: len(v) for k, v in plausible_fixes.items()})
         with open(target / f"{tag}_plausible_details.json", "w") as f:
