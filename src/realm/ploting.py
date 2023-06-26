@@ -88,8 +88,12 @@ def plot_runners(
 
     print("Generation Summary")
     for tag, runner in zip(tags, runners):
-        print(f"{tag} Unique: {runner.evaluate_unique_generation_summary()}")
-        print(f"{tag} Total: {runner.evaluate_generation_summary()}")
+        # print(f"{tag} Unique: {runner.evaluate_unique_generation_summary()}")
+        # print(f"{tag} Total: {runner.evaluate_generation_summary()}")
+        gen_summary = runner.evaluate_generation_summary()
+        print(
+            f"[{tag}] Average cost per patch: {gen_summary.gen_time / gen_summary.n_total:.3f}"
+        )
 
     # Print averaged summary
     # TODO: now the points' total and unique is the same. To change this, modify
@@ -109,7 +113,7 @@ def plot_runners(
         }
 
         if os.getenv("DUMP") is not None:
-            plausible_root = Path("plausible_patches")
+            plausible_root = Path(os.getenv("DUMP_DIR") or "plausible_patches")
             assert runner.report.transformed_result is not None
             transformed = runner.report.transformed_result.result_dict
             for proj, proj_values in runner.get_plausible_patches_grouped().items():
