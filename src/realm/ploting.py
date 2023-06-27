@@ -161,6 +161,7 @@ def plot_runners(
         #     for proj, bug_id_results in raw_results
         # }
         # n_plausible = {proj: v.n_test_success for proj, v in proj_summary.items()}
+        print("N bugs: ", len(runner.report.repair_result.result_dict))
         print(tag, "Metadata", summary)
         print(
             tag,
