@@ -360,10 +360,9 @@ class Defects4J:
 
     def _all_bugs(self) -> BenchmarkMetadata:
         return {
-            self.bug_id(bug): Bug(
-                buggy_files=self.buggy_files(bug), proj_path=bug["path"]
-            )
+            bug_id: Bug(buggy_files=self.buggy_files(bug), proj_path=bug["path"])
             for bug in self.metadata
+            if not (bug_id := self.bug_id(bug)).startswith("Mockito")
         }
 
     def _get_checkout_meta(self, proj: str, bug: Dict[str, str]) -> Dict:
