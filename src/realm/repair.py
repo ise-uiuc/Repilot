@@ -290,7 +290,7 @@ class Repairer:
         pattern = re.compile(config.bug_pattern)
         bugs_considered = (
             self.d4j.d4j2_single_line_bugs
-            if os.getenv("LINE") is not None
+            if os.getenv("D4J2_SINGLE_LINE") is not None
             else self.d4j.d4j2_single_hunk_bugs
             if os.getenv("D4J2_SINGLE_HUNK") is not None
             else self.d4j.d4j1_single_hunk_bugs

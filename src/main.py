@@ -1,4 +1,5 @@
 import json
+import os
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
 from functools import partial
@@ -171,7 +172,8 @@ cache_parser.add_argument(
 
 args = parser.parse_args()
 
-META_CONFIG = MetaConfig.from_json_file(Path("meta_config.json"))
+META_CONFIG_PATH = os.getenv("META_CONFIG_PATH", "meta_config.json")
+META_CONFIG = MetaConfig.from_json_file(Path(META_CONFIG_PATH))
 
 
 def random_dir(config: RepairConfig) -> str:
