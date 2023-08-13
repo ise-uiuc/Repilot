@@ -5,10 +5,8 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass
-from itertools import zip_longest
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, TypeVar, cast
-
+from typing import Iterable, TypeVar, Any
 import javalang
 import regex as re
 from joblib import Parallel, delayed
@@ -41,6 +39,42 @@ PatchInfo = TypeVar("PatchInfo")
 Datapoint = TypeVar("Datapoint")
 EvaluationResult = TypeVar("EvaluationResult")
 
+import multiprocessing
+
+class TimeoutError(Exception):
+    pass
+
+def worker(input_data: str, queue: multiprocessing.Queue) -> None:
+    try:
+        result = javalang.parse.parse(input_data)
+        queue.put(('success', result))
+    except Exception as e:
+        queue.put(('error', e))
+
+def parse_with_timeout(input_data: str, timeout=10) -> None:
+    """Parse the input with timeout since the javalang parser sometimes hangs"""
+    # Create a Queue to share results
+    queue = multiprocessing.Queue()
+
+    # Start the worker process
+    p = multiprocessing.Process(target=worker, args=(input_data, queue))
+    p.start()
+
+    # Wait for the process to complete or timeout
+    p.join(timeout)
+
+    # Check if the process is still alive (meaning it exceeded the timeout)
+    if p.is_alive():
+        queue.close()
+        p.terminate()  # Terminate the process if it's still running
+        raise TimeoutError(f"The parse function exceeded the {timeout} second timeout")
+
+    # Check the result from the queue
+    status, result_or_exception = queue.get()
+    queue.close()
+
+    if status == 'error':
+        raise result_or_exception
 
 @dataclass
 class Runner:
@@ -565,15 +599,8 @@ def validate_patch(
     # Checkout the fixed version and then apply patches b/c we do not consider test file changes
     d4j.checkout(bug_id, buggy=False, dirty=False)
     for patch_text_file in patch_files:
-        if (
-            str(patch_text_file._path)
-            == "Math-76/src/main/java/org/apache/commons/math/linear/SingularValueDecompositionImpl.java"
-        ):
-            # A special case that will cause the parser to hang
-            continue
-        print("try parse", patch_text_file._path)
         try:
-            javalang.parse.parse(patch_text_file.content)
+            parse_with_timeout(patch_text_file.content)
         except (
             javalang.parser.JavaSyntaxError,
             javalang.tokenizer.LexerError,
