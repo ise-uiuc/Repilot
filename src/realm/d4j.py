@@ -144,6 +144,12 @@ class Bug(NamedTuple):
             for idx_j, change in enumerate(reversed(buggy_file.changes)):
                 yield ((idx_i, idx_j), buggy_file, change)
 
+    def single_hunk_content(self) -> str:
+        """Works only if it is a single-hunk bug"""
+        assert len(self.buggy_files) == 1
+        assert len(self.buggy_files[0].changes) == 1
+        return "".join(self.buggy_files[0].changes[0].added_lines)
+
     def all_changes(self) -> list[list[tuple[int, int]]]:
         all_values: list[list[tuple[int, int]]] = []
         for buggy_file in self.buggy_files:

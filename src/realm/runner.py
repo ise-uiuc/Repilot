@@ -535,7 +535,7 @@ class Runner:
 
 
 def validate_patch(
-    d4j: Defects4J, bug_id: str, bugs: list[TextFile], patch: AvgPatch, dirty: bool
+    d4j: Defects4J, bug_id: str, bugs: list[TextFile], patch: AvgPatch
 ) -> PatchValidationResult:
     start_time = time.perf_counter()
     assert not patch.is_duplicate
@@ -647,9 +647,7 @@ def validate_proj(
                 val_results[patch_idx] = cached[ws_removed_hunk_str]
                 n_validated += 1
                 continue
-            val_result = validate_patch(
-                d4j, bug_id, buggy_files, patch, dirty=(idx != 0)
-            )
+            val_result = validate_patch(d4j, bug_id, buggy_files, patch)
             cached[ws_removed_hunk_str] = val_result
             assert patch_idx not in val_results
             val_results[patch_idx] = val_result

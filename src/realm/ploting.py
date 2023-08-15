@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from itertools import groupby
 from pathlib import Path
 from typing import Callable, Iterable, TypeVar, cast
@@ -112,6 +113,7 @@ def plot_runners(
             }
             for proj, proj_values in runner.get_plausible_patches_grouped().items()
         }
+        # D4J.all_bugs[bug_id].iter_hunks
 
         if os.getenv("DUMP") is not None:
             plausible_root = Path(os.getenv("DUMP_DIR") or "plausible_patches")
@@ -119,15 +121,31 @@ def plot_runners(
             transformed = runner.report.transformed_result.result_dict
             for proj, proj_values in runner.get_plausible_patches_grouped().items():
                 plausible_root.mkdir(exist_ok=True)
+                plausible_dir = plausible_root / "1-plausible"
+                correct_dir = plausible_root / "2-correct"
+                plausible_dir.mkdir(exist_ok=True)
+                correct_dir.mkdir(exist_ok=True)
                 for bug_id, patches in proj_values.items():
+                    ground_truth = D4J.single_hunk_bugs[bug_id].single_hunk_content()
+                    ground_truth_hunk = utils.remove_whitespace(
+                        utils.remove_java_comments(ground_truth)
+                    )
                     bug_id_dir = plausible_root / bug_id
                     bug_id_dir.mkdir()
                     patch_strs: list[str] = []
                     bugs, _ = transformed[bug_id]
-                    # assert len(bugs) == 1
+                    assert len(bugs) == 1
                     diffs: list[str] = []
+                    correct = False
                     for patch_id, patch in enumerate(patches):
+                        hunk = patch[0].hunks[0].result.hunk
+                        assert hunk is not None
+                        patch_hunk = utils.remove_whitespace(
+                            utils.remove_java_comments(hunk)
+                        )
                         assert len(patch) == len(bugs)
+                        if patch_hunk == ground_truth_hunk:
+                            correct = True
                         patch_content = concat_hunks(patch, delim=utils.HUNK_RULE)
                         patch_strs.append(patch_content)
                         patch_file = (bug_id_dir / str(patch_id)).with_suffix(".txt")
@@ -152,6 +170,11 @@ def plot_runners(
                     (bug_id_dir / f"reference.patch").write_text(D4J.get_patch(bug_id))
                     integrated_diff_file = bug_id_dir / "integrated.diff"
                     integrated_diff_file.write_text(utils.RULE.join(diffs))
+                    if correct:
+                        # move to correct_dir
+                        shutil.move(bug_id_dir, correct_dir)
+                    else:
+                        shutil.move(bug_id_dir, plausible_dir)
 
         # {
         #     proj: [
