@@ -98,6 +98,7 @@ def plot_runners(
     # Print averaged summary
     # TODO: now the points' total and unique is the same. To change this, modify
     # `map_validaton_datapoint`
+
     print("Validation Summary")
     for tag, runner, (_, raw_results) in zip(tags, runners, raw_validation_results):
         if runner.report.validation_result is None:
@@ -161,12 +162,13 @@ def plot_runners(
         #     for proj, bug_id_results in raw_results
         # }
         # n_plausible = {proj: v.n_test_success for proj, v in proj_summary.items()}
+        assert runner.report.repair_result is not None
         print("N bugs: ", len(runner.report.repair_result.result_dict))
         print(tag, "Metadata", summary)
         print(
             tag,
-            f"Compilation rate: {summary.unique_compilation_rate()}",
-            f"Plausible rate: {summary.unique_plausible_rate()}",
+            f"Compilation rate: {summary.unique_compilation_rate() * 100:.1f}%",
+            f"Plausible rate: {summary.unique_plausible_rate() * 100:.2f}%",
             f"Plausible fixes: {sum(1 for fixes in plausible_fixes.values() for fix in fixes)}",
         )
         print()
@@ -176,7 +178,7 @@ def plot_runners(
             assert point.gen_datapoint.n_total == point.gen_datapoint.n_unique
             print(
                 f"Top-{top_k}: ",
-                point.compilation_rate(),
+                f"{point.compilation_rate() * 100:.1f}",
                 point.n_comp_success,
                 point.gen_datapoint.n_total,
             )

@@ -6,8 +6,8 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, TypeVar, Any
-import javalang
+from typing import Any, Iterable, TypeVar
+
 import regex as re
 from joblib import Parallel, delayed
 
@@ -39,42 +39,6 @@ PatchInfo = TypeVar("PatchInfo")
 Datapoint = TypeVar("Datapoint")
 EvaluationResult = TypeVar("EvaluationResult")
 
-import multiprocessing
-
-class TimeoutError(Exception):
-    pass
-
-def worker(input_data: str, queue: multiprocessing.Queue) -> None:
-    try:
-        result = javalang.parse.parse(input_data)
-        queue.put(('success', result))
-    except Exception as e:
-        queue.put(('error', e))
-
-def parse_with_timeout(input_data: str, timeout=10) -> None:
-    """Parse the input with timeout since the javalang parser sometimes hangs"""
-    # Create a Queue to share results
-    queue = multiprocessing.Queue()
-
-    # Start the worker process
-    p = multiprocessing.Process(target=worker, args=(input_data, queue))
-    p.start()
-
-    # Wait for the process to complete or timeout
-    p.join(timeout)
-
-    # Check if the process is still alive (meaning it exceeded the timeout)
-    if p.is_alive():
-        queue.close()
-        p.terminate()  # Terminate the process if it's still running
-        raise TimeoutError(f"The parse function exceeded the {timeout} second timeout")
-
-    # Check the result from the queue
-    status, result_or_exception = queue.get()
-    queue.close()
-
-    if status == 'error':
-        raise result_or_exception
 
 @dataclass
 class Runner:
@@ -599,24 +563,9 @@ def validate_patch(
     # Checkout the fixed version and then apply patches b/c we do not consider test file changes
     d4j.checkout(bug_id, buggy=False, dirty=False)
     for patch_text_file in patch_files:
-        try:
-            parse_with_timeout(patch_text_file.content)
-        except (
-            javalang.parser.JavaSyntaxError,
-            javalang.tokenizer.LexerError,
-        ) as e:
-            return PatchValidationResult(Outcome.ParseError, cost(), "", str(e))
-        except Exception as e:
-            # TODO: add an InternalError record in `Report`
-            with open("unexpected_exception", "a") as f:
-                f.write(str(type(e)))
-                f.write("\n")
-                f.write(str(e))
         patch_text_file.root = d4j.d4j_checkout_root
         assert patch_text_file.path.exists()
         patch_text_file.write()
-        print("Done parse", patch_text_file.path)
-        # patch_text_file.path.touch()
     print("Compile...")
     comp_success, comp_stdout, comp_stderr = d4j.compile(bug_id)
     print("Done compile.")
