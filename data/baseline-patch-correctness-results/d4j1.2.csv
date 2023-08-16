@@ -1,0 +1,79 @@
+CoCoNuT,CURE,Recoder,SEQUENCER,DLFix,Prapr2,ACS,ARJA,AVATAR,Cardumem,DynaMoth,FixMiner,GenProg-A,jGenProg,jKali,jMutRepair,Kali-A,kPAR,Nopol,RSRepair-A,SimFix,TBar,capgen,elixir,hd_repair,jaid,sketchfix,ssfix,Tbar-68,AlphaRepair,RewardRepair,IncoderRepair,RewardRepair-2
+Chart 1,Chart 1,Chart 1,Chart 1,Chart 1,Chart 1,Chart 14,Chart 12,Chart 11,Chart 11,Lang 46,Chart 11,Closure 115,Chart 12,Closure 115,Chart 1,Closure 115,Chart 14,Lang 46,Closure 115,Chart 1,Chart 11,Chart 1,Chart 1,Chart 1,Chart 1,Chart 1,Chart 20,Chart 1,Chart 1,Chart_1,Chart-1,JacksonXml_5(Identical)
+Chart 9,Chart 11,Chart 3,Chart 9,Chart 11,Chart 8,Chart 19,Closure 115,Chart 19,Math 70,Lang 55,Chart 12,Closure 126,Closure 126,Closure 126,Closure 62,Closure 11,Chart 19,Math 50,Closure 126,Chart 20,Chart 12,Chart 8,Chart 8,Chart 8,Chart 9,Chart 8,Chart 24,Chart 11,Chart 8,Chart_11,Chart-11,JacksonDatabind_17(Identical)
+Chart 11,Chart 12,Chart 8,Chart 11,Chart 20,Chart 11,Lang 24,Closure 126,Chart 1,,Math 50,Chart 19,Closure 21,Math 50,,Closure 63,Closure 126,Chart 1,,Closure 78,Chart 26,Chart 19,Chart 11,Chart 9,Closure 10,Chart 24,Chart 9,Closure 14,Chart 12,Chart 9,Chart_12,Chart-12,Codec_8(Identical)
+Chart 12,Chart 14,Chart 9,Closure 18,Chart 24,Chart 12,Lang 7,Closure 78,Chart 24,,,Chart 1,Closure 78,Math 53,,Math 82,Closure 86,Chart 26,,Closure 86,Chart 7,Chart 1,Chart 24,Chart 11,Lang 6,Chart 26,Chart 11,Lang 21,Chart 14,Chart 11,Chart_24,Chart-20,Cli_19(Identical)
+Chart 14,Chart 17,Chart 11,Closure 73,Chart 9,Chart 20,Math 25,Closure 86,Chart 26,,,Chart 24,Closure 86,Math 5,,Math 85,Math 50,Chart 4,,Lang 46,Closure 14,Chart 20,Lang 6,Math 5,Lang 10,Closure 18,Chart 20,Lang 33,Chart 19,Chart 24,Chart_9,Chart-24,JacksonCore_25(Identical)
+Chart 24,Chart 20,Chart 20,Closure 86,Closure 10,Chart 24,Math 35,Lang 46,Chart 4,,,Chart 26,Lang 43,Math 70,,,,Chart 8,,Math 50,Closure 19,Chart 24,Lang 26,Math 30,Lang 43,Closure 31,Chart 24,Lang 43,Chart 20,Closure 10,Closure_1,Chart-8,JxPath_16(Identical)
+Chart 26,Chart 24,Chart 24,Lang 6,Closure 115,Chart 26,Math 3,Math 22,Closure 115,,,Chart 4,Math 50,,,,,Closure 10,,Math 58,Closure 57,Chart 26,Lang 43,Math 33,Lang 51,Closure 33,Closure 14,Lang 59,Chart 24,Closure 18,Closure_10,Closure-109,JacksonDatabind_99(Identical)
+Closure 18,Chart 26,Chart 26,Lang 59,Closure 126,Closure 10,Math 4,Math 50,Closure 11,,,Closure 10,Math 70,,,,,Closure 115,,Math 5,Closure 62,Chart 4,Lang 57,Math 34,Lang 57,Closure 40,Closure 62,Lang 6,Chart 26,Closure 31,Closure_101,Closure-11,Compress_31(Identical)
+Closure 31,Chart 8,Closure 2,Math 30,Closure 14,Closure 11,Math 5,Math 58,Closure 126,,,Closure 13,,,,,,Closure 11,,Math 70,Closure 63,Chart 8,Lang 59,Math 50,Lang 59,Closure 62,Closure 126,Math 33,Chart 4,Closure 57,Closure_104,Closure-125,Jsoup_52(Identical)
+Closure 38,Chart 9,Closure 14,Math 57,Closure 18,Closure 14,Math 61,Math 70,Closure 2,,,Closure 2,,,,,,Closure 126,,,Closure 68,Chart 9,Math 5,Math 57,Math 5,Closure 63,Lang 6,Math 41,Chart 8,Closure 62,Closure_11,Closure-126,Jsoup_68(Identical)
+Closure 40,Closure 10,Closure 21,Math 58,Closure 40,Closure 18,Math 82,Math 98,Closure 38,,,Closure 38,,,,,,Closure 2,,,Closure 73,Closure 102,Math 30,Math 58,Math 22,Closure 70,Lang 55,Math 50,Chart 9,Closure 70,Closure_126,Closure-129,Codec_1(Identical)
+Closure 46,Closure 102,Closure 33,Math 75,Closure 62,Closure 31,Math 85,,Closure 46,,,Closure 46,,,,,,Closure 31,,,Lang 33,Closure 10,Math 33,Math 59,Math 34,Closure 73,Lang 59,Math 53,Closure 10,Closure 73,Closure_18,Closure-19,JacksonDatabind_102(Identical)
+Closure 70,Closure 11,Closure 46,Math 82,Closure 63,Closure 46,Math 89,,Closure 62,,,Closure 73,,,,,,Closure 38,,,Lang 39,Closure 115,Math 53,Math 70,Math 50,Closure 126,Math 5,Math 59,Closure 102,Closure 86,Closure_31,Closure-31,JacksonDatabind_76(Identical)
+Closure 73,Closure 126,Closure 57,Math 85,Closure 70,Closure 62,Math 90,,Closure 63,,,Lang 10,,,,,,Closure 40,,,Lang 43,Closure 117,Math 57,Math 75,Math 53,Lang 33,Math 33,Math 70,Closure 11,Closure 92,Closure_38,Closure-56,JacksonDatabind_57(Identical)
+Closure 86,Closure 18,Closure 62,,Closure 73,Closure 63,Math 99,,Closure 73,,,Lang 56,,,,,,Closure 4,,,Lang 58,Closure 11,Math 58,Math 82,Math 70,Lang 38,Math 50,Math 80,Closure 115,Closure 125,Closure_57,Closure-57,Csv_9(Identical)
+Closure 92,Closure 38,Closure 63,,Closure 86,Closure 70,Time 15,,Lang 10,,,Lang 57,,,,,,Closure 62,,,Lang 60,Closure 13,Math 59,Math 85,Math 82,Lang 45,Math 59,,Closure 126,Lang 6,Closure_62,Closure-61,JxPath_10(Identical)
+Lang 10,Closure 40,Closure 73,,Lang 22,Closure 73,,,Lang 57,,,Lang 59,,,,,,Closure 63,,,Math 33,Closure 2,Math 63,Lang 6,Time 19,Lang 51,Math 70,,Closure 13,Lang 24,Closure_70,Closure-62,Cli_8(Identical)
+Lang 26,Closure 46,Closure 86,,Lang 33,Closure 86,,,Lang 59,,,Math 22,,,,,,Closure 70,,,Math 35,Closure 38,Math 65,Lang 24,,Lang 55,Math 82,,Closure 18,Lang 33,Closure_73,Closure-65,JacksonDatabind_27(Identical)
+Lang 29,Closure 57,Closure 92,,Lang 43,Closure 92,,,Lang 6,,,Math 30,,,,,,Closure 73,,,Math 41,Closure 40,Math 70,Lang 26,,Math 5,Math 85,,Closure 2,Lang 29,Closure_86,Closure-70,Compress_14(Identical)
+Lang 33,Closure 62,Closure 93,,Lang 51,Closure 93,,,Lang 7,,,Math 33,,,,,,Lang 10,,,Math 53,Closure 46,Math 75,Lang 33,,Math 32,,,Closure 31,Lang 59,Closure_92,Closure-71,Codec_17(Identical)
+Lang 51,Closure 70,Closure 104,,Lang 57,Closure 126,,,Math 33,,,Math 34,,,,,,Lang 24,,,Math 57,Closure 4,Math 80,Lang 38,,Math 50,,,Closure 38,Lang 61,Lang_21,Closure-73,Jsoup_39(Identical)
+Lang 57,Closure 73,Closure 115,,Lang 59,Lang 6,,,Math 4,,,Math 35,,,,,,Lang 59,,,Math 59,Closure 62,Math 85,Lang 43,,Math 53,,,Closure 40,Math 5,Lang_29,Closure-77,Cli_28(Identical)
+Lang 59,Closure 86,Closure 118,,Lang 6,Lang 10,,,Math 59,,,Math 4,,,,,,Lang 6,,,Math 5,Closure 63,,Lang 57,,Math 80,,,Closure 46,Math 30,Lang_33,Closure-86,JacksonDatabind_49(Identical)
+Math 2,Closure 92,Lang 6,,Lang 7,Lang 26,,,Math 82,,,Math 57,,,,,,Math 50,,,Math 70,Closure 70,,Lang 59,,Math 82,,,Closure 62,Math 41,Lang_45,Closure-92,Csv_11(Identical)
+Math 22,Lang 10,Lang 26,,Math 30,Lang 33,,,Math 85,,,Math 70,,,,,,Math 58,,,Math 71,Closure 73,,Time 4,,Math 85,,,Closure 70,Math 57,Lang_57,Closure-97,Jsoup_24(Identical)
+Math 27,Lang 26,Lang 29,,Math 33,Lang 57,,,Math 89,,,Math 75,,,,,,Math 70,,,Math 75,Lang 10,,Time 15,,,,,Closure 73,Math 58,Lang_59,Lang-11,Cli_25(Identical)
+Math 30,Lang 29,Lang 33,,Math 41,Lang 59,,,Mockito 29,,,Math 79,,,,,,Math 75,,,Math 79,Lang 24,,,,,,,Closure 86,Math 59,Lang_6,Lang-16,JacksonCore_5(Identical)
+Math 34,Lang 38,Lang 38,,Math 5,Math 5,,,Mockito 38,,,Math 82,,,,,,Math 82,,,Math 98,Lang 26,,,,,,,Lang 10,Math 63,Math_104,Lang-21,Cli_5(Identical)
+Math 56,Lang 43,Lang 51,,Math 50,Math 33,,,Time 19,,,Math 85,,,,,,Math 85,,,Time 7,Lang 33,,,,,,,Lang 22,Math 65,Math_105,Lang-33,Jsoup_43(Identical)
+Math 57,Lang 51,Lang 55,,Math 57,Math 34,,,Time 7,,,Mockito 29,,,,,,Math 89,,,,Lang 39,,,,,,,Lang 24,Math 70,Math_11,Lang-38,Codec_7(Identical)
+Math 58,Lang 57,Lang 57,,Math 58,Math 50,,,,,,Mockito 38,,,,,,Time 19,,,,Lang 47,,,,,,,Lang 26,Math 75,Math_2,Lang-39,JxPath_5(Identical)
+Math 59,Lang 59,Lang 59,,Math 59,Math 58,,,,,,Time 19,,,,,,Time 26,,,,Lang 51,,,,,,,Lang 33,Math 80,Math_27,Lang-40,Jsoup_55(Identical)
+Math 65,Lang 6,Math 5,,Math 70,Math 59,,,,,,Time 26,,,,,,Time 7,,,,Lang 57,,,,,,,Lang 39,Math 82,Math_30,Lang-43,Codec_2(Identical)
+Math 77,Math 2,Math 27,,Math 75,Math 70,,,,,,Time 7,,,,,,,,,,Lang 59,,,,,,,Lang 47,Math 85,Math_33,Lang-44,Jsoup_57(Identical)
+Math 80,Math 22,Math 30,,Math 82,Math 75,,,,,,,,,,,,,,,,Lang 6,,,,,,,Lang 51,Math 94,Math_34,Lang-45,Cli_32(Identical)
+Math 82,Math 27,Math 33,,Math 85,Math 82,,,,,,,,,,,,,,,,Math 11,,,,,,,Lang 57,Mockito 34,Math_41,Lang-51,Compress_27(Identical)
+Math 90,Math 30,Math 34,,Math 98,Math 85,,,,,,,,,,,,,,,,Math 4,,,,,,,Lang 59,Mockito 26,Math_5,Lang-52,Cli_27(Identical)
+Math 94,Math 34,Math 41,,Mockito 38,Mockito 5,,,,,,,,,,,,,,,,Math 57,,,,,,,Lang 6,Time 19,Math_50,Lang-55,JxPath_1(Identical)
+Math 98,Math 41,Math 50,,Time 19,Mockito 29,,,,,,,,,,,,,,,,Math 58,,,,,,,Lang 63,Lang 51,Math_57,Lang-57,Codec_3(Identical)
+Mockito 5,Math 50,Math 57,,Time 7,Mockito 38,,,,,,,,,,,,,,,,Math 5,,,,,,,Lang 7,Lang 55,Math_59,Lang-59,Jsoup_49(Identical)
+Mockito 8,Math 56,Math 65,,,Time 4,,,,,,,,,,,,,,,,Math 65,,,,,,,Math 11,Lang 45,Math_70,Lang-61,JacksonDatabind_13(Identical)
+Mockito 29,Math 57,Math 70,,,Time 11,,,,,,,,,,,,,,,,Math 70,,,,,,,Math 22,Closure 19,Math_75,Math-101,Cli_17(Identical)
+Mockito 38,Math 58,Math 75,,,Time 19,,,,,,,,,,,,,,,,Math 75,,,,,,,Math 30,Closure 77,Math_80,Math-3,Gson_6(Identical)
+Time 19,Math 59,Math 94,,,,,,,,,,,,,,,,,,,Math 77,,,,,,,Math 33,Chart 26,Math_82,Math-30,Compress_19(Identical)
+,Math 65,Math 105,,,,,,,,,,,,,,,,,,,Math 79,,,,,,,Math 34,Closure 2,Math_85,Math-34,JacksonDatabind_24(Identical)
+,Math 70,Time 4,,,,,,,,,,,,,,,,,,,Math 82,,,,,,,Math 35,Closure 21,Math_94,Math-41,Jsoup_86(Identical)
+,Math 75,Time 7,,,,,,,,,,,,,,,,,,,Math 85,,,,,,,Math 4,Closure 46,Mockito_26,Math-56,JacksonDatabind_1(Identical)
+,Math 79,Mockito 38,,,,,,,,,,,,,,,,,,,Math 89,,,,,,,Math 5,Chart 4,Mockito_38,Math-57,Csv_15(Identical)
+,Math 80,Mockito 29,,,,,,,,,,,,,,,,,,,Mockito 26,,,,,,,Math 50,Lang 43,Mockito_5,Math-58,JacksonDatabind_83(Identical)
+,Math 82,Math 98,,,,,,,,,,,,,,,,,,,Mockito 29,,,,,,,Math 57,Chart 12,Time_19,Math-75,Jsoup_64(Identical)
+,Math 94,Chart 4,,,,,,,,,,,,,,,,,,,Mockito 38,,,,,,,Math 58,Closure 11,,Math-82,
+,Math 98,Chart 12,,,,,,,,,,,,,,,,,,,Time 19,,,,,,,Math 59,Closure 38,,Math-85,
+,Mockito 29,Closure 10,,,,,,,,,,,,,,,,,,,Time 26,,,,,,,Math 65,Closure 101,,Math-91,
+,Mockito 38,Closure 11,,,,,,,,,,,,,,,,,,,Time 7,,,,,,,Math 70,Closure 109,,Math-94,
+,Mockito 5,Closure 18,,,,,,,,,,,,,,,,,,,,,,,,,,Math 75,Closure 115,,Math-96,
+,Time 19,Closure 31,,,,,,,,,,,,,,,,,,,,,,,,,,Math 77,Math 2,,Mockito-12,
+,Mockito 8,Closure 40,,,,,,,,,,,,,,,,,,,,,,,,,,Math 79,Math 11,,Time-15,
+,,Closure 70,,,,,,,,,,,,,,,,,,,,,,,,,,Math 80,Math 34,,Time-19,
+,,Closure 125,,,,,,,,,,,,,,,,,,,,,,,,,,Math 82,Math 50,,Time-4,
+,,Closure 126,,,,,,,,,,,,,,,,,,,,,,,,,,Math 85,Math 90,,Chart-9,
+,,Lang 7,,,,,,,,,,,,,,,,,,,,,,,,,,Math 89,Mockito 29,,Closure-18,
+,,Lang 43,,,,,,,,,,,,,,,,,,,,,,,,,,Math 98,Mockito 38,,Closure-52,
+,,Math 58,,,,,,,,,,,,,,,,,,,,,,,,,,Mockito 26,Time 4,,Lang-24,
+,,Math 82,,,,,,,,,,,,,,,,,,,,,,,,,,Mockito 29,Time 7,,Lang-29,
+,,Math 85,,,,,,,,,,,,,,,,,,,,,,,,,,Mockito 38,Closure 126,,Math-11,
+,,Time 19,,,,,,,,,,,,,,,,,,,,,,,,,,Time 19,Lang 7,,Math-59,
+,,Math 96,,,,,,,,,,,,,,,,,,,,,,,,,,Time 26,Mockito 18,,Math-70,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,Time 7,Lang 10,,Math-80,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Closure 66,,Mockito-34,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Closure 40,,Mockito-38,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Lang 4,,Chart-7,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Math 98,,Closure-115,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Chart 14,,Closure-128,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Math 96,,Closure-2,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Closure-44,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Lang-10,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Math-44,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,Math-86,

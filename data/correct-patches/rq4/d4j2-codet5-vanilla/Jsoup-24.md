@@ -1,0 +1,33 @@
+# Rectify Patch
+
+```
+
+```
+
+# Developer Patch
+
+```
+
+```
+
+# Context
+
+```
+--- bug/Jsoup-24/src/main/java/org/jsoup/parser/TokeniserState.java
+
++++ fix/Jsoup-24/src/main/java/org/jsoup/parser/TokeniserState.java
+
+@@ -555,7 +555,8 @@
+
+                 String name = r.consumeLetterSequence();
+                 t.tagPending.appendTagName(name.toLowerCase());
+                 t.dataBuffer.append(name);
+-                r.advance();
++
++                
+                 return;
+             }
+```
+
+# Note
+

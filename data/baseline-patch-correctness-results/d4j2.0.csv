@@ -1,0 +1,51 @@
+AlphaRepair,RewardRepair,Recoder,TBar
+Cli 8,JacksonXml_5(Identical),Cli-28,Codec-7
+Cli 11,JacksonDatabind_17(Identical),Codec-4,Compress-19
+Cli 25,Codec_8(Identical),Codec-7,Csv-4
+Cli 28,Cli_19(Identical),Compress-19,JacksonCore-25
+Codec 2,JacksonCore_25(Identical),Csv-4,JacksonDatabind-96
+Codec 3,JxPath_16(Identical),JacksonCore-5,Jsoup-24
+Codec 4,JacksonDatabind_99(Identical),JacksonDatabind-27,Jsoup-40
+Codec 7,Compress_31(Identical),JacksonCore-25,Jsoup-61
+Codec 16,Jsoup_52(Identical),JacksonDatabind-96,
+Codec 17,Jsoup_68(Identical),Jsoup-40,
+Compress 19,Codec_1(Identical),Jsoup-24,
+Csv 11,JacksonDatabind_102(Identical),,
+Gson 15,JacksonDatabind_76(Identical),,
+JacksonCore 5,JacksonDatabind_57(Identical),,
+JacksonCore 8,Csv_9(Identical),,
+JacksonCore 25,JxPath_10(Identical),,
+JacksonDatabind 16,Cli_8(Identical),,
+JacksonDatabind 17,JacksonDatabind_27(Identical),,
+JacksonDatabind 27,Compress_14(Identical),,
+JacksonDatabind 34,Codec_17(Identical),,
+JacksonDatabind 57,Jsoup_39(Identical),,
+JacksonDatabind 96,Cli_28(Identical),,
+Jsoup 15,JacksonDatabind_49(Identical),,
+Jsoup 32,Csv_11(Identical),,
+Jsoup 43,Jsoup_24(Identical),,
+Jsoup 57,Cli_25(Identical),,
+Jsoup 62,JacksonCore_5(Identical),,
+JxPath 10,Cli_5(Identical),,
+Jsoup 24,Jsoup_43(Identical),,
+Jsoup 40,Codec_7(Identical),,
+JacksonDatabind 1,JxPath_5(Identical),,
+Jsoup 55,Jsoup_55(Identical),,
+Cli 17,Codec_2(Identical),,
+Jsoup 39,Jsoup_57(Identical),,
+JacksonDatabind 99,Cli_32(Identical),,
+Gson 11,Compress_27(Identical),,
+,Cli_27(Identical),,
+,JxPath_1(Identical),,
+,Codec_3(Identical),,
+,Jsoup_49(Identical),,
+,JacksonDatabind_13(Identical),,
+,Cli_17(Identical),,
+,Gson_6(Identical),,
+,Compress_19(Identical),,
+,JacksonDatabind_24(Identical),,
+,Jsoup_86(Identical),,
+,JacksonDatabind_1(Identical),,
+,Csv_15(Identical),,
+,JacksonDatabind_83(Identical),,
+,Jsoup_64(Identical),,
