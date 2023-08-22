@@ -55,29 +55,6 @@ def get_baseline_fixes(csv_path: Path, filter: set[str]) -> dict[str, set[str]]:
     return tool_fixed_bugs
 
 
-# def _load_select_baselines_d4j_single_line(filter):
-#     data = pandas.read_csv("csv/d4j2-single-line.csv", header=0)
-#     toolBugSet = {}
-#     for col in data.columns:
-#         toolBugSet[col] = (
-#             set(
-#                 [
-#                     x.split("(")[0].replace("_", "-").replace(" ", "-")
-#                     for x in data[col].dropna().tolist()
-#                 ]
-#             )
-#             & filter
-#         )
-
-#     return toolBugSet
-
-
-def _load_rectify_dataset():
-    with open("csv/rectify_bugs.json", "r") as f:
-        s = json.load(f)
-    return s
-
-
 def _load_rectify_fixes():
     data = pandas.read_csv("csv/rectify-correct-dfj12-single-hunk.csv", header=0)
     correct_fixes = set(data["Correct"].dropna().tolist())
@@ -103,6 +80,13 @@ D4J1_BASELINE_FIXES = get_baseline_fixes(
 D4J2_BASELINE_FIXES = get_baseline_fixes(
     Path("data/baseline-patch-correctness-results/d4j2.0.csv"),
     rq_utils.D4J2_CONSIDERED_BUGS,
+)
+
+D4J1_OVERLAPPING_BUGS = set[str](
+    rq_utils.load_json("data/codet5-data-overlap/d4j1.2.json")
+)
+D4J2_OVERLAPPING_BUGS = set[str](
+    rq_utils.load_json("data/codet5-data-overlap/d4j2.0.json")
 )
 
 
@@ -145,23 +129,27 @@ def generate_fig_6_venn():
     venn_fixes = dict[str, set[str]]()
     venn_fixes_all: dict[str, set[str]] = {"Others": set()}
     for tool, (d4j1_fixes, _) in ALL_FIXES.items():
-        if tool != rq_utils.TOOL_NAME:
-            venn_fixes_all["Others"] |= d4j1_fixes
-        if tool in ["AlphaRepair", "Recoder", "CURE", "RewardRepair"]:
+        if tool in [
+            "AlphaRepair",
+            "Recoder",
+            "CURE",
+            "RewardRepair",
+            rq_utils.TOOL_NAME,
+        ]:
             venn_fixes[tool] = d4j1_fixes
-        if tool in ["AlphaRepair", "Recoder", "RewardRepair"]:
+        if tool in ["AlphaRepair", "Recoder", "RewardRepair", rq_utils.TOOL_NAME]:
             venn_fixes_all[tool] = d4j1_fixes
+        else:
+            venn_fixes_all["Others"] |= d4j1_fixes
 
-    correct_fixes = RECTIFY_D4J1_CORRECT_FIXES
-
-    venn_fixes[rq_utils.TOOL_NAME] = correct_fixes
+    # venn_fixes[rq_utils.TOOL_NAME] = correct_fixes
     venn(venn_fixes, fontsize=30, figsize=(20, 20), cmap="viridis")
     print("Creating venn diagrams..")
     rq_utils.PLOT_DIR.mkdir(exist_ok=True)
     path_a = rq_utils.PLOT_DIR / "venn-with-learning-based-d4j1.pdf"
     plt.savefig(path_a)
 
-    venn_fixes_all[rq_utils.TOOL_NAME] = correct_fixes
+    # venn_fixes_all[rq_utils.TOOL_NAME] = correct_fixes
     venn(venn_fixes_all, fontsize=30, figsize=(20, 20), cmap="viridis")
     path_b = rq_utils.PLOT_DIR / "venn-with-all.pdf"
     plt.savefig(path_b)
@@ -170,9 +158,9 @@ def generate_fig_6_venn():
     print(prompt)
 
 
-def generate_table_1():
-    """This corresponds to Table 1 in the paper"""
-
+def generate_fixes_table(
+    title: str, data: dict[str, tuple[set[str], set[str]]], filtered_bugs: set[str]
+):
     def compare_baseline(
         lhs: tuple[set[str], set[str]], rhs: tuple[set[str], set[str]]
     ) -> int:
@@ -190,12 +178,20 @@ def generate_table_1():
         assert len(lhs_d4j2) == len(rhs_d4j2)
         return 0
 
-    all_fixes = list(ALL_FIXES.items())
+    all_fixes = list(data.items())
     all_fixes.sort(key=cmp_to_key(lambda x, y: compare_baseline(x[1], y[1])))  # type: ignore
+    all_fixes = [
+        (
+            tool,
+            (
+                d4j1_fixes - (d4j1_fixes & filtered_bugs),
+                d4j2_fixes - (d4j2_fixes & filtered_bugs),
+            ),
+        )
+        for tool, (d4j1_fixes, d4j2_fixes) in all_fixes
+    ]
 
-    table = Table(
-        title="Table 1: Number of correct fixes on Defects4j 1.2 single-hunk and Defects4j 2.0 single-line bugs"
-    )
+    table = Table(title=title)
     table.add_column("Tool")
     table.add_column("D4J 1.2")
     table.add_column("D4J 2.0")
@@ -244,5 +240,22 @@ def check_overlap():
     print(correct_fixes_dfj2 & seed_fix_2)
 
 
+def generate_table_1():
+    generate_fixes_table(
+        "Table 1: Number of correct fixes on Defects4j 1.2 single-hunk and Defects4j 2.0 single-line bugs",
+        ALL_FIXES,
+        set(),
+    )
+
+
+def generate_threats():
+    generate_fixes_table(
+        "Number of correct fixes by removing bugs with overlapping developer fixes in the CodeT5 training data",
+        ALL_FIXES,
+        D4J1_OVERLAPPING_BUGS | D4J2_OVERLAPPING_BUGS,
+    )
+
+
 generate_table_1()
 generate_fig_6_venn()
+generate_threats()

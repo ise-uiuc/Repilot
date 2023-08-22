@@ -60,24 +60,24 @@ def alpha_repair_compilation_rates() -> CompilationRateResult:
         compile_rates_100.append(top_100_compile / 100)
 
     return (
-        f"{st.mean(compile_rates_30) * 100:.0f}",
-        f"{st.mean(compile_rates_100) * 100:.0f}",
-        f"{st.mean(compile_rates_1000) * 100:.0f}",
-        f"{st.mean(compile_rates_5000) * 100:.0f}",
+        f"{st.mean(compile_rates_30) * 100:.0f}%",
+        f"{st.mean(compile_rates_100) * 100:.0f}%",
+        f"{st.mean(compile_rates_1000) * 100:.0f}%",
+        f"{st.mean(compile_rates_5000) * 100:.0f}%",
     )
 
 
 ALPHAREPAIR_RATES = alpha_repair_compilation_rates()
-SEQUENCER_RATES = ("33", "-", "-", "-")
-COCONUT_RATES = ("24", "15", "6", "3")
-CURE_RATES = ("39", "28", "14", "9")
+SEQUENCER_RATES = ("33%", "-", "-", "-")
+COCONUT_RATES = ("24%", "15%", "6%", "3%")
+CURE_RATES = ("39%", "28%", "14%", "9%")
 # the third element of the tuple is actually the top-200 compilation rate for RewardRepair
-REWARDREPAIR_RATES = ("45", "38", "33", "-")
+REWARDREPAIR_RATES = ("45%", "38%", "33%", "-")
 
 path = "data/large/generated-and-validated-patches/rq2/d4j1-codet5-template-rectify"
 runner = Runner.load(Path(path), META_CONFIG)
 rectify_rates = [
-    f"{runner.top_k_comp_point(top_k).unique_compilation_rate() * 100:.0f}"
+    f"{runner.top_k_comp_point(top_k).unique_compilation_rate() * 100:.0f}%"
     for top_k in [30, 100, 1000, 5000]
 ]
 
@@ -98,7 +98,6 @@ table.add_column("Top-100")
 table.add_column("Top-1000")
 table.add_column("Top-5000")
 
-for tool, rates in TOOLS_AND_RATES:
-    (top_30, top_100, top_1000, top_5000) = tuple(map(lambda x: x + "%", rates))
+for tool, (top_30, top_100, top_1000, top_5000) in TOOLS_AND_RATES:
     table.add_row(tool, top_30, top_100, top_1000, top_5000)
 console.print(table)
