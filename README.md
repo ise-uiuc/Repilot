@@ -48,21 +48,58 @@ For a more comprehensive guidance on how to use Rectify and how to reproduce the
 > [!WARNING]
 > Building Rectify from source is **NOT** recommended since there are many complex dependencies and configurations to handle. It is only for advanced users who want to extend Rectify.
 
-<details>
+> [!IMPORTANT]
+> **Environment requirements**
+> 
+> - Python 3.10 and [Git LFS](https://git-lfs.com) are required.
+> - **All three versions of Java 8, 11, and 18** are required. For convenient management of multiple Java versions, we recommend [coursier](https://get-coursier.io/docs/cli-java).
+> - (Optional) It's recommended to have an NVIDIA GPU with >6G memory for running Rectify with CodeT5 and >30G memory for Incoder-6.7B.
 
-<summary>Download and build [the modified Eclipse JDT Language Server](https://github.com/UniverseFly/eclipse.jdt.ls) </summary>
+<details><summary>Download and build the modified Eclipse JDT Language Server</summary>
 
+Follow the instructions in UniverseFly/eclipse.jdt.ls to build the modified Eclipse JDT Language Server. Note you will need Java 11:
+
+```bash
+git clone https://github.com/UniverseFly/eclipse.jdt.ls
+cd eclipse.jdt.ls
+JAVA_HOME=/path/to/java/11 ./mvnw clean verify -DskipTests=true
+```
+
+**Adjust** the following command according to your build to dry run the language server:
+
+```bash
+java \
+	-Declipse.application=org.eclipse.jdt.ls.core.id1 \
+	-Dosgi.bundles.defaultStartLevel=4 \
+	-Declipse.product=org.eclipse.jdt.ls.core.product \
+	-Dlog.level=ALL \
+	-noverify \
+	-Xmx1G \
+	--add-modules=ALL-SYSTEM \
+	--add-opens java.base/java.util=ALL-UNNAMED \
+	--add-opens java.base/java.lang=ALL-UNNAMED \
+	-jar ./plugins/org.eclipse.equinox.launcher_1.5.200.v20180922-1751.jar \
+	-configuration ./config_linux \
+	-data /path/to/data
+```
+
+If everything goes well, you can move on to the next step.
 </details>
 
-<details>
+<details><summary>Download and install Rectify as a Python package including its dependencies</summary>
 
-<summary>Download and install Rectify as a Python package including its dependencies</summary>
-
+```bash
+git clone https://github.com/UniverseFly/Rectify && cd Rectify
+# Do an editable install
+pip install -e .
+# Consider upgrading pip if you encounter any errors, also make sure you are using Python 3.10
+# This command should also install all the dependencies of Rectify
+```
 </details>
 
-<details>
+<details><summary>Prepare the runtime environment of Rectify</summary>
 
-<summary>Prepare the runtime environment of Rectify</summary>
+We need to prepare a `meta_config.json` file for Rectify to work properly. The file should be placed in the root directory of Rectify. Please **modify** the following template according to your environment and save the file in the root directory of Rectify:
 
 ```json
 {
@@ -93,9 +130,28 @@ For a more comprehensive guidance on how to use Rectify and how to reproduce the
 ```
 </details>
 
-<details>
+<details><summary>Install the Defects4j datasets</summary>
 
-<summary>Do an example run</summary>
+Rectify evaluates on the [Defects4j](https://github.com/rjust/defects4j) dataset. Please checkout to its [v2.0.0 release](https://github.com/rjust/defects4j/releases/tag/v2.0.0) and follow its instructions to install the dataset.
+
+> [!WARNING]
+> If you directly download the release instead of doing a checkout you may encounter errors when running Rectify, as Rectify will dump the metadata by collecting the meta information of these projects as Git repos. If they are not Git repos, Rectify may fail.
+
+After the installation, you should have a `defects4j` command in your `$PATH`. You can check it by running `defects4j info -p Chart`.
+
+> [!IMPORTANT]
+> The `defects4j` command must be in your `$PATH` for Rectify to work properly.
+
+Now let's `cd` back to the root directory of Rectify, and run the following command to checkout all the bugs:
+
+```bash
+python -m rectify.cli.init
+```
+
+</details>
+
+
+<details><summary>Do an example run</summary>
 
 ```bash
 # Generate patches with the full Rectify approach using CodeT5
@@ -113,4 +169,3 @@ You will see a table of evaluation results if everything goes well.
 
 🔥🔥Congratulations! You have successfully built and used Rectify from source!🔥🔥
 </details>
-
