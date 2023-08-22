@@ -55,7 +55,7 @@ For a more comprehensive guidance on how to use Rectify and how to reproduce the
 > - **All three versions of Java 8, 11, and 18** are required. For convenient management of multiple Java versions, we recommend [coursier](https://get-coursier.io/docs/cli-java).
 > - (Optional) It's recommended to have an NVIDIA GPU with >6G memory for running Rectify with CodeT5 and >30G memory for Incoder-6.7B.
 
-<details><summary>Download and build the modified Eclipse JDT Language Server</summary>
+<details><summary>**Download and build the modified Eclipse JDT Language Server**</summary>
 
 Follow the instructions in UniverseFly/eclipse.jdt.ls to build the modified Eclipse JDT Language Server. Note you will need Java 11:
 
@@ -86,7 +86,7 @@ java \
 If everything goes well, you can move on to the next step.
 </details>
 
-<details><summary>Download and install Rectify as a Python package including its dependencies</summary>
+<details><summary>**Download and install Rectify as a Python package including its dependencies**</summary>
 
 ```bash
 git clone https://github.com/UniverseFly/Rectify && cd Rectify
@@ -97,7 +97,7 @@ pip install -e .
 ```
 </details>
 
-<details><summary>Prepare the runtime environment of Rectify</summary>
+<details><summary>**Prepare the runtime environment of Rectify**</summary>
 
 We need to prepare a `meta_config.json` file for Rectify to work properly. The file should be placed in the root directory of Rectify. Please **modify** the following template according to your environment and save the file in the root directory of Rectify:
 
@@ -130,7 +130,7 @@ We need to prepare a `meta_config.json` file for Rectify to work properly. The f
 ```
 </details>
 
-<details><summary>Install the Defects4j datasets</summary>
+<details><summary>**Install the Defects4j datasets**</summary>
 
 Rectify evaluates on the [Defects4j](https://github.com/rjust/defects4j) dataset. Please checkout to its [v2.0.0 release](https://github.com/rjust/defects4j/releases/tag/v2.0.0) and follow its instructions to install the dataset.
 
@@ -151,7 +151,7 @@ python -m rectify.cli.init
 </details>
 
 
-<details><summary>Do an example run</summary>
+<details><summary>**Do an example run**</summary>
 
 ```bash
 # Generate patches with the full Rectify approach using CodeT5
@@ -166,6 +166,17 @@ python -m rectify.cli.main evaluate -d chart-9-rectify
 ```
 
 You will see a table of evaluation results if everything goes well.
-
-🔥🔥Congratulations! You have successfully built and used Rectify from source!🔥🔥
 </details>
+
+<details><summary>**(Optional) Unpack the pre-generated patches**</summary>
+The GitHub repo also contains pre-generated patches the experiments in our paper. You can unpack if you would like to check them. First make sure you `cd` to the root directory of Rectify. Then run the following command:
+
+```bash
+tar -xvf ./data/large.tar.xz
+```
+
+Then you will see the `data/large` directory is populated with the pre-generated patches.
+
+<details>
+
+🔥🔥**Congratulations! You have successfully built and used Rectify from source!**🔥🔥

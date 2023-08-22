@@ -1,3 +1,22 @@
+[project]
+authors = [
+  {name = "Yuxiang Wei", email = "ywei40@illinois.edu"},
+]
+
+description = "Fusing Large Language Models with Completion Engines for Automated Program Repair"
+dynamic = ["dependencies"]
+name = "rectify"
+readme = "README.md"
+requires-python = ">=3.10"
+version = "0.0.0"
+
+[project.urls]
+"Homepage" = "https://github.com/UniverseFly/Rectify"
+
+[tool.setuptools.packages.find]
+include = ["rectify"]
+where = ["src"]
+
 [tool.black]
 include = '\.pyi?$'
 line-length = 88
@@ -16,3 +35,6 @@ modules = ["main"]
 mypy_path = "src"
 packages = ["rectify"]
 python_version = "3.10"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
