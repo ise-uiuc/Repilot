@@ -159,7 +159,7 @@ BUGS_TO_DO = {
 
 if utils.INCODER:
     INCODER_PREFIX_SUFFIX: dict = json.loads(
-        Path("single-hunk-prefix-suffix.json").read_text()
+        Path("data/single-hunk-prefix-suffix.json").read_text()
     )
 
 
