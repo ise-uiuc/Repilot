@@ -2,12 +2,12 @@
 
 Welcome to the source code repo of **Rectify**, a patch generation tool introduced in our ESEC/FSE'23 paper "Copiloting the Copilot: Fusing Large Language Models with Completion Engines for Automated Program Repair"!
 
+![A Demo of Rectify](/assets/Rectify-Demo.svg)
+
 Rectify leverages the synergy between a semantics-based code completion engine and an auto-regressive large language model for more efficient valid patch generation.
 
-TBD SVG
-
 > [!IMPORTANT]
-> Rectify is implemented for Java patch generation as a complex hybrid system combining a [Modified Eclipse JDT Language Server](https://github.com/UniverseFly/eclipse.jdt.ls) and Python's [huggingface/transformers](https://github.com/huggingface/transformers) interface for manipulating large language models. Correctly setting up the dependencies and configurations of Rectify can be non-trivial. Therefore, **we highly recommend you to directly use our out-of-the-box Docker image**.
+> Rectify is implemented for Java patch generation as a complex hybrid system combining a [Modified Eclipse JDT Language Server](https://github.com/UniverseFly/eclipse.jdt.ls) and Python's [huggingface/transformers](https://github.com/huggingface/transformers) interface for manipulating large language models. Correctly setting up the dependencies and configurations of Rectify can be non-trivial. Therefore, **we highly recommend directly using our out-of-the-box Docker image**.
 
 ## 🚀 Quick start with Rectify's Docker image
 
