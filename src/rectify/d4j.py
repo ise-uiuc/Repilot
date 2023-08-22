@@ -15,7 +15,6 @@ from unidiff import PatchedFile, PatchSet
 from unidiff.patch import Line
 
 from rectify import utils
-from rectify.utils import chunked
 
 Metadata = Dict[str, list[Dict[str, str]]]
 

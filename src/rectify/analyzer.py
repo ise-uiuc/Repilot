@@ -1,14 +1,13 @@
 import itertools
-import pickle
 import subprocess
 from multiprocessing import Process
 from multiprocessing.connection import Connection
 from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, Optional, cast
+from typing import Any, Optional, cast
 
 from rectify import utils
-from rectify.generation_defs import GenerationContext, Memorization
+from rectify.generation_defs import GenerationContext
 from rectify.lsp import LSPClient, TextFile, spec
 from rectify.model import ModelType
 

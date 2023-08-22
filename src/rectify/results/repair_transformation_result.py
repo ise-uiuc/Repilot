@@ -165,19 +165,3 @@ def concat_hunks(file_patches: list[AvgFilePatch], delim: str = "") -> str:
         for file_patch in file_patches
         for hunk_patch in file_patch.hunks
     )
-
-
-# @dataclass(frozen=True)
-# class RepairAnalysisResults(JsonSpecificDirectoryDumpable):
-#     results: list[RepairAnalysisResult]
-
-#     @classmethod
-#     def name(cls):
-#         return ANALYSIS_FNAME
-
-#     def to_json(self) -> Any:
-#         return [result.to_json() for result in self.results]
-
-#     @classmethod
-#     def from_json(cls, d: list) -> "RepairAnalysisResults":
-#         return RepairAnalysisResults([RepairAnalysisResult.from_json(r) for r in d])

@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import pickle
 import random
 import shutil
 import time
@@ -17,145 +16,14 @@ import torch
 from . import generation as gen
 from . import utils
 from .analyzer import JdtLspAnalyzer, Message
-from .config import MetaConfig, RepairConfig
-from .d4j import D4J1_HUNK_SPECIAL, Bug, Change, Defects4J
+from .config import MetaConfig
+from .d4j import Bug, Change, Defects4J
 from .lsp import TextFile, spec
 from .model import CodeT5Large, Incoder, ModelType
 from .report import Report
-from .results import HunkRepairResult, RepairResult
 from .template import generate_templates
 
 DATA_DIR = Path(os.getenv("LSP", ".lsp_data"))
-# DIAGNOSTICS = {}
-# BUG_IDS = []
-SKIP = [
-    "Cli-8",
-    "JacksonDatabind-1",
-    "Jsoup-46",
-    "Codec-4",
-    "Jsoup-41",
-    "Jsoup-77",
-    "Jsoup-40",
-    "Csv-11",
-    "Cli-11",
-    "Codec-17",
-    "Cli-28",
-    "Cli-17",
-    "JacksonCore-11",
-    "Jsoup-62",
-    "JacksonDatabind-17",
-    "Jsoup-55",
-    "JacksonDatabind-16",
-    "Gson-11",
-    "Jsoup-39",
-    "Codec-7",
-    "Compress-1",
-    "JacksonDatabind-99",
-    "Jsoup-86",
-    "Jsoup-43",
-    "Jsoup-88",
-    "JacksonXml-5",
-    "Jsoup-26",
-    "Cli-25",
-    "Cli-40",
-    "Compress-19",
-    "JacksonCore-25",
-    "Jsoup-57",
-    "JacksonCore-5",
-]
-Done = [
-    "Jsoup-25",
-    "Collections-26",
-    "JacksonDatabind-71",
-    "Jsoup-15",
-    "Csv-4",
-    "JacksonDatabind-70",
-    "Jsoup-37",
-    "JacksonDatabind-34",
-    "Compress-23",
-    "JacksonDatabind-57",
-    "Jsoup-45",
-    "JacksonDatabind-96",
-    "Jsoup-61",
-    "Jsoup-47",
-    "Gson-13",
-    "Codec-3",
-    "Codec-2",
-    "JacksonDatabind-97",
-    "Jsoup-9",
-    "Codec-10",
-    "Jsoup-17",
-    "JacksonCore-8",
-    "JacksonDatabind-27",
-    "JacksonDatabind-37",
-    "JacksonDatabind-46",
-    "Jsoup-51",
-    "Jsoup-32",
-    "Compress-38",
-    "JacksonDatabind-107",
-    "JacksonDatabind-82",
-    "Jsoup-24",
-    "Jsoup-34",
-]
-BUGS_TO_DO = {
-    "JacksonDatabind-71",
-    "JacksonDatabind-34",
-    "JacksonCore-26",
-    "Jsoup-37",
-    "JacksonDatabind-70",
-    "Collections-26",
-    "Csv-4",
-    "Jsoup-15",
-    "Compress-23",
-    "Jsoup-25",
-    "Gson-5",
-    "Jsoup-45",
-    "Jsoup-61",
-    "Codec-18",
-    "JacksonDatabind-96",
-    "Codec-3",
-    "Jsoup-9",
-    "Jsoup-47",
-    "Codec-2",
-    "Codec-10",
-    "Csv-14",
-    "Jsoup-54",
-    "JacksonDatabind-97",
-    "Jsoup-17",
-    "Jsoup-76",
-    "JxPath-10",
-    "JacksonDatabind-57",
-    "Jsoup-93",
-    "Gson-13",
-    "Closure-168",
-    "Jsoup-34",
-    "Codec-16",
-    "Jsoup-24",
-    "Csv-12",
-    "JacksonDatabind-37",
-    "Jsoup-32",
-    "Compress-38",
-    "Gson-15",
-    "JacksonDatabind-27",
-    "Jsoup-33",
-    "JacksonDatabind-82",
-    "JacksonDatabind-46",
-    "JacksonDatabind-107",
-    "Csv-1",
-    "Codec-9",
-    "Jsoup-51",
-    "Compress-25",
-    "JacksonCore-8",
-    "Jsoup-35",
-    "Jsoup-2",
-} - set(Done)
-# print(len(BUGS_TO_DO), BUGS_TO_DO)
-# needs_re_gen: dict[str, list[tuple[int, int]]] = json.loads(
-#     Path("d4j1_multi_hunk_comment.json").read_text()
-# )
-# needs_re_gen = {
-#     proj: idx for proj, idx in needs_re_gen.items() if proj not in D4J1_HUNK_SPECIAL
-# }
 
 if utils.INCODER:
     INCODER_PREFIX_SUFFIX: dict = json.loads(
