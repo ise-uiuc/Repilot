@@ -2,7 +2,11 @@
 
 Welcome to the source code repo of **Rectify**, a patch generation tool introduced in our ESEC/FSE'23 paper "Copiloting the Copilot: Fusing Large Language Models with Completion Engines for Automated Program Repair"!
 
-![A Demo of Rectify](/assets/Rectify-Demo.svg)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="/assets/Rectify-Demo-Light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="/assets/Rectify-Demo-Dark.svg">
+  <img alt="Rectify Demo" src="/assets/Rectify-Demo-Light.svg">
+</picture>
 
 Rectify leverages the synergy between a semantics-based code completion engine and an auto-regressive large language model for more efficient valid patch generation.
 
