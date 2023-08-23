@@ -90,15 +90,6 @@ JAVA_KEYWORDS = {
 
 ACTIVE = os.getenv("ACTIVE") is not None
 
-# Decoding map
-if os.getenv("LOAD_MEM") is not None:
-    MEM_PRUNING: dict[
-        str, dict[tuple[int, int], dict[bytes, list[int]]]
-    ] = utils.load_and_cache_data(Path("mem_pruning.pkl"), lambda: {})
-else:
-    MEM_PRUNING = {}
-CURRENT_PRUNING: dict[bytes, list[int]] = {}
-
 
 @dataclass
 class GenerationState:
@@ -313,15 +304,6 @@ class Synthesizer:
         assert self.gen_state is not None
         assert self.lsp_contexts is not None
         gen_contexts = self.gen_state.gen_contexts
-        start_time = time.perf_counter()
-        if len(CURRENT_PRUNING) > 0:
-            print(len(CURRENT_PRUNING))
-            for batch_idx in range(self.batch_size):
-                # print(batch_idx)
-                state = pickle.dumps(gen_contexts[batch_idx].generated_ids)
-                pruned = CURRENT_PRUNING.get(state, [])
-                probs[batch_idx, pruned] = 0.0
-        print("Overhead of pruning: ", time.perf_counter() - start_time)
         next_token_ids = cast(
             torch.LongTensor, torch.multinomial(probs, num_samples=1).squeeze(1)
         )
