@@ -137,10 +137,7 @@ Rectify evaluates on the [Defects4j](https://github.com/rjust/defects4j) dataset
 > [!WARNING]
 > If you directly download the release instead of doing a checkout you may encounter errors when running Rectify, as Rectify will dump the metadata by collecting the meta information of these projects as Git repos. If they are not Git repos, Rectify may fail.
 
-After the installation, you should have a `defects4j` command in your `$PATH`. You can check it by running `defects4j info -p Chart`.
-
-> [!IMPORTANT]
-> The `defects4j` command must be in your `$PATH` for Rectify to work properly.
+You can check the installation by running `/path/to/defects4j info -p Chart`.
 
 Now let's `cd` back to the root directory of Rectify, and run the following command to checkout all the bugs:
 
@@ -179,4 +176,4 @@ Then you will see the `data/large` directory is populated with the pre-generated
 
 </details>
 
-🔥🔥**Congratulations! You have successfully built and used Rectify from source!**🔥🔥
+**🔥🔥Congratulations! You have successfully built and used Rectify from source!🔥🔥**
