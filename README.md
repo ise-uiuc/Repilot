@@ -166,6 +166,7 @@ You will see a table of evaluation results if everything goes well.
 </details>
 
 <details><summary>(Optional) Unpack the pre-generated patches</summary>
+
 The GitHub repo also contains pre-generated patches the experiments in our paper. You can unpack if you would like to check them. First make sure you `cd` to the root directory of Rectify. Then run the following command:
 
 ```bash
