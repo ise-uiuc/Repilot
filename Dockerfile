@@ -1,10 +1,10 @@
 FROM ubuntu:22.04
 
 # Install dependencies
-RUN apt -y update \
-    && apt -y install software-properties-common \
+RUN apt-get -y update \
+    && apt-get -y install software-properties-common \
     && add-apt-repository -y ppa:deadsnakes/ppa
-RUN apt install -y \
+RUN apt-get install -y \
     python3.10 \
     python3-pip \
     git \
