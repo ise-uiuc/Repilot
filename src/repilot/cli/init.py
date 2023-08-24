@@ -37,6 +37,7 @@ def get_all_bugs() -> Metadata:
 # print(get_all_bugs()['Lang'][0])
 
 ROOT = META_CONFIG.d4j_checkout_root
+ROOT.mkdir(exist_ok=True)
 
 
 def get_checkout_meta(proj: str, bug: Dict[str, str]) -> Dict:
