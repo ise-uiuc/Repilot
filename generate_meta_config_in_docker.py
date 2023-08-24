@@ -67,4 +67,4 @@ meta_config = {
     "seed": 0,
 }
 
-Path("/root/Repilot/meta_config.json").write_text(json.dumps(meta_config))
+Path("/root/Repilot/meta_config.json").write_text(json.dumps(meta_config, indent=2))
