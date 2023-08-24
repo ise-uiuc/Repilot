@@ -1,5 +1,8 @@
 # ⚙️$`\mathbb{R}\mathrm{ectify}`$🛠️
 
+> [!WARNING]
+> Rectify is being changed to **Repilot**! The patch will come soon. Stay tuned.
+
 Welcome to the source code repo of **Rectify**, a patch generation tool introduced in our ESEC/FSE'23 paper "Copiloting the Copilot: Fusing Large Language Models with Completion Engines for Automated Program Repair"!
 
 <picture>
