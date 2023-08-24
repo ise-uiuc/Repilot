@@ -17,13 +17,13 @@ from typing import Callable, Dict, Iterable, NamedTuple, Optional, Union, cast
 
 import torch
 from torch import nn
-from transformers.generation.beam_constraints import Constraint
-from transformers.generation.logits_process import (
+from transformers.generation_beam_constraints import Constraint
+from transformers.generation_logits_process import (
     LogitsProcessorList,
     TemperatureLogitsWarper,
     TopKLogitsWarper,
 )
-from transformers.generation.stopping_criteria import StoppingCriteriaList
+from transformers.generation_stopping_criteria import StoppingCriteriaList
 from transformers.tokenization_utils import logger
 
 from . import utils

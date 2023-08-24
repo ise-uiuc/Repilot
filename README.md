@@ -159,14 +159,14 @@ python -m rectify.cli.init
 
 ```bash
 # Generate patches with the full Rectify approach using CodeT5
-ACTIVE=1 python -m rectify.cli.main repair -b "Chart-9" --method pruned-mem -d chart-9-rectify -n 5
+ACTIVE=1 python -m repilot.cli.main repair -b "Chart-9" --method pruned-mem -d chart-9-repilot -n 5
 # You will see logs about the patch generation and which tokens are accepted/rejected.
 
 # Validate the patch generation
-python -m rectify.cli.main validate -d chart-9-rectify
+python -m repilot.cli.main validate -d chart-9-repilot
 
 # Print a table of the evaluation results
-python -m rectify.cli.main evaluate -d chart-9-rectify
+python -m repilot.cli.main evaluate -d chart-9-repilot
 ```
 
 You will see a table of evaluation results if everything goes well.

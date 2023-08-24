@@ -1,4 +1,4 @@
-transformers==4.30.0
+transformers==4.22.1
 torch==1.13.1
 pandas
 black
