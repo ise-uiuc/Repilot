@@ -47,7 +47,7 @@ python -m repilot.cli.main evaluate -d chart-9-repilot
 
 ## ️⭐️ Artifact️
 
-For a more comprehensive guidance on how to use Repilot and how to reproduce the results in our paper, we greatly encourage you to check our artifact at https://github.com/UniverseFly/Repilot-Artifact.
+For a more comprehensive guidance on how to use Repilot and how to reproduce the results in our paper, we greatly encourage you to check out our [artifact documentation](/README-Artifact.md).
 
 
 ## ⚠️ How to build and use Repilot from source?
@@ -104,6 +104,18 @@ pip install -e .
 ```
 </details>
 
+
+<details><summary>Install the Defects4j datasets</summary>
+
+Repilot evaluates on the [Defects4j](https://github.com/rjust/defects4j) dataset. Please checkout to its [v2.0.0 release](https://github.com/rjust/defects4j/releases/tag/v2.0.0) and follow its instructions to install the dataset.
+
+> [!WARNING]
+> If you directly download the release instead of doing a checkout you may encounter errors when running Repilot, as Repilot will dump the metadata by collecting the meta information of these projects as Git repos. If they are not Git repos, Repilot may fail.
+
+You can check the installation by running `/path/to/defects4j info -p Chart`.
+</details>
+
+
 <details><summary>Prepare the runtime environment of Repilot</summary>
 
 We need to prepare a `meta_config.json` file for Repilot to work properly. The file should be placed in the root directory of Repilot. Please **modify** the following template according to your environment and save the file in the root directory of Repilot:
@@ -135,23 +147,12 @@ We need to prepare a `meta_config.json` file for Repilot to work properly. The f
   "seed": 0
 }
 ```
-</details>
 
-<details><summary>Install the Defects4j datasets</summary>
-
-Repilot evaluates on the [Defects4j](https://github.com/rjust/defects4j) dataset. Please checkout to its [v2.0.0 release](https://github.com/rjust/defects4j/releases/tag/v2.0.0) and follow its instructions to install the dataset.
-
-> [!WARNING]
-> If you directly download the release instead of doing a checkout you may encounter errors when running Repilot, as Repilot will dump the metadata by collecting the meta information of these projects as Git repos. If they are not Git repos, Repilot may fail.
-
-You can check the installation by running `/path/to/defects4j info -p Chart`.
-
-Now let's `cd` back to the root directory of Repilot, and run the following command to checkout all the bugs:
+Now let's `cd` back to the root directory of Repilot, and run the following command to checkout all the Defects4J bugs:
 
 ```bash
 python -m repilot.cli.init
 ```
-
 </details>
 
 
