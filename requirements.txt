@@ -1,5 +1,5 @@
 transformers==4.30.0
-torch==1.12.1
+torch==1.13.1
 pandas
 black
 isort
