@@ -5,16 +5,16 @@ authors = [
 
 description = "Fusing Large Language Models with Completion Engines for Automated Program Repair"
 dynamic = ["dependencies"]
-name = "rectify"
+name = "repilot"
 readme = "README.md"
 requires-python = ">=3.10"
 version = "0.0.0"
 
 [project.urls]
-"Homepage" = "https://github.com/UniverseFly/Rectify"
+"Homepage" = "https://github.com/UniverseFly/Repilot"
 
 [tool.setuptools.packages.find]
-include = ["rectify"]
+include = ["repilot"]
 where = ["src"]
 
 [tool.black]
@@ -33,7 +33,7 @@ follow_imports = "silent"
 ignore_missing_imports = true
 modules = ["main"]
 mypy_path = "src"
-packages = ["rectify"]
+packages = ["repilot"]
 python_version = "3.10"
 
 [tool.setuptools.dynamic]

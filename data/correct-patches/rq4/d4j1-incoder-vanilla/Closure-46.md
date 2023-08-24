@@ -1,4 +1,4 @@
-# Rectify Patch
+# Repilot Patch
 
 ```
   // Returns the type of the property with the name

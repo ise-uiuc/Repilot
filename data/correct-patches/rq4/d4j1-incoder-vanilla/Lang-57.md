@@ -1,4 +1,4 @@
-# Rectify Patch
+# Repilot Patch
 
 ```
         return Arrays.asList(Locale.getAvailableLocales()).contains(locale);
