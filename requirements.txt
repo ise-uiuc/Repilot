@@ -1,0 +1,13 @@
+transformers==4.22.1
+torch==1.12.1
+pandas
+black
+isort
+mypy
+venn
+pandas
+tqdm
+rich
+GitPython
+unidiff
+joblib
