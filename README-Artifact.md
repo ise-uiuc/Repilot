@@ -38,7 +38,7 @@ docker pull universefly/repilot:fse23
 docker run -it --name repilot universefly/repilot:fse23
 # Now you will get into a "virtual environment" provided by Docker
 # Enter the `repilot` directory
-cd /repilot
+cd /root/repilot
 echo "Hello Repilot!"
 ```
 
@@ -113,12 +113,18 @@ sudo docker cp repilot:/repilot/plots /path/to/your/local/directory
 docker start -ai repilot
 
 # Return to the `repilot` directory
-cd /repilot
+cd /root/repilot
 ```
 
 ### RQ2: Compilation rate analysis
 
-We will now reproduce Table 2. This script may take longer to run as it needs to iterate through 5000 generated patches per bug.
+We will now reproduce Table 2. This script may take longer to run as it needs to iterate through 5000 generated patches per bug. We also compressed the patches beforehand due to the large size. Therefore, let's first decompress the patches:
+
+```bash
+tar -xvf data/large.tar.xz
+```
+
+Then we can run the command for RQ2:
 
 ```bash
 python -m repilot.cli.rq2
@@ -193,9 +199,6 @@ ACTIVE=1 D4J1_SINGLE_HUNK=1 python -m repilot.cli.main repair -b ".*" --method p
 ### RQ4
 
 We further include Incoder-6.7B as the base model to generate patches for RQ4.
-
-> [!WARNING]
-> Incoder is not downloaded beforehand in the image due to its large size, so you may spend extra time waiting for the download to finish.
 
 ```bash
 # The first two configurations are the same as RQ3
