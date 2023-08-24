@@ -57,7 +57,7 @@ RUN git clone https://github.com/rjust/defects4j \
     && cpanm --installdeps . \
     && ./init.sh
 
-# Generate the meta_config.json
+# Generate the meta_config.json and checkout all Defects4J bugs
 WORKDIR /root/Repilot
 RUN python generate_meta_config_in_docker.py \
     && python -m repilot.cli.init
