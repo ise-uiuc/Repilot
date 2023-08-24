@@ -53,7 +53,7 @@ RUN cd Repilot \
 # Install Defects4J
 RUN git clone https://github.com/rjust/defects4j \
     && cd defects4j \
-    && git checkout v2.0.0 \
+    && git checkout v2.0.0 -b v2.0.0 \
     && cpanm --installdeps . \
     && ./init.sh
 
