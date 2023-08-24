@@ -413,10 +413,6 @@ class Repairer:
                     ):
                         print(f"Skipping {bug_id} {hunk_idx} {repair_idx}")
                         continue
-                    try:
-                        gen.CURRENT_PRUNING = gen.MEM_PRUNING[bug_id][hunk_idx]
-                    except KeyError:
-                        pass
                     synthesis_result_batch = synthesizer.synthesize(t_prefix, t_suffix)
                     assert config.batch_size == 1
                     # if utils.INCODER:
