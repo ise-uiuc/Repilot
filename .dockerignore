@@ -3,3 +3,19 @@
 .gitignore
 .gitattributes
 data/large/
+
+# content of .gitignore
+.vscode
+.lsp_data
+/meta_config.json
+*.pkl
+plots/
+__pycache__/
+dist/
+eggs/
+.eggs/
+wheels/
+share/python-wheels/
+*.egg-info/
+*.egg
+*.log
