@@ -38,7 +38,7 @@ docker pull universefly/repilot:fse23
 docker run -it --name repilot universefly/repilot:fse23
 # Now you will get into a "virtual environment" provided by Docker
 # Enter the `repilot` directory
-cd /root/repilot
+cd /root/Repilot
 echo "Hello Repilot!"
 ```
 
@@ -113,7 +113,7 @@ sudo docker cp repilot:/repilot/plots /path/to/your/local/directory
 docker start -ai repilot
 
 # Return to the `repilot` directory
-cd /root/repilot
+cd /root/Repilot
 ```
 
 ### RQ2: Compilation rate analysis
