@@ -1,7 +1,7 @@
 # ⚙️$`\mathbb{R}\mathrm{e}\mathbf{pilot}`$🛠️
 
 > [!WARNING]
-> **Repilot** was originally named **Rectify**. There are still some inconsistencies in the documentation. We will patch them soon. Stay tuned!
+> **Repilot** was originally named **Rectify**. We have already patched many inconsistencies, but there may still be some we missed. If you encounter any problems, please feel free to open an issue or contact us.
 
 Welcome to the source code repo of **Repilot**, a patch generation tool introduced in our ESEC/FSE'23 paper "Copiloting the Copilot: Fusing Large Language Models with Completion Engines for Automated Program Repair"!
 
@@ -21,10 +21,10 @@ Repilot leverages the synergy between a semantics-based code completion engine a
 ```bash
 # Pull the image and run a container.
 # This may take some time...
-docker run -it --name repilot universefly/repilot-fse23
+docker run -it --name repilot universefly/repilot:latest
 # Now you will get into a "virtual environment" provided by Docker
-# Enter the `repilot` directory
-cd /root/repilot
+# Enter the `Repilot` directory
+cd /root/Repilot
 # This is important because Repilot relies on a `meta_config.json` file to work properly
 cat meta_config.json
 # Generate patches with the full Repilot approach using CodeT5
@@ -53,7 +53,8 @@ For a more comprehensive guidance on how to use Repilot and how to reproduce the
 ## ⚠️ How to build and use Repilot from source?
 
 > [!WARNING]
-> Building Repilot from source is **NOT** recommended since there are many complex dependencies and configurations to handle. It is only for advanced users who want to extend Repilot.
+>
+> Building Repilot from source is **NOT** recommended since there are many complex dependencies and configurations to handle. It is only for advanced users who want to extend Repilot. If you want to build from source, we also encourage you to check out our [Dockerfile](https://github.com/ise-uiuc/Repilot/blob/main/Dockerfile) for more details.
 
 > [!IMPORTANT]
 > **Environment requirements**
