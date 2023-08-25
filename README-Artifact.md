@@ -31,8 +31,11 @@ docker --version # Test docker availability
 Now we'll fetch the Docker image of Repilot that includes the implementation of the Algorithm, the Completion Engine, and all the dependencies needed:
 
 ```bash
-# This may take some time...
+# Recommended: pull the image from Docker Hub
 docker pull universefly/repilot:fse23
+# Alternatively download the image file `repilot-docker-image-fse23.tar.xz` from https://doi.org/10.5281/zenodo.8280747
+# Then load this image
+# docker load --input repilot-docker-image-fse23.tar.xz
 
 # Run the docker image
 docker run -it --name repilot universefly/repilot:fse23
