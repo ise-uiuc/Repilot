@@ -107,7 +107,7 @@ Also the two venn diagrams shown in Figure 6 are saved in the `plots` directory.
 ```bash
 # Exit the docker container with e.g., Ctrl-D
 # Save the plots to your local machine
-sudo docker cp repilot:/repilot/plots /path/to/your/local/directory
+sudo docker cp repilot:/root/Repilot/plots /path/to/your/local/directory
 # Now you can open the plots with your favorite image viewer
 # Return to the docker container
 docker start -ai repilot
