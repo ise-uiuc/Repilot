@@ -47,7 +47,7 @@ python -m repilot.cli.main evaluate -d chart-9-repilot
 
 ## ️⭐️ Artifact️
 
-For a more comprehensive guidance on how to use Repilot and how to reproduce the results in our paper, we greatly encourage you to check out our [artifact documentation](/README-Artifact.md).
+For more comprehensive guidance on how to use Repilot and how to reproduce the results in our paper, we greatly encourage you to check out our [artifact documentation](/README-Artifact.md).
 
 
 ## ⚠️ How to build and use Repilot from source?
@@ -175,7 +175,7 @@ You will see a table of evaluation results if everything goes well.
 
 <details><summary>(Optional) Unpack the pre-generated patches</summary>
 
-The GitHub repo also contains pre-generated patches the experiments in our paper. You can unpack if you would like to check them. First make sure you `cd` to the root directory of Repilot. Then run the following command:
+The GitHub repo also contains pre-generated patches for the experiments in our paper. You can unpack if you would like to check them. First, make sure you `cd` to the root directory of Repilot. Then run the following command:
 
 ```bash
 tar -xvf ./data/large.tar.xz
