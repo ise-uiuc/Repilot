@@ -1,5 +1,8 @@
 # ⚙️$`\mathbb{R}\mathrm{e}\mathbf{pilot}`$🛠️
 
+> [!NOTE]
+> Postprint is coming soon!
+
 > [!WARNING]
 > **Repilot** was originally named **Rectify**. We have already patched many inconsistencies, but there may still be some we missed. If you encounter any problems, please feel free to open an issue or contact us.
 
