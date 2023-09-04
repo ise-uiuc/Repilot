@@ -1,7 +1,10 @@
 # ⚙️$`\mathbb{R}\mathrm{e}\mathbf{pilot}`$🛠️
 
-> [!NOTE]
-> Postprint is coming soon!
+<p align="left">
+    <a href="https://arxiv.org/abs/2309.00608"><img src="https://img.shields.io/badge/arXiv-2309.00608-b31b1b.svg">
+    <a href="https://doi.org/10.5281/zenodo.8281250"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.8281250.svg">
+    <a href="https://hub.docker.com/r/universefly/repilot"> <img src="https://badgen.net/badge/icon/docker?icon=docker&label">
+</p>
 
 > [!WARNING]
 > **Repilot** was originally named **Rectify**. We have already patched many inconsistencies, but there may still be some we missed. If you encounter any problems, please feel free to open an issue or contact us.
