@@ -1,9 +1,9 @@
 # ⚙️$`\mathbb{R}\mathrm{e}\mathbf{pilot}`$🛠️
 
 <p align="left">
-    <a href="https://arxiv.org/abs/2309.00608"><img src="https://img.shields.io/badge/arXiv-2309.00608-b31b1b.svg">
-    <a href="https://doi.org/10.5281/zenodo.8281250"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.8281250.svg">
-    <a href="https://hub.docker.com/r/universefly/repilot"> <img src="https://badgen.net/badge/icon/docker?icon=docker&label">
+    <a href="https://arxiv.org/abs/2309.00608"><img src="https://img.shields.io/badge/arXiv-2309.00608-b31b1b.svg?style=for-the-badge">
+    <a href="https://doi.org/10.5281/zenodo.8281250"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.8281250-blue?style=for-the-badge">
+    <a href="https://hub.docker.com/r/universefly/repilot/tags"><img src="https://img.shields.io/badge/docker-universefly%2Frepilot-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white"></a>
 </p>
 
 > [!WARNING]
