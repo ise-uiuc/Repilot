@@ -8,7 +8,7 @@ Welcome to the artifact repository for **Repilot**, a patch generation tool intr
 > 
 > - **OS**: A Linux system with **[Docker](https://docs.docker.com/engine/install/)** support.
 >   - Optional: [NVIDIA Docker](https://github.com/NVIDIA/nvidia-docker) support.
-> - **Hardware**: X86/X64 CPU; 16GB RAM; 1TB Storage; Good Network to Docker Hub.
+> - **Hardware**: X86/X64 CPU; 32GB RAM; 1TB Storage; Good Network to Docker Hub.
 >   - Optional (a): NVIDIA GPU(s) with >6G memory (for CodeT5 patch generation)
 >   - Optional (b): NVIDIA GPU(s) with >30G memory (for Incoder-6.7B patch generation)
 > 
