@@ -6,9 +6,6 @@
     <a href="https://hub.docker.com/r/universefly/repilot/tags"><img src="https://img.shields.io/badge/docker-universefly%2Frepilot-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white"></a>
 </p>
 
-> [!WARNING]
-> **Repilot** was originally named **Rectify**. We have already patched many inconsistencies, but there may still be some we missed. If you encounter any problems, please feel free to open an issue or contact us.
-
 Welcome to the source code repo of **Repilot**, a patch generation tool introduced in our ESEC/FSE'23 paper "Copiloting the Copilot: Fusing Large Language Models with Completion Engines for Automated Program Repair"!
 
 <picture>
