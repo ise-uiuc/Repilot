@@ -1,5 +1,11 @@
 # ⚙️$`\mathbb{R}\mathrm{e}\mathbf{pilot}`$🛠️
 
+<p align="left">
+    <a href="https://arxiv.org/abs/2309.00608"><img src="https://img.shields.io/badge/arXiv-2309.00608-b31b1b.svg?style=for-the-badge">
+    <a href="https://doi.org/10.5281/zenodo.8281250"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.8281250-blue?style=for-the-badge">
+    <a href="https://hub.docker.com/r/universefly/repilot/tags"><img src="https://img.shields.io/badge/docker-universefly%2Frepilot-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white"></a>
+</p>
+
 > [!IMPORTANT]
 > **New codegen API! (BETA)**
 > 
@@ -8,12 +14,6 @@
 > ```
 > 
 > To use that, follow the normal installation but no need to install Defects4J.
-
-<p align="left">
-    <a href="https://arxiv.org/abs/2309.00608"><img src="https://img.shields.io/badge/arXiv-2309.00608-b31b1b.svg?style=for-the-badge">
-    <a href="https://doi.org/10.5281/zenodo.8281250"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.8281250-blue?style=for-the-badge">
-    <a href="https://hub.docker.com/r/universefly/repilot/tags"><img src="https://img.shields.io/badge/docker-universefly%2Frepilot-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white"></a>
-</p>
 
 > [!WARNING]
 > **Repilot** was originally named **Rectify**. We have already patched many inconsistencies, but there may still be some we missed. If you encounter any problems, please feel free to open an issue or contact us.
