@@ -3,8 +3,8 @@ from argparse import ArgumentParser, Namespace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, TypeVar
-from repilot.codegen import Codegen
 
+from repilot.codegen import Codegen
 from repilot.config import (
     LMInferenceConfig,
     MetaConfig,

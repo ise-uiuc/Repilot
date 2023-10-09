@@ -210,9 +210,7 @@ class Codegen:
             # Buggy text files
             base_path = Path(self.proj_root).parent.absolute()
             # proj_path = Path(self.proj_root).relative_to(base_path)
-            text_file = TextFile.read(
-                base_path, self.file_path.relative_to(base_path)
-            )
+            text_file = TextFile.read(base_path, self.file_path.relative_to(base_path))
             buggy_text_files = [text_file]
 
             # Initialize each buggy file for LSP
