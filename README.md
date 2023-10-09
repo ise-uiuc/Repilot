@@ -10,7 +10,13 @@
 > **New codegen API! (BETA)**
 > 
 > ```shell
-> ACTIVE=1 python -m repilot.cli.main codegen --proj-path $PROJ_PATH --file-path $FILE_PATH --line 1419 --column 1 --model codet5 --method pruned-mem
+> ACTIVE=1 python -m repilot.cli.main codegen \
+> --proj-path $JAVA_PROJ_PATH \
+> --file-path $FILE_PATH \
+> --line 1419 \
+> --column 1 \
+> --model codet5 \
+> --method pruned-mem
 > ```
 > 
 > To use that, follow the normal installation but no need to install Defects4J.
