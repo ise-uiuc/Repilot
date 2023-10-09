@@ -392,7 +392,7 @@ class Repairer:
                     self.model, prefix, suffix, config.lm_inference_config
                 )
                 synthesizer = gen.Synthesizer(
-                    lm_context, connections, text_file, config.method, buggy_hunk
+                    lm_context, connections, text_file, config.method
                 )
                 print(text_file.content[text_file.cursor - 20 : text_file.cursor + 20])
                 # n_samples = config.n_samples - (

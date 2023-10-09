@@ -3,6 +3,7 @@ from argparse import ArgumentParser, Namespace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, TypeVar
+from repilot.codegen import Codegen
 
 from repilot.config import (
     LMInferenceConfig,
@@ -18,6 +19,53 @@ from repilot.runner import Runner
 
 parser = ArgumentParser("The Repilot Patch Generation Tool")
 subparsers = parser.add_subparsers(title="Repilot runner options", dest="option")
+
+gen_parser = subparsers.add_parser("codegen", help="Code generation")
+gen_parser.add_argument("--proj-path", required=True, type=str)
+gen_parser.add_argument("--file-path", required=True, type=str)
+gen_parser.add_argument("--line", required=True, type=int)
+gen_parser.add_argument("--column", required=True, type=int)
+gen_parser.add_argument(
+    "--model", required=True, type=str, choices=["codet5", "incoder"]
+)
+gen_parser.add_argument(
+    "-n",
+    "--n-samples",
+    required=False,
+    default=20,
+    type=int,
+    help="Number of batched samples to generate (#total samples = n_samples * batch_size)",
+)
+gen_parser.add_argument(
+    "--method",
+    required=True,
+    choices=["pruned-nomem", "pruned-mem", "plain"],
+    help="The method to use for patch synthesis",
+)
+gen_parser.add_argument(
+    "--batch-size",
+    required=False,
+    default=1,
+    type=int,
+    help="The batch size of the language model",
+)
+gen_parser.add_argument(
+    "--temperature",
+    required=False,
+    default=1.0,
+    type=float,
+    help="Temperature for sampling",
+)
+gen_parser.add_argument(
+    "--top-k", required=False, default=50, type=int, help="Top-K value of the sampling"
+)
+gen_parser.add_argument(
+    "--n-max-tokens",
+    required=False,
+    default=50,
+    type=int,
+    help="Max number of tokens to generate for each hunk",
+)
 
 # Repair parser
 repair_parser = subparsers.add_parser("repair")
@@ -276,8 +324,38 @@ def save_validation_cache(args: Namespace):
     data.save_json(f_cache)
 
 
+def codegen(args):
+    inference_config = LMInferenceConfig(
+        1, args.temperature, args.top_k, args.n_max_tokens
+    )
+    repair_config = RepairConfig(
+        args.n_samples,
+        inference_config,
+        {
+            "pruned-nomem": SynthesisMethod.PRUNED_NO_MEM,
+            "pruned-mem": SynthesisMethod.PRUNED_MEM,
+            "plain": SynthesisMethod.PLAIN,
+        }[args.method],
+        "*",
+        True,
+    )
+    codegen = Codegen.init(
+        META_CONFIG,
+        repair_config,
+        args.model == "codet5",
+        Path(args.proj_path),
+        Path(args.file_path),
+        args.line,
+        args.column,
+        args.n_samples,
+    )
+    codegen.codegen()
+
+
 if __name__ == "__main__":
-    if args.option == "repair":
+    if args.option == "codegen":
+        codegen(args)
+    elif args.option == "repair":
         repair(args)
     elif args.option == "transform":
         transform(args)

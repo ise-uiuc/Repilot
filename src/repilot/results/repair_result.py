@@ -11,7 +11,7 @@ from repilot.utils import IORetrospective, JsonSerializable
 
 @dataclass(frozen=True)
 class SynthesisResult(JsonSerializable):
-    hunk: str | None
+    hunk: str
     is_pruned_halfway: bool
     is_unfinished: bool
 

@@ -176,7 +176,6 @@ class Synthesizer:
         connections: list[Connection],
         text_file: TextFile,
         gen_method: SynthesisMethod,
-        buggy_hunk: str,
     ) -> None:
         # Constants
         self.init_lm(lm_context)
@@ -184,7 +183,6 @@ class Synthesizer:
         # self.hunk_start_cursor = self.text_file.cursor
         self.gen_method = gen_method
         self.connections = connections
-        self.buggy_hunk = buggy_hunk
         assert len(connections) == self.batch_size
 
         # States that are initialized everytime calling `synthesize``
@@ -267,19 +265,20 @@ class Synthesizer:
         assert len(self.gen_state.batch_is_failed) == self.batch_size
         results: list[SynthesisResult] = []
         for batch_idx in range(self.batch_size):
+            gen_context = self.gen_state.gen_contexts[batch_idx]
+            hunk = t_prefix + "".join(gen_context.generated_tokens) + t_suffix
             if self.gen_state.batch_is_failed[batch_idx]:
-                results.append(SynthesisResult(None, True, False))
+                results.append(SynthesisResult(hunk, True, False))
             elif self.gen_state.batch_is_unfinished[batch_idx]:
                 # print("Unfinished")
                 # print("".join(self.gen_state.gen_contexts[batch_idx].generated_tokens))
                 results.append(SynthesisResult(None, False, True))
             else:
-                gen_context = self.gen_state.gen_contexts[batch_idx]
                 # lsp_context = self.lsp_contexts[batch_idx]
                 # patch_file = lsp_context.text_file
                 # start_index = self.hunk_start_cursor
                 # end_index = patch_file.cursor
-                hunk = t_prefix + "".join(gen_context.generated_tokens) + t_suffix
+                # hunk = t_prefix + "".join(gen_context.generated_tokens) + t_suffix
                 # assert patch_file.content[start_index:end_index] == hunk
                 # success = SynthesisSuccessful(
                 #     patch_file,
