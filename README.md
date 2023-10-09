@@ -1,5 +1,11 @@
 # ⚙️$`\mathbb{R}\mathrm{e}\mathbf{pilot}`$🛠️
 
+> [!IMPORTANT]
+> New codegen API!
+> ```shell
+> ACTIVE=1 python -m repilot.cli.main codegen --proj-path $PROJ_PATH --file-path $FILE_PATH --line 1419 --column 1 --model codet5 --method pruned-mem
+> ```
+
 <p align="left">
     <a href="https://arxiv.org/abs/2309.00608"><img src="https://img.shields.io/badge/arXiv-2309.00608-b31b1b.svg?style=for-the-badge">
     <a href="https://doi.org/10.5281/zenodo.8281250"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.8281250-blue?style=for-the-badge">
