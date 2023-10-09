@@ -1,10 +1,13 @@
 # ⚙️$`\mathbb{R}\mathrm{e}\mathbf{pilot}`$🛠️
 
 > [!IMPORTANT]
-> New codegen API!
+> **New codegen API! (BETA)**
+> 
 > ```shell
 > ACTIVE=1 python -m repilot.cli.main codegen --proj-path $PROJ_PATH --file-path $FILE_PATH --line 1419 --column 1 --model codet5 --method pruned-mem
 > ```
+> 
+> To use that, follow the normal installation but no need to install Defects4J.
 
 <p align="left">
     <a href="https://arxiv.org/abs/2309.00608"><img src="https://img.shields.io/badge/arXiv-2309.00608-b31b1b.svg?style=for-the-badge">
